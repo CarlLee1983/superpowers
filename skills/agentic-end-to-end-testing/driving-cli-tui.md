@@ -33,11 +33,19 @@ tmux kill-session -t <name> 2>/dev/null   # idempotent: fine if nothing to kill
 `-l` for literal text. A typical field-by-field fill mixes both:
 
 ```bash
-tmux send-keys -t <name> BTab                 # shift-tab to a prior field
+tmux send-keys -t <name> "n"                  # tap a key to open the form
+sleep 1
+tmux send-keys -t <name> BTab                 # shift-tab back one field
+sleep 0.3
 tmux send-keys -t <name> C-u                  # clear the current line
+sleep 0.3
 tmux send-keys -t <name> -l "some/literal/path"   # literal — no key parsing
-tmux send-keys -t <name> Tab                  # forward to the next field
-tmux send-keys -t <name> Enter
+sleep 0.3
+tmux send-keys -t <name> Tab                  # forward to next field
+sleep 0.3
+tmux send-keys -t <name> -l "text the user would type"
+sleep 0.3
+tmux send-keys -t <name> Enter                # submit
 ```
 
 `sleep 0.3` between keys is usually enough; bump to 0.5–1.0s for field
