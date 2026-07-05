@@ -1,9 +1,9 @@
 # Spec-Derived Scenario Cards — Design
 
 Date: 2026-07-04
-Status: draft — adversarially reviewed (2x opus, findings folded in); one
-decision open for Jesse at spec review: the card-author role boundary
-(flag-only vs flag-then-fix-via-TDD). The spec is written flag-only.
+Status: approved (design review with Jesse 2026-07-04; adversarially
+reviewed 2x opus, findings folded in; role boundary decided by Jesse:
+flag-only)
 Builds on: `2026-07-04-agentic-end-to-end-testing-design.md` (the skill this
 extends; same branch)
 
@@ -109,12 +109,13 @@ sections; reference headers by name.) Contents:
   implementation.
 - **Coverage check:** every user-facing claim in the spec maps to a card or
   a stated exclusion with a reason.
-- **Role boundary:** the card author never modifies product code, test code,
-  or existing cards' assertions. A failing card plus root cause is the
-  deliverable, not a fix. (Open for Jesse at spec review: widen to "flag,
-  then fix via TDD." The 2026-07-04 experiment shows why ambient norms do
-  not decide this consistently: given the same failing card, one author
-  fixed and one declined.)
+- **Role boundary (decided):** the card author never modifies product code,
+  test code, or existing cards' assertions. A failing card plus root cause
+  is the deliverable, not a fix. Rationale: agents get one mandate, not two
+  — the agent that finds an issue must not be responsible for the issue
+  being solved. (The 2026-07-04 experiment shows why this must be stated:
+  ambient norms split — given the same failing card, one author fixed and
+  one declined.)
 - **Dispatch snippet:** a short template for dispatching a fresh card-author
   subagent (seeded from the historical card-authoring dispatch in the
   corpus), naming: the spec path (authoritative), the card format, the
@@ -216,7 +217,8 @@ plan.
   expansion constrained by the verbatim rule. Chosen over cards-at-spec-time
   after the 2026-07-04 experiment showed the expansion step follows a locked
   table faithfully.
-- **Role boundary:** flag-only (provisional; revisit at spec review).
+- **Role boundary:** flag-only, decided. One mandate per agent; finders are
+  never fixers. Fixes belong to a separately dispatched fix wave.
 - **Blast radius:** brainstorming + agentic-end-to-end-testing + SDD; not
   writing-plans.
 - **Repeatability:** in-skill (checker script + RED/GREEN development
