@@ -413,6 +413,33 @@ rulings, or stop on load-bearing ones. There is no second fix wave —
 residual load-bearing findings surface to your human partner when
 finishing-a-development-branch presents the options.
 
+## Optional: Spec-Derived E2E Verification
+
+Applies only when a spec governing the code the plan touches — the spec
+the plan implements, or a repo spec covering that surface — contains an
+"E2E scenario cards" section, or your human partner asked for end-to-end
+verification. Otherwise this section does not apply — skip it entirely.
+
+- At skill start, when you read the plan, open the spec it names — and if
+  it names none, check the repo's spec directory (e.g.
+  `docs/superpowers/specs/`) for specs governing the code the plan
+  touches — and check for an "E2E scenario cards" section. If present,
+  add a pending "spec-derived e2e verification" item to your todo list
+  and the progress ledger so compaction cannot lose it.
+- After the final whole-branch review passes: use
+  superpowers:agentic-end-to-end-testing. Dispatch a card-author subagent
+  per its authoring-cards-from-a-spec.md, run its
+  scripts/check-cards-against-spec yourself on the author's output
+  (self-attestation is not the gate), then dispatch a runner subagent per
+  its runner-prompt.md against the built branch.
+- Card FAILs are findings: dispatch ONE fix subagent with the complete
+  list, then re-run the failed cards. The card author never fixes. Fix-wave
+  commits land after the final review, so give the fix diff its own
+  task-review gate before finishing — a green re-run alone does not ship
+  unreviewed changes.
+- Results land before superpowers:finishing-a-development-branch, so
+  "ready to merge" includes live-scenario evidence.
+
 ## Finish
 
 When the final whole-branch review is clean and its fixes are merged,
