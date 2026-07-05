@@ -211,6 +211,23 @@ against fixture spec/card pairs that include a falsification line containing
 are committed follows house precedent for skill scripts, settled in the
 plan.
 
+## As-shipped deviations (2026-07-04)
+
+Implementation evidence drove these departures from the design above; the
+shipped form governs.
+
+- **Checker check 3** matches the Falsification line only inside the card's
+  `## Expected` section, not the whole file — a whole-file match false-passed
+  in review (commit c6ae16d); the §4 "verbatim" wording above predates this.
+- **Brainstorming predicate** ships as "adds or changes user-visible
+  behavior," not "includes a user-facing surface" — the spec'd wording failed
+  the negative micro-test gate 0/4 (refactors of existing surfaces grew
+  spurious tables); the re-keyed wording passed 9/9.
+- **SDD trigger** also checks repo specs governing the code the plan
+  touches, not the plan-named spec alone — plan-named-spec-only wiring
+  skipped the step when the plan named no spec (GREEN iteration 1); the
+  opt-out for spec-less repos is preserved.
+
 ## Decisions
 
 - **Timing:** table early (spec time), cards late (post-implementation),
