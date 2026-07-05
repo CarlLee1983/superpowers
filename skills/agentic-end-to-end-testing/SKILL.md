@@ -51,6 +51,8 @@ Idempotent teardown so reruns are hermetic. Never touch state you didn't create.
 Footguns, timing/ordering caveats, nondeterminism noted while recording.
 ```
 
+When a design spec exists, cards derive from it — see [authoring-cards-from-a-spec.md](authoring-cards-from-a-spec.md); if the spec has an "E2E scenario cards" table, its falsification lines are verbatim contracts.
+
 ## The Run Loop
 
 1. **Preflight.** Build fresh from the code under test — the most common mistake is testing a stale binary. Rebuild every layer your change touches and confirm the running instance is the new one, not a process someone left up yesterday. Isolate hermetically: give the test instance its own HOME, port, and state directory so it can neither collide with nor pollute a real instance. Check credentials and models are in place. Run a minimal smoke check first — one where even a `401` is informative, because it means the server answered.
@@ -113,5 +115,5 @@ All of these mean: stop, run the real thing, look at the real output.
 
 ## Integration
 
-- Runs after superpowers:subagent-driven-development completes a feature, and before superpowers:finishing-a-development-branch decides how the work lands.
+- Runs after superpowers:subagent-driven-development completes a feature — which can end with spec-derived cards authored and run (see authoring-cards-from-a-spec.md) — and before superpowers:finishing-a-development-branch decides how the work lands.
 - Complements superpowers:verification-before-completion: that skill gates any success claim on having run the checks; this one defines what counts as proof when the behavior under test is user-facing.
