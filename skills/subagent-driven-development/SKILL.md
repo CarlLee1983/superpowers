@@ -509,6 +509,9 @@ Re-reviewer: Missing progress reporting — ADDRESSED (src/recovery.js:41).
 [Run review-package PLAN_FILE MERGE_BASE HEAD; dispatch final code-reviewer, most capable model]
 Final reviewer: All requirements met. Deferred minors triaged: none block merge.
 
+You: "Would you like me to run spec-derived E2E verification against the built branch?"
+your human partner: "No — proceed to finishing."
+
 [Delete this plan's workspace — the record now lives in git]
 
 Done! Using superpowers:finishing-a-development-branch.
