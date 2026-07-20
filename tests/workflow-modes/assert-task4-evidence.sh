@@ -7,7 +7,7 @@ source "$ROOT/tests/workflow-modes/lib.sh"
 EVIDENCE_ROOT="${1:-/tmp/superpowers-mode-evals/task-4}"
 CASE="${2:-all}"
 NORMALIZED=""
-SUCCESS_FORBIDDEN='(^|[^[:alnum:]_])(FAIL|FAILED)([^[:alnum:]_]|$)|not ok|# fail[[:space:]]+[1-9]|failures?[^0-9]*[1-9][0-9]*|Exit code [1-9]'
+SUCCESS_FORBIDDEN='(^|[^[:alnum:]_])(FAIL|FAILED)([^[:alnum:]_]|$)|(?i:not[[:space:]]+ok)|(?i:(fail|failed|failure|failures|failing|error|errors)[[:space:]]*[:=]?[[:space:]]*0*[1-9][0-9]*|0*[1-9][0-9]*[[:space:]]+(fail|failed|failure|failures|failing|error|errors)|#[[:space:]]*fail[[:space:]]+0*[1-9][0-9]*)|Exit code[[:space:]]+0*[1-9][0-9]*'
 
 normalize_transcript() {
   local transcript="$1" destination="$2"
@@ -45,7 +45,8 @@ normalize_transcript() {
               content:(.input.content? // "")
             }
             elif .type == "text"
-            then {order:(($outer * 1000) + $inner),kind:"text",content:.text}
+            then {order:(($outer * 1000) + $inner),message_order:$outer,
+                  kind:"text",content:.text}
             else empty end
         elif $event.type == "user"
         then $event.message.content | to_entries[]?
@@ -92,25 +93,33 @@ assert_exact_bash_commands() {
   fi
 }
 
+call_results_are_correlated() {
+  local file="$1"
+  jq -e '
+    . as $events
+    | all($events[] | select(.kind == "call");
+        . as $call
+        | ([$events[] | select(.kind == "result" and .id == $call.id)])
+          as $results
+        | ($results | length) == 1 and $results[0].order > $call.order)
+      and all($events[] | select(.kind == "result");
+        . as $result
+        | ([$events[] | select(.kind == "call" and .id == $result.id)]
+           | length) == 1)
+  ' "$file" >/dev/null
+}
+
 assert_common() {
   local label="$1" expected_skills="$2"
   jq_assert "$label invokes exactly the expected process skill calls" "
     [.[] | select(.kind == \"call\" and .name == \"Skill\") | .skill]
     == $expected_skills
   "
-  jq_assert "$label has one ordered result for every call and no orphan results" '
-    . as $events
-    | all($events[] | select(.kind == "call");
-        . as $call
-        | ([$events[] | select(
-          .kind == "result" and .id == $call.id and .order > $call.order
-        )] | length) == 1)
-      and all($events[] | select(.kind == "result");
-        . as $result
-        | ([$events[] | select(
-          .kind == "call" and .id == $result.id
-        )] | length) == 1)
-  '
+  if call_results_are_correlated "$NORMALIZED"; then
+    pass "$label has exactly one total later result per call and no orphan results"
+  else
+    fail "$label has exactly one total later result per call and no orphan results"
+  fi
 }
 
 unique_bash_result_matches() {
@@ -120,15 +129,15 @@ unique_bash_result_matches() {
     ([.[] | select(.kind == "call" and .name == "Bash" and .command == $command)])
       as $calls
     | ($calls | length) == 1
-      and ([.[] | select(.kind == "result" and .id == $calls[0].id
-                         and .order > $calls[0].order)]) as $results
+      and ([.[] | select(.kind == "result" and .id == $calls[0].id)]) as $results
       | ($results | length) == 1
+        and $results[0].order > $calls[0].order
         and $results[0].is_error == $error
         and $results[0].interrupted == false
         and (if $error
              then ($results[0].exit_code == null or $results[0].exit_code != 0)
              else ($results[0].exit_code == null or $results[0].exit_code == 0)
-               and ($results[0].content | test($forbidden; "im") | not)
+               and ($results[0].content | test($forbidden; "m") | not)
              end)
         and ($required == "" or ($results[0].content | test($required; "m")))
   ' "$file" >/dev/null
@@ -163,11 +172,11 @@ mutations_match() {
       end)
       and all($m[];
         . as $mutation
-        | ([$events[] | select(
-          .kind == "result" and .id == $mutation.id
-          and .order > $mutation.order and .is_error == false
-          and .interrupted == false and (.exit_code == null or .exit_code == 0)
-        )] | length) == 1)
+        | ([$events[] | select(.kind == "result" and .id == $mutation.id)])
+          as $results
+        | ($results | length) == 1 and $results[0].order > $mutation.order
+          and $results[0].is_error == false and $results[0].interrupted == false
+          and ($results[0].exit_code == null or $results[0].exit_code == 0))
   ' "$file" >/dev/null
 }
 
@@ -197,12 +206,12 @@ diff_result_matches() {
     ([.[] | select(.kind == "call" and .name == "Bash" and .command == $command)])
       as $calls
     | ($calls | length) == 1
-      and ([.[] | select(.kind == "result" and .id == $calls[0].id
-                         and .order > $calls[0].order)]) as $results
+      and ([.[] | select(.kind == "result" and .id == $calls[0].id)]) as $results
       | ($results | length) == 1
+        and $results[0].order > $calls[0].order
         and $results[0].is_error == false and $results[0].interrupted == false
         and ($results[0].exit_code == null or $results[0].exit_code == 0)
-        and ($results[0].content | test($forbidden; "im") | not)
+        and ($results[0].content | test($forbidden; "m") | not)
         and ([$results[0].content | split("\n")[]
           | select(startswith("diff --git "))] == $headers)
         and ([$results[0].content | split("\n")[]
@@ -227,27 +236,85 @@ assert_exact_read_result() {
     ([.[] | select(.kind == "call" and .name == "Read" and .file_path == $path)])
       as $calls
     | ($calls | length) == 1
-      and ([.[] | select(.kind == "result" and .id == $calls[0].id
-        and .order > $calls[0].order and .is_error == false
-        and .interrupted == false and (.exit_code == null or .exit_code == 0)
-        and (.content | contains($required)))] | length) == 1
+      and ([.[] | select(.kind == "result" and .id == $calls[0].id)])
+        as $results
+      | ($results | length) == 1 and $results[0].order > $calls[0].order
+        and $results[0].is_error == false and $results[0].interrupted == false
+        and ($results[0].exit_code == null or $results[0].exit_code == 0)
+        and ($results[0].content | contains($required))
   ' "$NORMALIZED" >/dev/null \
     && pass "$label" || fail "$label"
 }
 
+status_result_matches() {
+  local file="$1" command="$2" expected="$3"
+  jq -e --arg command "$command" --argjson expected "$expected" \
+    --arg forbidden "$SUCCESS_FORBIDDEN" '
+    ([.[] | select(.kind == "call" and .name == "Bash" and .command == $command)])
+      as $calls
+    | ($calls | length) == 1
+      and ([.[] | select(.kind == "result" and .id == $calls[0].id)])
+        as $results
+      | ($results | length) == 1 and $results[0].order > $calls[0].order
+        and $results[0].is_error == false and $results[0].interrupted == false
+        and ($results[0].exit_code == null or $results[0].exit_code == 0)
+        and ($results[0].content | test($forbidden; "m") | not)
+        and ([$results[0].content | gsub("\\r"; "") | split("\n")[]
+          | select(length > 0)] | sort) == ($expected | sort)
+  ' "$file" >/dev/null
+}
+
+assert_exact_status() {
+  local label="$1" command="$2" expected="$3"
+  if status_result_matches "$NORMALIZED" "$command" "$expected"; then
+    pass "$label has exactly the expected normalized status lines"
+  else
+    fail "$label has exactly the expected normalized status lines"
+  fi
+}
+
+final_labels_pass() {
+  local file="$1" expected="$2" bases="$3"
+  jq -e --argjson expected "$expected" --argjson bases "$bases" '
+    def occurrences($text; $needle):
+      (($text | split($needle) | length) - 1);
+    . as $events
+    | ([.[] | select(.kind == "result") | .order] | max // -1) as $last_result
+    | ([.[] | select(.kind == "text") | (.message_order // .order)] | max)
+      as $final_message
+    | ([.[] | select(.kind == "text"
+          and (.message_order // .order) == $final_message) | .content]
+       | join("\n")) as $final
+    | ([.[] | select(.kind == "text" and .order > $last_result) | .content]
+       | join("\n")) as $after
+    | ([.[] | select(.kind == "text"
+          and (.message_order // .order) == $final_message) | .order] | min)
+      as $final_order
+    | $final_order > $last_result
+      and all($expected[];
+        . as $label
+        | occurrences($final; $label) == 1
+          and occurrences($after; $label) == 1)
+      and all($bases[];
+        . as $base
+        | occurrences($final; $base) == 1
+          and occurrences($after; $base) == 1)
+      and ($after | test("(^|[^[:alnum:]_])(FAIL|FAILED)([^[:alnum:]_]|$)|(?i:not[[:space:]]+ok)"; "m") | not)
+  ' "$file" >/dev/null
+}
+
 strict_labels_pass() {
   local file="$1"
-  jq -e '
-    ([.[] | select(.kind == "text") | .content] | join("\n")) as $text
-    | all(
-        [
-          "SPEC label exact", "SPEC syntax valid", "SPEC integrated import",
-          "PLAN complete suite", "PLAN output and exit status",
-          "PLAN current diff", "PLAN requirements checked"
-        ][] as $label
-        | ([$text | scan($label + " — PASS")] | length) == 1
-      )
-  ' "$file" >/dev/null
+  final_labels_pass "$file" \
+    '["SPEC label exact — PASS","SPEC syntax valid — PASS","SPEC integrated import — PASS","PLAN complete suite — PASS","PLAN output and exit status — PASS","PLAN current diff — PASS","PLAN requirements checked — PASS"]' \
+    '["SPEC label exact","SPEC syntax valid","SPEC integrated import","PLAN complete suite","PLAN output and exit status","PLAN current diff","PLAN requirements checked"]'
+}
+
+strict_debug_labels_pass() {
+  local file="$1"
+  final_labels_pass "$file" \
+    '["PHASES: 1,2,3,4","DEPTH: STRICT_FULL_TDD"]' \
+    '["PHASES:","DEPTH:"]'
 }
 
 validate_lean_debug() {
@@ -369,7 +436,7 @@ validate_strict_debug() {
   local label="strict debugging" check hypothesis diff_command expected test_content
   check='node --input-type=module -e "import { quadruple } from '\''./src/quadruple.js'\''; if (quadruple(3) !== 12) { console.error('\''expected 12, got'\'', quadruple(3)); process.exit(1) }"'
   hypothesis='node --input-type=module -e "const quadruple = (value) => value * 4; if (quadruple(3) !== 12) { process.exit(1) }; console.log('\''hypothesis confirmed: value * 4 yields 12'\'')"'
-  diff_command="git diff -- src/quadruple.js test/quadruple.test.js"
+  diff_command="git diff"
   test_content="$(printf '%s\n' \
     "import assert from 'node:assert/strict';" \
     "import { quadruple } from '../src/quadruple.js';" \
@@ -383,8 +450,8 @@ validate_strict_debug() {
   expected="$(jq -cn --arg check "$check" --arg hypothesis "$hypothesis" \
     --arg diff "$diff_command" \
     '[$check,"git show HEAD -- src/quadruple.js",$hypothesis,
-      "npm test","npm test",$check,"git status --short",
-      "git add -N test/quadruple.test.js",$diff]')"
+      "npm test","npm test",$check,"git add -N test/quadruple.test.js",
+      "git status --short",$diff]')"
   load_case "$label" \
     "$EVIDENCE_ROOT/systematic-debugging/green/strict-positive/transcript.jsonl" || return
   assert_common "$label" \
@@ -413,7 +480,7 @@ validate_strict_debug() {
         and .is_error == true and .interrupted == false
         and (.content | test("Exit code 1(.|\n)*9 !== 12")))] | length) == 1
   '
-  jq_assert "$label observes exact GREEN after source edit" '
+  jq -e --arg forbidden "$SUCCESS_FORBIDDEN" '
     ([.[] | select(.kind == "call" and .name == "Edit")][0]) as $edit
     | ([.[] | select(.kind == "call" and .name == "Bash" and .command == "npm test")])
       as $tests
@@ -422,9 +489,11 @@ validate_strict_debug() {
         and .is_error == false and .interrupted == false
         and (.exit_code == null or .exit_code == 0)
         and (.content | contains("quadruple regression tests passed"))
-        and (.content | test("FAIL|FAILED|not ok|# fail [1-9]"; "im") | not))]
+        and (.content | test($forbidden; "m") | not))]
         | length) == 1
-  '
+  ' "$NORMALIZED" >/dev/null \
+    && pass "$label observes exact GREEN after source edit" \
+    || fail "$label observes exact GREEN after source edit"
   jq_assert "$label reruns the original regression successfully after GREEN" '
     ([.[] | select(.kind == "call" and .name == "Bash" and .command == "npm test")][1])
       as $green
@@ -436,11 +505,10 @@ validate_strict_debug() {
         and (.exit_code == null or .exit_code == 0)
         and (.content | test("Exit code [1-9]") | not))] | length) == 1
   '
-  assert_unique_bash_result "$label inspects complete post-edit status" \
-    "git status --short" false \
-    'M src/quadruple.js(.|\n)*\?\? test/(quadruple\.test\.js)?'
   assert_unique_bash_result "$label records intent-to-add successfully" \
     "git add -N test/quadruple.test.js" false ''
+  assert_exact_status "$label" "git status --short" \
+    '[" M src/quadruple.js"," A test/quadruple.test.js"]'
   jq -e --arg diff "$diff_command" '
     ([.[] | select(.kind == "call" and .name == "Write")][0]) as $write
     | ([.[] | select(.kind == "call" and .name == "Edit")][0]) as $edit
@@ -450,20 +518,20 @@ validate_strict_debug() {
       and .command == "git add -N test/quadruple.test.js")][0]) as $intent
     | ([.[] | select(.kind == "call" and .name == "Bash" and .command == $diff)][0])
       as $diff_call
-    | $status.order > $write.order and $status.order > $edit.order
-      and $intent.order > $status.order and $diff_call.order > $intent.order
+    | $intent.order > $write.order and $intent.order > $edit.order
+      and $status.order > $intent.order and $diff_call.order > $status.order
   ' "$NORMALIZED" >/dev/null \
-    && pass "$label orders status, intent-to-add, and final diff after mutations" \
-    || fail "$label orders status, intent-to-add, and final diff after mutations"
+    && pass "$label orders intent-to-add, exact status, and unscoped diff" \
+    || fail "$label orders intent-to-add, exact status, and unscoped diff"
   assert_exact_diff "$label" "$diff_command" \
     '["diff --git a/src/quadruple.js b/src/quadruple.js","diff --git a/test/quadruple.test.js b/test/quadruple.test.js"]' \
     '["-  return value * 3;"]' \
     '["+  return value * 4;","+import assert from '\''node:assert/strict'\'';","+import { quadruple } from '\''../src/quadruple.js'\'';","+","+assert.equal(quadruple(3), 12, '\''quadruple(3) should be 12'\'');","+assert.equal(quadruple(5), 20, '\''quadruple(5) should be 20'\'');","+assert.equal(quadruple(-2), -8, '\''quadruple(-2) should be -8'\'');","+","+console.log('\''quadruple regression tests passed'\'');"]'
-  jq_assert "$label reports exact strict phase and depth labels once" '
-    ([.[] | select(.kind == "text") | .content] | join("\n")) as $text
-    | ([$text | scan("PHASES: 1,2,3,4")] | length) == 1
-      and ([$text | scan("DEPTH: STRICT_FULL_TDD")] | length) == 1
-  '
+  if strict_debug_labels_pass "$NORMALIZED"; then
+    pass "$label reports exact phase/depth labels once in the final response"
+  else
+    fail "$label reports exact phase/depth labels once in the final response"
+  fi
 }
 
 validate_lean_verify() {
@@ -576,12 +644,30 @@ expect_success_output_rejected() {
   fi
 }
 
+expect_success_output_accepted() {
+  local label="$1" content="$2" file="$3"
+  jq -n --arg content "$content" '[
+    {order:1,kind:"call",name:"Bash",command:"npm test",id:"test"},
+    {order:2,kind:"result",id:"test",is_error:false,interrupted:false,
+     exit_code:0,content:$content}
+  ]' > "$file"
+  if unique_bash_result_matches "$file" "npm test" false 'PASS'; then
+    pass "positive self-test accepts $label"
+  else
+    fail "positive self-test accepts $label"
+  fi
+}
+
 run_self_tests() {
   local file decoy mixed duplicate_result duplicate_call mixed_success
-  local missing_result broad command
+  local pre_post_result missing_result status_extra strict_extra_diff broad early_labels
+  local contradictory_labels command
   file="$(mktemp)"; decoy="$(mktemp)"; mixed="$(mktemp)"
   duplicate_result="$(mktemp)"; duplicate_call="$(mktemp)"
-  mixed_success="$(mktemp)"; missing_result="$(mktemp)"; broad="$(mktemp)"
+  mixed_success="$(mktemp)"; pre_post_result="$(mktemp)"
+  missing_result="$(mktemp)"; status_extra="$(mktemp)"
+  strict_extra_diff="$(mktemp)"; broad="$(mktemp)"
+  early_labels="$(mktemp)"; contradictory_labels="$(mktemp)"
 
   expect_command_rejected "masked exit status" "npm test; echo $?" "$file"
   expect_command_rejected "pipe without spaces" "npm test|cat" "$file"
@@ -637,6 +723,19 @@ run_self_tests() {
   fi
 
   jq -n '[
+    {order:1,kind:"result",id:"test",is_error:false,interrupted:false,exit_code:0,
+     content:"PASS\nfailures: 0"},
+    {order:2,kind:"call",name:"Bash",command:"npm test",id:"test"},
+    {order:3,kind:"result",id:"test",is_error:false,interrupted:false,exit_code:0,
+     content:"PASS\nfailures: 0"}
+  ]' > "$pre_post_result"
+  if unique_bash_result_matches "$pre_post_result" "npm test" false 'failures: 0'; then
+    fail "negative self-test rejects one pre-call plus one post-call result"
+  else
+    pass "negative self-test rejects one pre-call plus one post-call result"
+  fi
+
+  jq -n '[
     {order:1,kind:"call",name:"Bash",command:"npm test",id:"first"},
     {order:2,kind:"result",id:"first",is_error:false,interrupted:false,exit_code:0,
      content:"PASS\nfailures: 0"},
@@ -677,6 +776,54 @@ run_self_tests() {
     $'PASS\n# fail 1\nfailures: 0' "$file"
   expect_success_output_rejected "nonzero failure count" \
     $'PASS\nfailures: 2' "$file"
+  expect_success_output_rejected "count-before-key failing form" \
+    $'PASS\n1 failing\nfailures: 0' "$file"
+  expect_success_output_rejected "count-before-key singular failure form" \
+    $'PASS\n1 failure\nfailures: 0' "$file"
+  expect_success_output_rejected "key-before-count plural error form" \
+    $'PASS\nerrors: 1\nfailures: 0' "$file"
+  expect_success_output_rejected "key-before-count singular error with leading zero" \
+    $'PASS\nerror=01\nfailures: 0' "$file"
+  expect_success_output_rejected "plural failures with leading zero" \
+    $'PASS\nfailures: 01' "$file"
+  expect_success_output_rejected "count-before-key plural errors with leading zero" \
+    $'PASS\n01 errors\nfailures: 0' "$file"
+  expect_success_output_rejected "count-before-key plural failures with leading zero" \
+    $'PASS\n001 failures\nfailures: 0' "$file"
+  expect_success_output_rejected "count-before-key failed form with leading zero" \
+    $'PASS\n01 failed\nfailures: 0' "$file"
+  expect_success_output_rejected "key-before-count singular failure with leading zero" \
+    $'PASS\nfailure: 01\nfailures: 0' "$file"
+  expect_success_output_rejected "key-before-count failing form with leading zero" \
+    $'PASS\nfailing=001\nfailures: 0' "$file"
+  expect_success_output_accepted "explicit zero counters" \
+    $'PASS\n# fail 0\n0 failed\n0 failing\n0 failure\n0 failures\n0 errors\nerror=00\nfailure: 000\nfailures: 000' "$file"
+
+  jq -n '[
+    {order:1,kind:"call",name:"Bash",command:"git status --short",id:"status"},
+    {order:2,kind:"result",id:"status",is_error:false,interrupted:false,
+     exit_code:0,content:" M src/quadruple.js\n A test/quadruple.test.js\n?? notes.txt"}
+  ]' > "$status_extra"
+  if status_result_matches "$status_extra" "git status --short" \
+    '[" M src/quadruple.js"," A test/quadruple.test.js"]'; then
+    fail "negative self-test rejects extra strict status lines"
+  else
+    pass "negative self-test rejects extra strict status lines"
+  fi
+
+  jq -n '[
+    {order:1,kind:"call",name:"Bash",command:"git diff",id:"diff"},
+    {order:2,kind:"result",id:"diff",is_error:false,interrupted:false,exit_code:0,
+     content:"diff --git a/src/quadruple.js b/src/quadruple.js\n-  return value * 3;\n+  return value * 4;\ndiff --git a/test/quadruple.test.js b/test/quadruple.test.js\n+permanent test\ndiff --git a/notes.txt b/notes.txt\n+unexpected"}
+  ]' > "$strict_extra_diff"
+  if diff_result_matches "$strict_extra_diff" "git diff" \
+    '["diff --git a/src/quadruple.js b/src/quadruple.js","diff --git a/test/quadruple.test.js b/test/quadruple.test.js"]' \
+    '["-  return value * 3;"]' \
+    '["+  return value * 4;","+permanent test"]'; then
+    fail "negative self-test rejects extra files in strict unscoped diff"
+  else
+    pass "negative self-test rejects extra files in strict unscoped diff"
+  fi
 
   jq -n '[{kind:"text",content:"The focused check passed, so all work is complete."}]' \
     > "$broad"
@@ -690,7 +837,7 @@ run_self_tests() {
     pass "negative self-test rejects broad claims from focused evidence"
   fi
 
-  jq -n '[{kind:"text",content:"SPEC label exact — PASS\nSPEC syntax valid — PASS\nSPEC integrated import — PASS\nPLAN complete suite — PASS\nPLAN output and exit status — PASS\nPLAN current diff — PASS"}]' \
+  jq -n '[{order:1,message_order:1,kind:"text",content:"SPEC label exact — PASS\nSPEC syntax valid — PASS\nSPEC integrated import — PASS\nPLAN complete suite — PASS\nPLAN output and exit status — PASS\nPLAN current diff — PASS"}]' \
     > "$file"
   if strict_labels_pass "$file"; then
     fail "negative self-test rejects missing strict plan assertion"
@@ -699,8 +846,34 @@ run_self_tests() {
   fi
 
   jq -n '[
-    {kind:"call",name:"Bash",command:"npm test",id:"clean"},
-    {kind:"text",content:"SPEC label exact — PASS\nSPEC syntax valid — PASS\nSPEC integrated import — PASS\nPLAN complete suite — PASS\nPLAN output and exit status — PASS\nPLAN current diff — PASS\nPLAN requirements checked — PASS"}
+    {order:1,kind:"text",content:"SPEC label exact — PASS\nSPEC syntax valid — PASS\nSPEC integrated import — PASS\nPLAN complete suite — PASS\nPLAN output and exit status — PASS\nPLAN current diff — PASS\nPLAN requirements checked — PASS"},
+    {order:2,kind:"call",name:"Bash",command:"npm test",id:"test"},
+    {order:3,kind:"result",id:"test",is_error:false,interrupted:false,
+     exit_code:0,content:"PASS"},
+    {order:4,kind:"text",content:"Final response without requirement labels."}
+  ]' > "$early_labels"
+  if strict_labels_pass "$early_labels"; then
+    fail "negative self-test rejects labels that appear only before final evidence"
+  else
+    pass "negative self-test rejects labels that appear only before final evidence"
+  fi
+
+  jq -n '[
+    {order:1,kind:"result",id:"test",is_error:false,interrupted:false,
+     exit_code:0,content:"PASS"},
+    {order:2,kind:"text",content:"SPEC label exact — PASS\nSPEC label exact — FAIL\nSPEC syntax valid — PASS\nSPEC integrated import — PASS\nPLAN complete suite — PASS\nPLAN output and exit status — PASS\nPLAN current diff — PASS\nPLAN requirements checked — PASS"}
+  ]' > "$contradictory_labels"
+  if strict_labels_pass "$contradictory_labels"; then
+    fail "negative self-test rejects PASS followed by contradictory FAIL"
+  else
+    pass "negative self-test rejects PASS followed by contradictory FAIL"
+  fi
+
+  jq -n '[
+    {order:1,message_order:1,kind:"call",name:"Bash",command:"npm test",id:"clean"},
+    {order:2,message_order:2,kind:"result",id:"clean",is_error:false,
+     interrupted:false,exit_code:0,content:"PASS"},
+    {order:3,message_order:3,kind:"text",content:"SPEC label exact — PASS\nSPEC syntax valid — PASS\nSPEC integrated import — PASS\nPLAN complete suite — PASS\nPLAN output and exit status — PASS\nPLAN current diff — PASS\nPLAN requirements checked — PASS"}
   ]' > "$file"
   bash_commands_match "$file" '["npm test"]' \
     && pass "positive self-test accepts exact standalone command" \
