@@ -25,14 +25,6 @@ BOOTSTRAP_PATHS = (
     "skills/selecting-workflow-mode/SKILL.md",
     "skills/selecting-workflow-mode/references/risk-matrix.md",
 )
-PAUSE_TOPICS = re.compile(
-    r"\b(requirements?|constraints?|design|migration|rollback|approval|approve|"
-    r"confirm|clarif\w*|risk|compatib\w*|public|api|payment|billing|amount|"
-    r"retain|remove|alias|version|clients?|consumers?)\b",
-    re.IGNORECASE,
-)
-
-
 class ValidationError(Exception):
     pass
 
@@ -155,26 +147,36 @@ def is_claude_bootstrap(
         return False
     if name == "Skill":
         skill = tool_input.get("skill")
-        return isinstance(skill, str) and skill.split(":")[-1] in {
-            "using-superpowers",
+        return isinstance(skill, str) and skill in {
             "selecting-workflow-mode",
+            "superpowers:selecting-workflow-mode",
         }
     if name == "Read":
         path = tool_input.get("file_path")
         if not isinstance(path, str) or expected_root is None:
             return False
+        root = expected_root.resolve(strict=False)
         candidate = Path(path)
-        allowed = {
-            expected_root / "skills/selecting-workflow-mode/SKILL.md",
-            expected_root
-            / "skills/selecting-workflow-mode/references/risk-matrix.md",
+        allowed_relatives = {
+            Path("skills/selecting-workflow-mode/SKILL.md"),
+            Path("skills/selecting-workflow-mode/references/risk-matrix.md"),
         }
-        if not candidate.is_absolute() or candidate not in allowed:
+        if not candidate.is_absolute() or ".." in candidate.parts:
             return False
-        return any(
-            candidate.resolve() == allowed_path.resolve()
-            for allowed_path in allowed
-        )
+        try:
+            relative = candidate.relative_to(expected_root.absolute())
+        except ValueError:
+            return False
+        if relative not in allowed_relatives:
+            return False
+        if candidate.resolve(strict=False) != root / relative:
+            return False
+        current = root
+        for part in relative.parts:
+            current /= part
+            if current.is_symlink():
+                return False
+        return True
     return False
 
 
@@ -372,9 +374,17 @@ def require_pattern(text: str, pattern: str, description: str) -> None:
 
 def require_relevant_pause(text: str) -> None:
     sentences = re.split(r"(?<=[?.!])\s+|\n+", text)
+    decision_object = re.compile(
+        r"\b(?:requirements?|constraints?|rollback|design|migration|rollout|"
+        r"compatib\w*|clients?|consumers?|schema|data|deprecat\w*|break\w*|"
+        r"aliases?|amount|cents?|retain|remove|versions?|support|proceed|"
+        r"implement\w*|options?|choices?)\b",
+        re.IGNORECASE,
+    )
     decision_patterns = (
         r"\b(?:which|what)\b.{0,120}\b(?:requirements?|constraints?|rollback|"
-        r"design|migration|compatib\w*|clients?|consumers?|api|payment|billing)\b",
+        r"design|migration|compatib\w*|clients?|consumers?|schema|data|"
+        r"deprecat\w*|break\w*|aliases?|amount|versions?|options?|choices?)\b",
         r"\b(?:can|could|would|do|will)\s+you\s+(?:please\s+)?"
         r"(?:approve|confirm|clarify|choose|provide|review)\b",
         r"\b(?:should|shall)\b.{0,120}\b(?:retain|remove|approve|confirm|choose|"
@@ -399,10 +409,19 @@ def require_relevant_pause(text: str) -> None:
             re.search(pattern, sentence, re.IGNORECASE)
             for pattern in decision_patterns
         )
+        asks_for_opinion = re.search(
+            r"\b(?:like|opinion|feel\s+about|think\s+about)\b",
+            sentence,
+            re.IGNORECASE,
+        )
         is_pause_form = (
             "?" in sentence and has_decision
         ) or has_imperative or awaits_user
-        if is_pause_form and PAUSE_TOPICS.search(sentence):
+        if (
+            is_pause_form
+            and decision_object.search(sentence)
+            and not asks_for_opinion
+        ):
             return
     raise ValidationError(
         "assistant-visible text lacks relevant clarification/approval pause"
@@ -419,21 +438,39 @@ def require_affirmative_brainstorming(text: str) -> None:
         r"\bbrainstorming\b.{0,100}\b(?:I|we)(?:'ll|\s+will)\s+"
         r"(?:invoke|run|use)\s+(?:that|the)\s+skill\b",
     )
-    affirmative = False
+    negative_patterns = (
+        r"\b(?:I|we)\s+(?:(?:am|are|was|were|have|has|had|do|does|did|"
+        r"will|would|can|could|'m|'re|'ve|'ll)\s+)?(?:not|never)\s+"
+        r"(?:actually\s+)?(?:using|invoking|running|used|invoked|ran|use|"
+        r"invoke|run)\s+(?:the\s+)?brainstorming(?:\s+skill)?\b",
+        r"\b(?:I|we)\s+(?:won't|wouldn't|can't|couldn't|don't|doesn't|didn't)\s+"
+        r"(?:actually\s+)?(?:use|invoke|run)\s+(?:the\s+)?"
+        r"brainstorming(?:\s+skill)?\b",
+        r"\b(?:not|never)\s+(?:actually\s+)?(?:using|invoking|running|used|"
+        r"invoked|run)\s*,?\s*(?:the\s+)?brainstorming(?:\s+skill)?\b",
+        r"\bbrainstorming\s+skill\s+(?:is|was|will\s+be)\s+not\s+"
+        r"(?:used|invoked|run|running)\b",
+    )
+    invocation_polarity: bool | None = None
     for clause in clauses:
-        if re.search(r"\b(?:not|never|without|neither|no)\b", clause, re.IGNORECASE):
-            continue
-        if any(re.search(pattern, clause, re.IGNORECASE) for pattern in affirmative_patterns):
-            affirmative = True
-            break
-    if not affirmative:
+        if any(
+            re.search(pattern, clause, re.IGNORECASE)
+            for pattern in negative_patterns
+        ):
+            invocation_polarity = False
+        elif any(
+            re.search(pattern, clause, re.IGNORECASE)
+            for pattern in affirmative_patterns
+        ):
+            invocation_polarity = True
+    if invocation_polarity is not True:
         raise ValidationError(
             "assistant-visible text lacks affirmative brainstorming skill use/invocation"
         )
     candidates: set[str] = set()
     negative = re.compile(
         r"\b(?:reject(?:ed)?|avoid|ruled\s+out|do\s+not\s+use|"
-        r"not\s+an?\s+option|current[- ]only)\b",
+        r"not\s+an?\s+option|not\s+recommended|current[- ]only)\b",
         re.IGNORECASE,
     )
     label = re.compile(
@@ -451,28 +488,37 @@ def require_affirmative_brainstorming(text: str) -> None:
         r"([a-z][A-Za-z0-9]*(?:[A-Z_][A-Za-z0-9_]*)+))"
     )
     for line in text.splitlines():
-        negative_line = (
-            negative.search(line)
-            or "~~" in line
-            or re.search(
-                r"^\s*(?:current|existing)\s+(?:candidate|option|identifier)\b",
-                line,
-                re.IGNORECASE,
-            )
-        )
-        if negative_line:
-            continue
-        for match in label.finditer(line):
-            candidates.add(match.group(1))
-        group_match = group.search(line)
-        if group_match:
-            for segment in re.split(r"\s+(?:and|or)\s+|,", group_match.group(1)):
-                identifier = re.search(r"`?([A-Za-z_][A-Za-z0-9_-]*)`?", segment)
-                if identifier:
-                    candidates.add(identifier.group(1))
-        bullet_match = bullet.search(line)
-        if bullet_match:
-            candidates.add(bullet_match.group(1) or bullet_match.group(2))
+        for unit in line.split(";"):
+            if (
+                "~~" in unit
+                or re.search(
+                    r"^\s*(?:current|existing)\s+"
+                    r"(?:candidates?|options?|identifiers?)\b",
+                    unit,
+                    re.IGNORECASE,
+                )
+            ):
+                continue
+            group_match = group.search(unit)
+            if group_match:
+                for segment in re.split(
+                    r"\s+(?:and|or)\s+|,", group_match.group(1)
+                ):
+                    if negative.search(segment) or "~~" in segment:
+                        continue
+                    identifier = re.search(
+                        r"`?([A-Za-z_][A-Za-z0-9_-]*)`?", segment
+                    )
+                    if identifier:
+                        candidates.add(identifier.group(1))
+                continue
+            if negative.search(unit):
+                continue
+            for match in label.finditer(unit):
+                candidates.add(match.group(1))
+            bullet_match = bullet.search(unit)
+            if bullet_match:
+                candidates.add(bullet_match.group(1) or bullet_match.group(2))
     if len(candidates) < 2:
         raise ValidationError(
             "assistant-visible brainstorming lacks at least two distinct positive options"

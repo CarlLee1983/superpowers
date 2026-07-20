@@ -452,6 +452,81 @@ class ValidatorTest(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_claude_read_rejects_symlinked_allowed_path_components(self) -> None:
+        checkout = self.root / "checkout"
+        selector = checkout / "skills/selecting-workflow-mode/SKILL.md"
+        selector.parent.mkdir(parents=True)
+        outside = self.root / "outside-selector.md"
+        outside.write_text("outside")
+        selector.symlink_to(outside)
+        outside_references = self.root / "outside-references"
+        outside_references.mkdir()
+        (outside_references / "risk-matrix.md").write_text("outside")
+        references = selector.parent / "references"
+        references.symlink_to(outside_references, target_is_directory=True)
+        for path in (selector, references / "risk-matrix.md"):
+            with self.subTest(path=path):
+                events = [
+                    claude_init(path=str(checkout)),
+                    claude_tool_event("Read", {"file_path": str(path)}),
+                    claude_event(
+                        "Mode: lean — localized correction.\nVerification passed."
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator(
+                    "claude",
+                    "lean",
+                    events,
+                    plugin_identity=True,
+                    expected_plugin_root=str(checkout),
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "task-specific action before mode declaration", result.stderr
+                )
+
+    def test_claude_skill_bootstrap_uses_exact_names_not_suffixes(self) -> None:
+        for skill in (
+            "selecting-workflow-mode",
+            "superpowers:selecting-workflow-mode",
+        ):
+            with self.subTest(valid_skill=skill):
+                events = [
+                    claude_init(),
+                    claude_tool_event("Skill", {"skill": skill}),
+                    claude_event(
+                        "Mode: lean — localized correction.\nVerification passed."
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator(
+                    "claude", "lean", events, plugin_identity=True
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+        for skill in (
+            "evil:selecting-workflow-mode",
+            "evil:superpowers:selecting-workflow-mode",
+            "using-superpowers",
+        ):
+            with self.subTest(invalid_skill=skill):
+                events = [
+                    claude_init(),
+                    claude_tool_event("Skill", {"skill": skill}),
+                    claude_event(
+                        "Mode: lean — localized correction.\nVerification passed."
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator(
+                    "claude", "lean", events, plugin_identity=True
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "task-specific action before mode declaration", result.stderr
+                )
+
     def test_codex_rejects_task_command_before_mode_declaration(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},
@@ -689,6 +764,10 @@ class ValidatorTest(unittest.TestCase):
             "Mode: strict — migration design is complete. Done.",
             "Mode: strict — migration design is complete. What time is it?",
             "Mode: strict — migration design is complete. Do you like this API?",
+            "Mode: strict — migration design is complete. What do you like about this API?",
+            "Mode: strict — migration design is complete. Do you approve this API?",
+            "Mode: strict — migration design is complete. Please approve lunch.",
+            "Mode: strict — migration design is complete. Please confirm API.",
             "Mode: strict — migration design is complete. I approve this API design.",
             "Mode: strict — migration design is complete. We confirm API compatibility.",
             "Mode: strict — migration design is complete. I approve this API design?",
@@ -718,6 +797,24 @@ class ValidatorTest(unittest.TestCase):
                 events = [
                     {"type": "thread.started", "thread_id": "thread"},
                     codex_event(f"Mode: strict — payment migration.\n{question}"),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "strict", events)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_preserved_real_decision_phrasings(self) -> None:
+        phrasings = (
+            "First decision: must existing API clients continue working during a "
+            "deprecation window, or may the cents-based API be an immediate "
+            "breaking release?",
+            "Should the old amount key be removed immediately, or temporarily "
+            "retained as a compatibility alias alongside amountCents?",
+        )
+        for phrasing in phrasings:
+            with self.subTest(phrasing=phrasing):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(f"Mode: strict — payment migration.\n{phrasing}"),
                     {"type": "turn.completed", "usage": {}},
                 ]
                 result = self.run_validator("codex", "strict", events)
@@ -786,6 +883,54 @@ class ValidatorTest(unittest.TestCase):
         ]
         result = self.run_validator("codex", "explicit-skill", events)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_explicit_skill_uses_final_invocation_polarity(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit override.\n"
+                "I am using the brainstorming skill.\n"
+                "Options are welcomeUser and greetUser.\n"
+                "I am not using the brainstorming skill after all."
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "explicit-skill", events)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("affirmative brainstorming", result.stderr)
+
+    def test_explicit_skill_parses_candidate_polarity_per_clause(self) -> None:
+        positives = (
+            "Options are welcomeUser and greetUser; avoid currentName.",
+            "Candidate: welcomeUser; rejected candidate: currentName; Option: greetUser.",
+            "Option: welcomeUser; ~~Option: currentName~~; Option: greetUser.",
+        )
+        for candidates in positives:
+            with self.subTest(candidates=candidates):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: lean — explicit override.\n"
+                        "I am using the brainstorming skill.\n"
+                        f"{candidates}"
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "explicit-skill", events)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+        negative = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit override.\n"
+                "I am using the brainstorming skill.\n"
+                "Option: welcomeUser; not recommended candidate: currentName."
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "explicit-skill", negative)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("two distinct positive", result.stderr)
 
     def test_claude_requires_exact_inline_checkout_plugin_identity(self) -> None:
         for init in (
