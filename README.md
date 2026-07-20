@@ -15,15 +15,20 @@ Give your agent Superpowers: [Claude Code](#claude-code), [Antigravity](#antigra
 
 ## How it works
 
-It starts from the moment you fire up your coding agent. As soon as it sees that you're building something, it *doesn't* just jump into trying to write code. Instead, it steps back and asks you what you're really trying to do. 
+Every task starts with workflow-mode selection based on risk, uncertainty,
+reversibility, blast radius, and external effects. The selected mode controls
+how much process the task needs:
 
-Once it's teased a spec out of the conversation, it shows it to you in chunks short enough to actually read and digest. 
+- **Lean** implements clear, reversible work directly with focused verification.
+- **Standard** gives a short inline design and execution outline, then proceeds
+  without an approval pause.
+- **Strict** runs the full questions, design, plan, TDD, and subagent workflow,
+  including approval checkpoints and independent review.
 
-After you've signed off on the design, your agent puts together an implementation plan that's clear enough for an enthusiastic junior engineer with poor taste, no judgement, no project context, and an aversion to testing to follow. It emphasizes true red/green TDD, YAGNI (You Aren't Gonna Need It), and DRY. 
-
-Next up, once you say "go", it launches a *subagent-driven-development* process, having agents work through each engineering task, inspecting and reviewing their work, and continuing forward. It's not uncommon for your agent to work autonomously for a couple hours at a time without deviating from the plan you put together.
-
-There's a bunch more to it, but that's the core of the system. And because the skills trigger automatically, you don't need to do anything special. Your coding agent just has Superpowers.
+The detailed questions, approved design, written plan, red/green TDD, and
+subagent-driven sequence described below is strict-only. Lean and standard use
+their reduced contracts. Because skills trigger automatically, you do not need
+to opt in per task.
 
 ## Commercial Services
 

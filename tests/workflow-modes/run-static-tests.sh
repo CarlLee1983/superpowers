@@ -2,6 +2,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
+TEST_DIR="${WORKFLOW_MODES_TEST_DIR:-$DIR}"
 
 for test in \
   test-selector-contract.sh \
@@ -11,5 +12,5 @@ for test in \
   test-docs-and-version.sh
 do
   printf '\n== %s ==\n' "$test"
-  "$DIR/$test"
+  "$TEST_DIR/$test"
 done
