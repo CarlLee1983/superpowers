@@ -7,56 +7,40 @@ description: Use when starting any conversation - establishes how to find and us
 If you were dispatched as a subagent to execute a specific task, ignore this skill.
 </SUBAGENT-STOP>
 
-<EXTREMELY-IMPORTANT>
-If you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.
+# Using Superpowers
 
-IF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.
+Use relevant skills before acting. User instructions take precedence over
+skills, and skills take precedence over default behavior.
 
-This is not negotiable. You cannot rationalize your way out of this.
-</EXTREMELY-IMPORTANT>
+## Task entry
 
-## The Rule
+For every new user task:
 
-**Invoke relevant or requested skills BEFORE any response or action** — including clarifying questions, exploring the codebase, or checking files. If it turns out wrong for the situation, you don't have to use it.
+1. Invoke `selecting-workflow-mode`.
+2. Declare the selected mode once.
+3. Discover domain skills and mode-permitted process skills.
+4. Announce each skill when it causes an action or pause.
 
-**Before entering plan mode:** if you haven't already brainstormed, invoke the brainstorming skill first.
+After the selector returns, the next assistant output is its exact `Mode:`
+declaration line. Task entry is incomplete until that line is output.
 
-Then announce "Using [skill] to [purpose]" and follow the skill exactly. If it has a checklist, create a todo per item.
+Do not invoke a general process skill before a mode is active.
 
-## Skill Priority
+## Skill selection
 
-When multiple skills apply, process skills come first — they set the approach, then implementation skills (frontend-design, etc.) carry it out. Brainstorming and systematic-debugging are Superpowers' most common process skills, but the rule holds for any of them.
+- Domain and artifact skills remain available in every mode.
+- Explicitly requested skills still run.
+- Process skills must honor their workflow-mode gate.
+- If a process skill finds no active mode, return here and select one.
+- Skills consume the active mode; they do not classify independently.
 
-- "Let's build X" → superpowers:brainstorming first, then implementation skills.
-- "Fix this bug" → superpowers:systematic-debugging first, then domain skills.
+Before entering plan mode, invoke brainstorming only when the active mode is
+strict or the human partner explicitly requests brainstorming.
 
-## Red Flags
-
-These thoughts mean STOP—you're rationalizing:
-
-| Thought | Reality |
-|---------|---------|
-| "This is just a simple question" | Questions are tasks. Check for skills. |
-| "I need more context first" | Skill check comes BEFORE clarifying questions. |
-| "Let me explore the codebase first" | Skills tell you HOW to explore. Check first. |
-| "I can check git/files quickly" | Files lack conversation context. Check for skills. |
-| "Let me gather information first" | Skills tell you HOW to gather information. |
-| "This doesn't need a formal skill" | If a skill exists, use it. |
-| "I remember this skill" | Skills evolve. Read current version. |
-| "This doesn't count as a task" | Action = task. Check for skills. |
-| "The skill is overkill" | Simple things become complex. Use it. |
-| "I'll just do this one thing first" | Check BEFORE doing anything. |
-| "This feels productive" | Undisciplined action wastes time. Skills prevent this. |
-| "I know what that means" | Knowing the concept ≠ using the skill. Invoke it. |
-
-## Platform Adaptation
-
-If your harness appears here, read its reference file for special instructions:
+## Platform adaptation
 
 - Codex: `references/codex-tools.md`
 - Pi: `references/pi-tools.md`
 - Antigravity: `references/antigravity-tools.md`
 
-## User Instructions
-
-User instructions (CLAUDE.md, AGENTS.md, GEMINI.md, etc, direct requests) take precedence over skills, which in turn override default behavior. Only skip skill workflows or instructions when your human partner has explicitly told you to.
+Repository and direct user instructions may override this workflow.
