@@ -1,0 +1,1 @@
+Mode: lean. Use the brainstorming skill to explore two possible names for the greeting function. Do not change files yet.
