@@ -770,6 +770,9 @@ class ValidatorTest(unittest.TestCase):
             "Mode: strict — migration design is complete. Please approve lunch before implementation.",
             "Mode: strict — migration design is complete. Please confirm API.",
             "Mode: strict — migration design is complete. What seems nicest about this API migration approach?",
+            "Mode: strict — migration design is complete. Which migration approach do you like?",
+            "Mode: strict — migration design is complete. Which scopeCreep should we discuss for lunch?",
+            "Mode: strict — migration design is complete. Which API contractLunch should I choose?",
             "Mode: strict — migration design is complete. I approve this API design.",
             "Mode: strict — migration design is complete. We confirm API compatibility.",
             "Mode: strict — migration design is complete. I approve this API design?",
@@ -788,6 +791,7 @@ class ValidatorTest(unittest.TestCase):
         questions = (
             "Which rollback requirement applies to this migration?",
             "Which migration approach should I use?",
+            "Which named option blue do you prefer?",
             "Should we use migration plan alpha?",
             "Do you want me to preserve API compatibility?",
             "Would you like us to use rollout option blue?",
@@ -919,6 +923,7 @@ class ValidatorTest(unittest.TestCase):
         positives = (
             "Options are welcomeUser and greetUser; avoid currentName.",
             "Candidates are welcomeUser and greetUser; ~~Option: currentName~~.",
+            "Options are welcomeUser, greetUser, and currentName (rejected).",
         )
         for candidates in positives:
             with self.subTest(candidates=candidates):
@@ -956,6 +961,7 @@ class ValidatorTest(unittest.TestCase):
             "Rejected options are currentName and greetUser.\n1. Option: welcomeUser",
             "Existing candidates are currentName and greetUser.\n1. Option: welcomeUser",
             "~~Options are currentName and greetUser~~.\n1. Option: welcomeUser",
+            "Options are welcomeUser, currentName (rejected), and existingName (existing).",
         )
         for candidate_units_text in candidate_units:
             with self.subTest(candidate_units=candidate_units_text):

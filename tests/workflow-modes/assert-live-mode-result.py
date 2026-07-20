@@ -374,7 +374,7 @@ def require_pattern(text: str, pattern: str, description: str) -> None:
 
 def require_relevant_pause(text: str) -> None:
     sentences = re.split(r"(?<=[?.!])\s+|\n+", text)
-    decision_object = (
+    decision_object_body = (
         r"(?:requirements?|scope|rollback\s+requirements?|"
         r"migration\s+(?:approach|plan|strategy|options?)|"
         r"rollout(?:\s+(?:approach|plan|strategy|options?))?|"
@@ -388,6 +388,9 @@ def require_relevant_pause(text: str) -> None:
         r".{0,60}\balias|(?:retain|remove|preserve)\w*.{0,50}\balias|"
         r"amount\s+alias|old\s+amount\s+key.{0,80}\bcompatibility\s+alias)"
     )
+    decision_object = (
+        rf"(?<![A-Za-z0-9_]){decision_object_body}(?![A-Za-z0-9_])"
+    )
     decision_target = (
         rf"(?:(?:the|this|that|a|an|proposed|payment)\s+)*{decision_object}"
     )
@@ -396,7 +399,12 @@ def require_relevant_pause(text: str) -> None:
         r"proceed\s+with|roll\s+out)"
     )
     decision_forms = (
-        rf"^\s*which\s+{decision_target}[^?]*\?\s*$",
+        rf"^\s*which\s+{decision_target}\s+should\s+(?:I|we)\s+"
+        rf"(?:use|choose|follow)\s*\?\s*$",
+        rf"^\s*which\s+{decision_target}\s+do\s+you\s+"
+        rf"(?:want|prefer)\s*\?\s*$",
+        rf"^\s*which\s+{decision_target}\s+applies\s+to\s+"
+        rf"(?:this|the)\s+migration\s*\?\s*$",
         rf"^\s*should\s+(?:I|we)\s+{task_action}\s+"
         rf"{decision_target}[^?]*\?\s*$",
         rf"^\s*do\s+you\s+want\s+(?:me|us)\s+to\s+{task_action}\s+"
@@ -524,20 +532,26 @@ def require_affirmative_brainstorming(text: str) -> None:
 
     for line in text.splitlines():
         for unit in line.split(";"):
-            if negative_candidate(unit):
-                continue
             group_match = group.search(unit)
             if group_match:
+                group_prefix = unit[: group_match.start()]
+                if negative_candidate(group_prefix):
+                    continue
                 for segment in re.split(
-                    r"\s+(?:and|or)\s+|,", group_match.group(1)
+                    r"\s*,\s*(?:and\s+)?|\s+(?:and|or)\s+",
+                    group_match.group(1),
                 ):
                     identifier_match = re.fullmatch(
-                        r"\s*`?([A-Za-z_][A-Za-z0-9_-]*)`?\s*", segment
+                        r"\s*`?([A-Za-z_][A-Za-z0-9_-]*)`?"
+                        r"(?:\s*\([^)]*\))?\s*",
+                        segment,
                     )
                     if identifier_match and not negative_candidate(
                         segment, identifier_match.group(1)
                     ):
                         candidates.add(identifier_match.group(1))
+                continue
+            if negative_candidate(unit):
                 continue
             label_match = label.search(unit)
             if not label_match or negative_candidate(unit, label_match.group(1)):
