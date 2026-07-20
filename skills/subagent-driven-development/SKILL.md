@@ -279,6 +279,10 @@ needed.
 - **Reviewer inputs:** the task reviewer gets three paths — the same brief
   file, the report file, and the review package — plus the global
   constraints that bind the task.
+- **Persist the verdict:** when the review returns, write its full text to
+  `<workspace>/task-<N>-review.md` before acting on it. The file is the
+  gate: completion checks for the artifact, not for your memory of a
+  verdict.
 - The global-constraints block you hand the reviewer is its attention
   lens. Copy the binding requirements verbatim from the plan's Global
   Constraints section or the spec: exact values, exact formats, and the
@@ -400,9 +404,11 @@ message as your other bookkeeping:
   breaker: it needs no exhausted fix rounds — a mechanical deviation
   discovered at completion parks here directly, with its ruling in the ledger.
 
-Then mark the todo complete and move on. Never move to the next task while
-the review has open Critical/Important issues that are neither fixed nor
-parked-with-ruling at the cap.
+Then mark the todo complete and move on — but only once
+`<workspace>/task-<N>-review.md` exists; a completion line without its review
+artifact is invalid, whatever you remember about the review. Never move to
+the next task while the review has open Critical/Important issues that are
+neither fixed nor parked-with-ruling at the cap.
 
 ## Final Review
 
@@ -415,7 +421,9 @@ on the most capable available model (see Model Selection), using
 superpowers:requesting-code-review's
 [code-reviewer.md](../requesting-code-review/code-reviewer.md). Point it at
 the ledger's deferred-minor and parked lines so it can triage which must be
-fixed before merge.
+fixed before merge. Write the returned review to `<workspace>/final-review.md`
+before dispatching any fix wave — the merge decision cites the artifact, not a
+recollection.
 
 If the final whole-branch review returns findings, dispatch ONE fix subagent
 with the complete findings list and the binding constraint values
