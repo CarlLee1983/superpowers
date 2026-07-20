@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import sys
 from pathlib import Path
 from typing import Any
@@ -20,10 +21,9 @@ EXPECTED_MODE = {
 }
 DECLARATION = re.compile(r"(?im)^\s*Mode:\s*(lean|standard|strict)\b")
 BOOTSTRAP_PATHS = (
-    "/skills/using-superpowers/SKILL.md",
-    "/skills/selecting-workflow-mode/SKILL.md",
-    "/skills/selecting-workflow-mode/references/risk-matrix.md",
-    "/skills/references/risk-matrix.md",
+    "skills/using-superpowers/SKILL.md",
+    "skills/selecting-workflow-mode/SKILL.md",
+    "skills/selecting-workflow-mode/references/risk-matrix.md",
 )
 PAUSE_TOPICS = re.compile(
     r"\b(requirements?|constraints?|design|migration|rollback|approval|approve|"
@@ -159,30 +159,75 @@ def is_claude_bootstrap(block: dict[str, Any]) -> bool:
         }
     if name == "Read":
         path = tool_input.get("file_path")
-        return isinstance(path, str) and path.endswith(BOOTSTRAP_PATHS)
+        return isinstance(path, str) and path.endswith(
+            tuple(f"/{relative}" for relative in BOOTSTRAP_PATHS)
+        )
     return False
 
 
-def is_codex_bootstrap(command: str) -> bool:
-    if not any(path in command for path in BOOTSTRAP_PATHS):
-        return False
-    if re.search(r"[;|<>\n`] |(?<!&)&(?!&)|\$\(", command, re.VERBOSE):
-        return False
-    for index, clause in enumerate(command.split("&&")):
-        candidate = clause.strip().strip("\"'").strip()
-        if index == 0:
-            candidate = re.sub(
-                r"^/bin/(?:zsh|bash|sh)\s+-lc\s+[\"']?", "", candidate
-            )
-        if not re.match(r"^(?:sed|cat|head|tail)\b", candidate):
-            return False
-        if not any(path in candidate for path in BOOTSTRAP_PATHS):
-            return False
-    return True
+def split_read_command(command: str) -> list[str] | None:
+    if re.search(r"[;&|<>\n`]|\$\(", command):
+        return None
+    try:
+        arguments = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    if (
+        len(arguments) == 3
+        and arguments[0] in {"/bin/zsh", "/bin/bash", "/bin/sh"}
+        and arguments[1] == "-lc"
+    ):
+        inner = arguments[2]
+        if re.search(r"[;&|<>\n`]|\$\(", inner):
+            return None
+        try:
+            arguments = shlex.split(inner, posix=True)
+        except ValueError:
+            return None
+    return arguments
 
 
-def validate_declaration_order(backend: str, events: list[dict[str, Any]]) -> None:
+def exact_bootstrap_path(argument: str, expected_root: Path) -> bool:
+    candidate = Path(argument)
+    if not candidate.is_absolute():
+        return False
+    resolved = candidate.resolve()
+    allowed = {(expected_root / relative).resolve() for relative in BOOTSTRAP_PATHS}
+    return resolved in allowed
+
+
+def is_codex_bootstrap(command: str, expected_root: Path | None) -> bool:
+    if expected_root is None:
+        return False
+    arguments = split_read_command(command)
+    if not arguments:
+        return False
+    executable = arguments[0]
+    if executable in {"cat", "/bin/cat", "/usr/bin/cat"}:
+        operands = arguments[1:]
+        if operands[:1] == ["--"]:
+            operands = operands[1:]
+        if not operands or any(operand.startswith("-") for operand in operands):
+            return False
+    elif executable in {"sed", "/bin/sed", "/usr/bin/sed"}:
+        if len(arguments) < 4 or arguments[1] != "-n":
+            return False
+        if not re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", arguments[2]):
+            return False
+        operands = arguments[3:]
+    else:
+        return False
+    return all(exact_bootstrap_path(operand, expected_root) for operand in operands)
+
+
+def validate_declaration_order(
+    backend: str,
+    events: list[dict[str, Any]],
+    expected_plugin_root: Path | None,
+) -> None:
     declared = False
+    active_items: dict[str, tuple[str, str | None]] = {}
+    completed_items: set[str] = set()
     for event in events:
         if backend == "claude":
             if event.get("type") != "assistant":
@@ -206,11 +251,54 @@ def validate_declaration_order(backend: str, events: list[dict[str, Any]]) -> No
                         )
         else:
             if event.get("type") not in {"item.started", "item.completed"}:
-                continue
+                if event.get("type") != "item.updated":
+                    continue
             item = event.get("item")
             if not isinstance(item, dict):
-                continue
+                raise ValidationError("Codex item lifecycle event lacks an item object")
             item_type = item.get("type")
+            item_id = item.get("id")
+            event_type = event.get("type")
+            if not isinstance(item_id, str) or not item_id or not isinstance(item_type, str):
+                raise ValidationError("Codex item lifecycle event lacks a stable id/type")
+            signature = (
+                item_type,
+                item.get("command") if isinstance(item.get("command"), str) else None,
+            )
+            if event_type == "item.started":
+                if item_id in active_items or item_id in completed_items:
+                    raise ValidationError(f"Codex item lifecycle reused id {item_id!r}")
+                if active_items:
+                    raise ValidationError(
+                        "Codex item lifecycle started a later item before the active item completed"
+                    )
+                active_items[item_id] = signature
+            elif item_type == "agent_message" and event_type == "item.completed":
+                if item_id in completed_items:
+                    raise ValidationError(f"Codex item lifecycle reused id {item_id!r}")
+                if item_id in active_items:
+                    if active_items[item_id] != signature:
+                        raise ValidationError(
+                            f"Codex item lifecycle changed immutable payload for {item_id!r}"
+                        )
+                    del active_items[item_id]
+                elif active_items:
+                    raise ValidationError(
+                        "Codex item lifecycle completed an out-of-order later item"
+                    )
+                completed_items.add(item_id)
+            else:
+                if item_id not in active_items:
+                    raise ValidationError(
+                        f"Codex item lifecycle {event_type} lacks prior active start"
+                    )
+                if active_items[item_id] != signature:
+                    raise ValidationError(
+                        f"Codex item lifecycle changed immutable payload for {item_id!r}"
+                    )
+                if event_type == "item.completed":
+                    del active_items[item_id]
+                    completed_items.add(item_id)
             if item_type == "agent_message":
                 text = item.get("text")
                 if isinstance(text, str) and DECLARATION.search(text):
@@ -220,12 +308,16 @@ def validate_declaration_order(backend: str, events: list[dict[str, Any]]) -> No
                 continue
             if item_type == "command_execution":
                 command = item.get("command")
-                if isinstance(command, str) and is_codex_bootstrap(command):
+                if isinstance(command, str) and is_codex_bootstrap(
+                    command, expected_plugin_root
+                ):
                     continue
             raise ValidationError(
                 "task-specific action before mode declaration: "
                 f"Codex item {item_type!r}"
             )
+    if backend == "codex" and active_items:
+        raise ValidationError("Codex item lifecycle ended with active item(s)")
 
 
 def codex_visible_text(events: list[dict[str, Any]]) -> list[str]:
@@ -267,14 +359,27 @@ def require_pattern(text: str, pattern: str, description: str) -> None:
 
 def require_relevant_pause(text: str) -> None:
     sentences = re.split(r"(?<=[?.!])\s+|\n+", text)
+    decision_patterns = (
+        r"\b(?:which|what)\b.{0,120}\b(?:requirements?|constraints?|rollback|"
+        r"design|migration|compatib\w*|clients?|consumers?|api|payment|billing)\b",
+        r"\b(?:can|could|would)\s+you\s+(?:please\s+)?"
+        r"(?:approve|confirm|clarify|choose|provide|review)\b",
+        r"\b(?:please\s+)?(?:approve|confirm|clarify|choose|provide|review)\b",
+        r"\b(?:should|shall)\b.{0,120}\b(?:retain|remove|approve|confirm|choose|"
+        r"use|migrate|rollback|alias|version|support|proceed|remain)\b",
+        r"\bmust\b.{0,120}\b(?:or\s+may|or\s+should|or\s+must)\b",
+    )
     for sentence in sentences:
-        has_interrogative = "?" in sentence
-        has_request = re.search(
-            r"\b(?:please\s+)?(?:approve|confirm|clarify|review|choose|provide|tell me)\b",
-            sentence,
-            re.IGNORECASE,
+        has_request = re.search(decision_patterns[2], sentence, re.IGNORECASE)
+        has_decision = any(
+            re.search(pattern, sentence, re.IGNORECASE)
+            for pattern in decision_patterns
         )
-        if (has_interrogative or has_request) and PAUSE_TOPICS.search(sentence):
+        if (
+            ("?" in sentence or has_request)
+            and has_decision
+            and PAUSE_TOPICS.search(sentence)
+        ):
             return
     raise ValidationError(
         "assistant-visible text lacks relevant clarification/approval pause"
@@ -282,25 +387,64 @@ def require_relevant_pause(text: str) -> None:
 
 
 def require_affirmative_brainstorming(text: str) -> None:
-    affirmative = re.search(
-        r"(?:\b(?:I|we)\s+(?:am|are)\s+(?:now\s+)?(?:using|invoking|running)\s+"
-        r"(?:the\s+)?brainstorming\b|"
-        r"\b(?:I|we)\s+(?:used|invoked|ran)\s+(?:the\s+)?brainstorming\b|"
-        r"\bbrainstorming\s+skill\s+(?:is|was)\s+(?:loaded|invoked|running)\b)",
-        text,
-        re.IGNORECASE,
+    clauses = re.split(r"[.;\n]+|\bbut\b", text, flags=re.IGNORECASE)
+    affirmative_patterns = (
+        r"\b(?:I|we)\s+(?:am|are|'m|'re|have|will|'ll)?\s*"
+        r"(?:using|invoking|running|used|invoked|ran|use|invoke|run)\s+"
+        r"(?:the\s+)?brainstorming(?:\s+skill)?\b",
+        r"\bbrainstorming\s+skill\s+(?:is|was)\s+(?:loaded|invoked|running|used)\b",
+        r"\bbrainstorming\b.{0,100}\b(?:I|we)(?:'ll|\s+will)\s+"
+        r"(?:invoke|run|use)\s+(?:that|the)\s+skill\b",
     )
+    affirmative = False
+    for clause in clauses:
+        if re.search(r"\b(?:not|never|without|neither|no)\b", clause, re.IGNORECASE):
+            continue
+        if any(re.search(pattern, clause, re.IGNORECASE) for pattern in affirmative_patterns):
+            affirmative = True
+            break
     if not affirmative:
         raise ValidationError(
             "assistant-visible text lacks affirmative brainstorming skill use/invocation"
         )
-    candidates = set(
-        re.findall(r"`([A-Za-z_][A-Za-z0-9_-]*)`", text)
-        + re.findall(r"\b[a-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*\b", text)
+    candidates: set[str] = set()
+    negative = re.compile(
+        r"\b(?:reject(?:ed)?|avoid|ruled\s+out|do\s+not\s+use|not\s+an?\s+option)\b",
+        re.IGNORECASE,
     )
+    label = re.compile(
+        r"(?:^|\s)(?:\d+[.)]\s*)?(?:\*\*)?(?:option|candidate)"
+        r"(?:\s+\d+)?\s*(?::|is|are)\s*(?:\*\*)?`?"
+        r"([A-Za-z_][A-Za-z0-9_-]*)",
+        re.IGNORECASE,
+    )
+    group = re.compile(
+        r"\b(?:two|2)?\s*(?:options|candidates)\s*(?:are|:)\s*([^.;\n]+)",
+        re.IGNORECASE,
+    )
+    bullet = re.compile(
+        r"^\s*(?:[-*]|\d+[.)])\s+(?:`([A-Za-z_][A-Za-z0-9_-]*)`|"
+        r"([a-z][A-Za-z0-9]*(?:[A-Z_][A-Za-z0-9_]*)+))"
+    )
+    for line in text.splitlines():
+        for match in label.finditer(line):
+            suffix = line[match.start():]
+            if not negative.search(suffix):
+                candidates.add(match.group(1))
+        group_match = group.search(line)
+        if group_match:
+            for segment in re.split(r"\s+(?:and|or)\s+|,", group_match.group(1)):
+                if negative.search(segment):
+                    continue
+                identifier = re.search(r"`?([A-Za-z_][A-Za-z0-9_-]*)`?", segment)
+                if identifier:
+                    candidates.add(identifier.group(1))
+        bullet_match = bullet.search(line)
+        if bullet_match and not negative.search(line):
+            candidates.add(bullet_match.group(1) or bullet_match.group(2))
     if len(candidates) < 2:
         raise ValidationError(
-            "assistant-visible brainstorming lacks at least two distinct candidate names/options"
+            "assistant-visible brainstorming lacks at least two distinct positive options"
         )
 
 
@@ -357,7 +501,7 @@ def validate(
     if assistant_output is not None:
         assistant_output.write_text(visible + "\n", encoding="utf-8")
 
-    validate_declaration_order(backend, events)
+    validate_declaration_order(backend, events, expected_plugin_root)
 
     declarations = DECLARATION.findall(visible)
     if len(declarations) != 1:

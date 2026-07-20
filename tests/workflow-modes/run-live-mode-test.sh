@@ -42,6 +42,7 @@ POSTCHECK_LOG="$OUT_DIR/postcheck.log"
 BACKEND_COMMAND="$OUT_DIR/backend-command.json"
 TIMEOUT_SECONDS="${ADAPTIVE_MODE_EVAL_TIMEOUT_SECONDS:-900}"
 TERM_GRACE_SECONDS="${ADAPTIVE_MODE_EVAL_TERM_GRACE_SECONDS:-2}"
+VALIDATOR_PLUGIN_ROOT="$ROOT"
 
 for command_name in git python3; do
   command -v "$command_name" >/dev/null || {
@@ -229,6 +230,7 @@ case "$BACKEND" in
     CODEX_PREFLIGHT="$OUT_DIR/codex-plugin-list.json"
     CODEX_MODEL_CATALOG="$OUT_DIR/codex-model-catalog.json"
     verify_codex_home "$ADAPTIVE_CODEX_HOME" "$CODEX_PREFLIGHT"
+    VALIDATOR_PLUGIN_ROOT="$ADAPTIVE_CODEX_HOME/plugins/cache/superpowers-dev/superpowers/$PLUGIN_VERSION"
     verify_codex_model "$ADAPTIVE_CODEX_HOME" "$MODEL" "$CODEX_MODEL_CATALOG"
     record_backend_command env CODEX_HOME="$ADAPTIVE_CODEX_HOME" codex exec \
       --model "$MODEL" \
@@ -260,7 +262,7 @@ if [[ "$BACKEND_STATUS" -ne 0 ]]; then
 fi
 
 if ! python3 "$VALIDATOR" "$BACKEND" "$MODEL" "$CASE" "$LOG" \
-  "$ASSISTANT_TEXT" "$ROOT" "$PLUGIN_VERSION"; then
+  "$ASSISTANT_TEXT" "$VALIDATOR_PLUGIN_ROOT" "$PLUGIN_VERSION"; then
   printf 'Transcript: %s\nAssistant: %s\nStderr: %s\nProject: %s\n' \
     "$LOG" "$ASSISTANT_TEXT" "$STDERR_LOG" "$PROJECT" >&2
   exit 1
