@@ -23,6 +23,8 @@
 - Do not edit files under an installed plugin cache.
 - The fork release version is `6.1.1-adaptive.1`.
 - Before modifying behavior-shaping skill prose, invoke `superpowers:writing-skills`, read its required TDD background, and record a failing live baseline.
+- Execution decision approved 2026-07-20: work in the current clean `feature/adaptive-workflow-modes` checkout without creating another worktree.
+- Execution decision approved 2026-07-20: after changing each individual skill, run a focused live RED/GREEN behavior check before changing the next skill; grouped static tests and the final live matrix remain additional gates.
 
 ---
 
