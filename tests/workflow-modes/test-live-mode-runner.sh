@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RUNNER="$ROOT/tests/workflow-modes/run-live-mode-test.sh"
+PLUGIN_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.codex-plugin/plugin.json")"
 TEST_TMP="$(mktemp -d)"
 trap 'rm -rf "$TEST_TMP"' EXIT
 mkdir -p "$TEST_TMP/bin"
@@ -65,7 +66,7 @@ elif "authentication sample" in prompt:
     text = "Mode: lean — explicit override.\nWarning: authentication is security-sensitive; I will remain lean as requested. Verification passed."
 elif "Rename the amount field" in prompt:
     case = "escalation"
-    text = "Mode: strict — production payment API risk discovered during inspection.\nI am promoting the workflow because this public billing API requires design clarification."
+    text = "Mode: strict — production payment API risk discovered during inspection.\nI am promoting the workflow because this public billing API requires design clarification. Should existing clients retain an amount compatibility alias?"
 elif "brainstorming skill" in prompt:
     case = "explicit-skill"
     text = "Mode: lean — explicit override.\nI am using the brainstorming skill. Two options are welcomeUser and greetUser."
@@ -78,7 +79,12 @@ events = [
         "subtype": "init",
         "model": model,
         "permissionMode": "bypassPermissions",
-        "plugins": [{"name": "superpowers", "path": os.environ["EXPECTED_PLUGIN_ROOT"]}],
+        "plugins": [{
+            "name": "superpowers",
+            "path": os.environ["EXPECTED_PLUGIN_ROOT"],
+            "source": "superpowers@inline",
+            "version": os.environ["EXPECTED_PLUGIN_VERSION"],
+        }],
     },
     {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}},
     {"type": "result", "subtype": "success", "result": text},
@@ -90,10 +96,65 @@ for event in events:
 STUB
 chmod +x "$TEST_TMP/bin/claude"
 
+cat >"$TEST_TMP/bin/codex" <<'STUB'
+#!/usr/bin/env python3
+import json
+import os
+import pathlib
+import sys
+
+args = sys.argv[1:]
+if args == ["plugin", "list", "--json"]:
+    plugin_id = "wrong@plugin" if os.environ.get("STUB_BAD_PLUGIN_SLUG") == "1" else "superpowers@superpowers-dev"
+    source = "/wrong/source" if os.environ.get("STUB_BAD_PLUGIN_SOURCE") == "1" else os.environ["EXPECTED_PLUGIN_ROOT"]
+    version = "wrong-version" if os.environ.get("STUB_BAD_PLUGIN_VERSION") == "1" else os.environ["EXPECTED_PLUGIN_VERSION"]
+    print(json.dumps({"installed": [{
+        "pluginId": plugin_id,
+        "enabled": True,
+        "version": version,
+        "marketplaceSource": {"source": source},
+    }]}))
+elif args == ["debug", "models"]:
+    slug = "different-model" if os.environ.get("STUB_MISSING_MODEL") == "1" else "test-model"
+    print(json.dumps({"models": [{"slug": slug, "display_name": slug}]}))
+elif args and args[0] == "exec":
+    pathlib.Path(os.environ["CODEX_ARGV_LOG"]).write_text(json.dumps(args))
+    model = args[args.index("--model") + 1]
+    if model != "test-model":
+        raise SystemExit(19)
+    project = pathlib.Path(args[args.index("--cd") + 1])
+    (project / "README.md").write_text("This is the demo.\n")
+    events = [
+        {"type": "thread.started", "thread_id": "thread"},
+        {"type": "item.completed", "item": {
+            "id": "message", "type": "agent_message",
+            "text": "Mode: lean — localized typo correction.\nVerification passed.",
+        }},
+        {"type": "turn.completed", "usage": {}},
+    ]
+    for event in events:
+        print(json.dumps(event))
+else:
+    raise SystemExit(f"unexpected codex args: {args!r}")
+STUB
+chmod +x "$TEST_TMP/bin/codex"
+
+CODEX_HOME="$TEST_TMP/codex-home"
+CODEX_CACHE="$CODEX_HOME/plugins/cache/superpowers-dev/superpowers/$PLUGIN_VERSION"
+mkdir -p "$CODEX_CACHE/skills/selecting-workflow-mode/references" \
+  "$CODEX_CACHE/skills/using-superpowers"
+cp "$ROOT/skills/selecting-workflow-mode/SKILL.md" \
+  "$CODEX_CACHE/skills/selecting-workflow-mode/SKILL.md"
+cp "$ROOT/skills/selecting-workflow-mode/references/risk-matrix.md" \
+  "$CODEX_CACHE/skills/selecting-workflow-mode/references/risk-matrix.md"
+cp "$ROOT/skills/using-superpowers/SKILL.md" \
+  "$CODEX_CACHE/skills/using-superpowers/SKILL.md"
+
 for case_name in lean standard strict override escalation explicit-skill; do
   output="$({
     PATH="$TEST_TMP/bin:$PATH" \
       EXPECTED_PLUGIN_ROOT="$ROOT" \
+      EXPECTED_PLUGIN_VERSION="$PLUGIN_VERSION" \
       ADAPTIVE_MODE_EVAL_ROOT="$TEST_TMP/evals" \
       "$RUNNER" claude test-model "$case_name"
   } 2>&1)" || {
@@ -106,9 +167,99 @@ for case_name in lean standard strict override escalation explicit-skill; do
   }
 done
 
+cp "$CODEX_CACHE/skills/selecting-workflow-mode/SKILL.md" \
+  "$TEST_TMP/selector-skill.backup"
+printf '\n# stale test copy\n' >>"$CODEX_CACHE/skills/selecting-workflow-mode/SKILL.md"
+hash_output="$({
+  PATH="$TEST_TMP/bin:$PATH" \
+    EXPECTED_PLUGIN_ROOT="$ROOT" \
+    EXPECTED_PLUGIN_VERSION="$PLUGIN_VERSION" \
+    CODEX_ARGV_LOG="$TEST_TMP/codex-hash-argv.json" \
+    ADAPTIVE_CODEX_HOME="$CODEX_HOME" \
+    ADAPTIVE_MODE_EVAL_ROOT="$TEST_TMP/bad-hash-evals" \
+    "$RUNNER" codex test-model lean
+} 2>&1)" && {
+  printf 'expected stale plugin hash to fail preflight\n' >&2
+  exit 1
+}
+[[ "$hash_output" == *"stale or mismatched"* ]] || {
+  printf 'stale plugin failure was not explicit:\n%s\n' "$hash_output" >&2
+  exit 1
+}
+cp "$TEST_TMP/selector-skill.backup" \
+  "$CODEX_CACHE/skills/selecting-workflow-mode/SKILL.md"
+
+codex_output="$({
+  PATH="$TEST_TMP/bin:$PATH" \
+    EXPECTED_PLUGIN_ROOT="$ROOT" \
+    EXPECTED_PLUGIN_VERSION="$PLUGIN_VERSION" \
+    CODEX_ARGV_LOG="$TEST_TMP/codex-argv.json" \
+    ADAPTIVE_CODEX_HOME="$CODEX_HOME" \
+    ADAPTIVE_MODE_EVAL_ROOT="$TEST_TMP/codex-evals" \
+    "$RUNNER" codex test-model lean
+} 2>&1)" || {
+  printf '%s\n' "$codex_output"
+  exit 1
+}
+[[ "$codex_output" == *"PASS codex test-model lean"* ]] || {
+  printf 'missing Codex PASS:\n%s\n' "$codex_output" >&2
+  exit 1
+}
+python3 - "$TEST_TMP/codex-argv.json" <<'PY'
+import json
+import pathlib
+import sys
+
+args = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert args[args.index("--model") + 1] == "test-model", args
+PY
+find "$TEST_TMP/codex-evals" -name codex-model-catalog.json -type f | grep -q . || {
+  printf 'Codex model catalog evidence was not preserved\n' >&2
+  exit 1
+}
+
+missing_model_output="$({
+  PATH="$TEST_TMP/bin:$PATH" \
+    EXPECTED_PLUGIN_ROOT="$ROOT" \
+    EXPECTED_PLUGIN_VERSION="$PLUGIN_VERSION" \
+    CODEX_ARGV_LOG="$TEST_TMP/codex-missing-argv.json" \
+    STUB_MISSING_MODEL=1 \
+    ADAPTIVE_CODEX_HOME="$CODEX_HOME" \
+    ADAPTIVE_MODE_EVAL_ROOT="$TEST_TMP/missing-model-evals" \
+    "$RUNNER" codex test-model lean
+} 2>&1)" && {
+  printf 'expected unavailable exact Codex model to fail preflight\n' >&2
+  exit 1
+}
+[[ "$missing_model_output" == *"exact slug 'test-model'"* ]] || {
+  printf 'missing model failure was not explicit:\n%s\n' "$missing_model_output" >&2
+  exit 1
+}
+
+for bad_plugin in STUB_BAD_PLUGIN_SLUG STUB_BAD_PLUGIN_SOURCE STUB_BAD_PLUGIN_VERSION; do
+  plugin_output="$({
+    env PATH="$TEST_TMP/bin:$PATH" \
+      EXPECTED_PLUGIN_ROOT="$ROOT" \
+      EXPECTED_PLUGIN_VERSION="$PLUGIN_VERSION" \
+      CODEX_ARGV_LOG="$TEST_TMP/codex-plugin-argv.json" \
+      "$bad_plugin=1" \
+      ADAPTIVE_CODEX_HOME="$CODEX_HOME" \
+      ADAPTIVE_MODE_EVAL_ROOT="$TEST_TMP/bad-plugin-evals" \
+      "$RUNNER" codex test-model lean
+  } 2>&1)" && {
+    printf 'expected %s to fail plugin preflight\n' "$bad_plugin" >&2
+    exit 1
+  }
+  [[ "$plugin_output" == *"dedicated"* ]] || {
+    printf '%s failure was not explicit:\n%s\n' "$bad_plugin" "$plugin_output" >&2
+    exit 1
+  }
+done
+
 failure_output="$({
   PATH="$TEST_TMP/bin:$PATH" \
     EXPECTED_PLUGIN_ROOT="$ROOT" \
+    EXPECTED_PLUGIN_VERSION="$PLUGIN_VERSION" \
     STUB_NO_MODE=1 \
     ADAPTIVE_MODE_EVAL_ROOT="$TEST_TMP/failing-evals" \
     "$RUNNER" claude test-model lean
@@ -124,6 +275,7 @@ failure_output="$({
 artifact_failure="$({
   PATH="$TEST_TMP/bin:$PATH" \
     EXPECTED_PLUGIN_ROOT="$ROOT" \
+    EXPECTED_PLUGIN_VERSION="$PLUGIN_VERSION" \
     STUB_BAD_ARTIFACT=1 \
     ADAPTIVE_MODE_EVAL_ROOT="$TEST_TMP/bad-artifact-evals" \
     "$RUNNER" claude test-model lean
@@ -139,6 +291,7 @@ artifact_failure="$({
 committed_artifact_failure="$({
   PATH="$TEST_TMP/bin:$PATH" \
     EXPECTED_PLUGIN_ROOT="$ROOT" \
+    EXPECTED_PLUGIN_VERSION="$PLUGIN_VERSION" \
     STUB_COMMIT_ARTIFACT=1 \
     ADAPTIVE_MODE_EVAL_ROOT="$TEST_TMP/committed-artifact-evals" \
     "$RUNNER" claude test-model strict

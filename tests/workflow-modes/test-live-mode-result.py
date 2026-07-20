@@ -27,6 +27,39 @@ def claude_event(text: str, *, block_type: str = "text") -> dict:
     }
 
 
+def claude_tool_event(name: str, tool_input: dict) -> dict:
+    return {
+        "type": "assistant",
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "name": name, "input": tool_input}],
+        },
+    }
+
+
+def claude_init(
+    *,
+    model: str = "test-model",
+    path: str = "/expected/checkout",
+    source: str = "superpowers@inline",
+    version: str = "test-version",
+) -> dict:
+    return {
+        "type": "system",
+        "subtype": "init",
+        "model": model,
+        "permissionMode": "bypassPermissions",
+        "plugins": [
+            {
+                "name": "superpowers",
+                "path": path,
+                "source": source,
+                "version": version,
+            }
+        ],
+    }
+
+
 def codex_event(text: str, *, item_type: str = "agent_message") -> dict:
     item = {"id": "item_1", "type": item_type}
     if item_type == "agent_message":
@@ -58,17 +91,21 @@ class ValidatorTest(unittest.TestCase):
         events: list[dict],
         *,
         expected_model: str = "test-model",
+        plugin_identity: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         log = self.write_jsonl(f"{backend}-{case}.jsonl", events)
-        return subprocess.run(
-            [
+        command = [
                 sys.executable,
                 str(VALIDATOR),
                 backend,
                 expected_model,
                 case,
                 str(log),
-            ],
+            ]
+        if plugin_identity:
+            command.extend(["-", "/expected/checkout", "test-version"])
+        return subprocess.run(
+            command,
             text=True,
             capture_output=True,
             check=False,
@@ -83,7 +120,7 @@ class ValidatorTest(unittest.TestCase):
                 "model": "test-model",
                 "permissionMode": "bypassPermissions",
             },
-            claude_event("Mode: lean", block_type="tool_use"),
+            claude_event("selecting-workflow-mode", block_type="tool_use"),
             claude_event("Mode: lean — localized typo correction.\nVerified README content."),
             {"type": "result", "subtype": "success", "result": "duplicate result text"},
         ]
@@ -94,8 +131,8 @@ class ValidatorTest(unittest.TestCase):
     def test_codex_counts_only_agent_messages(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},
-            codex_event("printf 'Mode: strict'", item_type="command_execution"),
             codex_event("Mode: standard — bounded CLI change.\nTests passed."),
+            codex_event("printf 'Mode: strict'", item_type="command_execution"),
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "standard", events)
@@ -225,7 +262,8 @@ class ValidatorTest(unittest.TestCase):
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
                 "Mode: strict — public payment API risk discovered.\n"
-                "I am promoting the workflow because this is a production billing API."
+                "I am promoting the workflow because this is a production billing API. "
+                "Should the compatibility alias remain during migration?"
             ),
             {"type": "turn.completed", "usage": {}},
         ]
@@ -248,7 +286,8 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: strict — renaming an amount field can affect payment-domain "
                 "compatibility across downstream consumers.\n"
                 "The repository exposes this field through a public response, so the "
-                "rename changes its public response shape."
+                "rename changes its public response shape. Should existing API clients "
+                "retain the amount alias during migration?"
             ),
             {"type": "turn.completed", "usage": {}},
         ]
@@ -313,7 +352,144 @@ class ValidatorTest(unittest.TestCase):
         ]
         failing = self.run_validator("codex", "explicit-skill", prompt_only)
         self.assertNotEqual(failing.returncode, 0)
-        self.assertIn("assistant-visible brainstorming", failing.stderr)
+        self.assertIn("affirmative brainstorming", failing.stderr)
+
+    def test_claude_rejects_task_tool_before_mode_declaration(self) -> None:
+        events = [
+            claude_init(),
+            claude_tool_event("Bash", {"command": "git status --short"}),
+            claude_event("Mode: lean — localized typo correction.\nVerification passed."),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "lean", events, plugin_identity=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("task-specific action before mode declaration", result.stderr)
+
+    def test_claude_allows_selector_bootstrap_before_mode_declaration(self) -> None:
+        events = [
+            claude_init(),
+            claude_tool_event("Skill", {"skill": "selecting-workflow-mode"}),
+            claude_tool_event(
+                "Read",
+                {"file_path": "/expected/checkout/skills/selecting-workflow-mode/references/risk-matrix.md"},
+            ),
+            claude_event("Mode: lean — localized typo correction.\nVerification passed."),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "lean", events, plugin_identity=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_codex_rejects_task_command_before_mode_declaration(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event("git status --short", item_type="command_execution"),
+            codex_event("Mode: standard — bounded CLI change.\nTests passed."),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "standard", events)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("task-specific action before mode declaration", result.stderr)
+
+    def test_codex_allows_selector_bootstrap_before_mode_declaration(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "sed -n '1,200p' /tmp/home/skills/selecting-workflow-mode/SKILL.md",
+                item_type="command_execution",
+            ),
+            codex_event("Mode: standard — bounded CLI change.\nTests passed."),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "standard", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_codex_does_not_trust_reused_item_ids_before_declaration(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "sed -n '1,200p' /tmp/home/skills/selecting-workflow-mode/SKILL.md",
+                item_type="command_execution",
+            ),
+            codex_event("git status --short", item_type="command_execution"),
+            codex_event("Mode: standard — bounded CLI change.\nTests passed."),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "standard", events)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("task-specific action before mode declaration", result.stderr)
+
+    def test_codex_rejects_non_read_command_that_mentions_bootstrap_path(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "git status /tmp/home/skills/selecting-workflow-mode/SKILL.md",
+                item_type="command_execution",
+            ),
+            codex_event("Mode: standard — bounded CLI change.\nTests passed."),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "standard", events)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("task-specific action before mode declaration", result.stderr)
+
+    def test_strict_requires_a_relevant_question_or_approval_request(self) -> None:
+        for text in (
+            "Mode: strict — migration design is complete. Done.",
+            "Mode: strict — migration design is complete. What time is it?",
+        ):
+            with self.subTest(text=text):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(text),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "strict", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("relevant clarification/approval pause", result.stderr)
+
+    def test_escalation_requires_a_relevant_question_or_approval_request(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — public payment API compatibility risk discovered.\n"
+                "I am promoting the workflow because this changes production billing. Done."
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("relevant clarification/approval pause", result.stderr)
+
+    def test_explicit_skill_rejects_negated_use_and_one_candidate(self) -> None:
+        cases = (
+            "I am not using the brainstorming skill. Options are welcomeUser and greetUser.",
+            "I am using the brainstorming skill. The candidate is welcomeUser.",
+        )
+        for detail in cases:
+            with self.subTest(detail=detail):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(f"Mode: lean — explicit override.\n{detail}"),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "explicit-skill", events)
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_claude_requires_exact_inline_checkout_plugin_identity(self) -> None:
+        for init in (
+            claude_init(path="/upstream/superpowers"),
+            claude_init(source="superpowers@official"),
+            claude_init(version="wrong-version"),
+        ):
+            with self.subTest(init=init):
+                events = [
+                    init,
+                    claude_event("Mode: lean — typo correction.\nVerification passed."),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator("claude", "lean", events, plugin_identity=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("inline checkout plugin", result.stderr)
 
 
 if __name__ == "__main__":

@@ -29,6 +29,8 @@ esac
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROMPT_FILE="$ROOT/tests/workflow-modes/cases/$CASE.txt"
 VALIDATOR="$ROOT/tests/workflow-modes/assert-live-mode-result.py"
+TIMEOUT_RUNNER="$ROOT/tests/workflow-modes/run-with-timeout.py"
+PLUGIN_VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.codex-plugin/plugin.json")"
 EVAL_ROOT="${ADAPTIVE_MODE_EVAL_ROOT:-/tmp/superpowers-mode-evals}"
 RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM:-0}"
 OUT_DIR="$EVAL_ROOT/$BACKEND/$MODEL/$CASE/$RUN_ID"
@@ -37,6 +39,9 @@ LOG="$OUT_DIR/transcript.jsonl"
 STDERR_LOG="$OUT_DIR/stderr.log"
 ASSISTANT_TEXT="$OUT_DIR/assistant.txt"
 POSTCHECK_LOG="$OUT_DIR/postcheck.log"
+BACKEND_COMMAND="$OUT_DIR/backend-command.json"
+TIMEOUT_SECONDS="${ADAPTIVE_MODE_EVAL_TIMEOUT_SECONDS:-900}"
+TERM_GRACE_SECONDS="${ADAPTIVE_MODE_EVAL_TERM_GRACE_SECONDS:-2}"
 
 for command_name in git python3; do
   command -v "$command_name" >/dev/null || {
@@ -50,6 +55,10 @@ done
 }
 [[ -f "$VALIDATOR" ]] || {
   printf 'validator not found: %s\n' "$VALIDATOR" >&2
+  exit 2
+}
+[[ -f "$TIMEOUT_RUNNER" ]] || {
+  printf 'timeout runner not found: %s\n' "$TIMEOUT_RUNNER" >&2
   exit 2
 }
 
@@ -99,28 +108,17 @@ PROMPT="$(<"$PROMPT_FILE")"
 run_with_timeout() {
   local seconds="$1" stdout_file="$2" stderr_file="$3"
   shift 3
-  python3 - "$seconds" "$stdout_file" "$stderr_file" "$@" <<'PY'
-import subprocess
+  python3 "$TIMEOUT_RUNNER" "$seconds" "$TERM_GRACE_SECONDS" \
+    "$stdout_file" "$stderr_file" "$@"
+}
+
+record_backend_command() {
+  python3 - "$BACKEND_COMMAND" "$@" <<'PY'
+import json
+import pathlib
 import sys
 
-seconds = int(sys.argv[1])
-stdout_name = sys.argv[2]
-stderr_name = sys.argv[3]
-command = sys.argv[4:]
-with open(stdout_name, "wb") as stdout_file, open(stderr_name, "wb") as stderr_file:
-    try:
-        completed = subprocess.run(
-            command,
-            stdin=subprocess.DEVNULL,
-            stdout=stdout_file,
-            stderr=stderr_file,
-            timeout=seconds,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        stderr_file.write(f"command timed out after {seconds} seconds\n".encode())
-        raise SystemExit(124)
-raise SystemExit(completed.returncode)
+pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:], indent=2) + "\n")
 PY
 }
 
@@ -171,6 +169,23 @@ for relative in (
 PY
 }
 
+verify_codex_model() {
+  local home="$1" model="$2" catalog_file="$3"
+  env CODEX_HOME="$home" codex debug models >"$catalog_file"
+  python3 - "$model" "$catalog_file" <<'PY'
+import json
+import pathlib
+import sys
+
+expected = sys.argv[1]
+catalog = json.loads(pathlib.Path(sys.argv[2]).read_text())
+models = catalog.get("models", []) if isinstance(catalog, dict) else catalog
+matches = [model for model in models if isinstance(model, dict) and model.get("slug") == expected]
+if len(matches) != 1:
+    raise SystemExit(f"Codex model catalog must contain exact slug {expected!r}; found {len(matches)}")
+PY
+}
+
 BACKEND_STATUS=0
 case "$BACKEND" in
   claude)
@@ -180,7 +195,18 @@ case "$BACKEND" in
     }
     (
       cd "$PROJECT"
-      run_with_timeout 900 "$LOG" "$STDERR_LOG" \
+      record_backend_command claude -p "$PROMPT" \
+        --plugin-dir "$ROOT" \
+        --setting-sources project \
+        --strict-mcp-config \
+        --mcp-config '{"mcpServers":{}}' \
+        --model "$MODEL" \
+        --dangerously-skip-permissions \
+        --max-turns 20 \
+        --output-format stream-json \
+        --verbose \
+        --no-session-persistence
+      run_with_timeout "$TIMEOUT_SECONDS" "$LOG" "$STDERR_LOG" \
         claude -p "$PROMPT" \
         --plugin-dir "$ROOT" \
         --setting-sources project \
@@ -201,8 +227,18 @@ case "$BACKEND" in
     }
     : "${ADAPTIVE_CODEX_HOME:?set ADAPTIVE_CODEX_HOME to an isolated Codex home with this fork installed}"
     CODEX_PREFLIGHT="$OUT_DIR/codex-plugin-list.json"
+    CODEX_MODEL_CATALOG="$OUT_DIR/codex-model-catalog.json"
     verify_codex_home "$ADAPTIVE_CODEX_HOME" "$CODEX_PREFLIGHT"
-    run_with_timeout 900 "$LOG" "$STDERR_LOG" \
+    verify_codex_model "$ADAPTIVE_CODEX_HOME" "$MODEL" "$CODEX_MODEL_CATALOG"
+    record_backend_command env CODEX_HOME="$ADAPTIVE_CODEX_HOME" codex exec \
+      --model "$MODEL" \
+      --cd "$PROJECT" \
+      --sandbox workspace-write \
+      --ephemeral \
+      --ignore-rules \
+      --json \
+      "$PROMPT"
+    run_with_timeout "$TIMEOUT_SECONDS" "$LOG" "$STDERR_LOG" \
       env CODEX_HOME="$ADAPTIVE_CODEX_HOME" codex exec \
       --model "$MODEL" \
       --cd "$PROJECT" \
@@ -223,7 +259,8 @@ if [[ "$BACKEND_STATUS" -ne 0 ]]; then
   exit "$BACKEND_STATUS"
 fi
 
-if ! python3 "$VALIDATOR" "$BACKEND" "$MODEL" "$CASE" "$LOG" "$ASSISTANT_TEXT"; then
+if ! python3 "$VALIDATOR" "$BACKEND" "$MODEL" "$CASE" "$LOG" \
+  "$ASSISTANT_TEXT" "$ROOT" "$PLUGIN_VERSION"; then
   printf 'Transcript: %s\nAssistant: %s\nStderr: %s\nProject: %s\n' \
     "$LOG" "$ASSISTANT_TEXT" "$STDERR_LOG" "$PROJECT" >&2
   exit 1
