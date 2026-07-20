@@ -1,6 +1,6 @@
 ---
 name: writing-plans
-description: Use when you have a spec or requirements for a multi-step task, before touching code
+description: Use when strict mode has an approved design, standard mode needs a durable cross-session handoff, or the human partner explicitly requests a written implementation plan
 ---
 
 # Writing Plans
@@ -10,6 +10,18 @@ description: Use when you have a spec or requirements for a multi-step task, bef
 Write comprehensive implementation plans assuming the engineer has zero context for our codebase and questionable taste. Document everything they need to know: which files to touch for each task, code, testing, docs they might need to check, how to test it. Give them the whole plan as bite-sized tasks. DRY. YAGNI. TDD. Frequent commits.
 
 Assume they are a skilled developer, but know almost nothing about our toolset or problem domain. Assume they don't know good test design very well.
+
+<WORKFLOW-MODE-GATE>
+Run this skill when explicitly requested. Otherwise:
+
+- `strict`: run the full skill.
+- `standard`: run only for a durable cross-session handoff; inline execution
+  outlines do not create a plan file.
+- `lean`: return control.
+- no active mode: invoke `selecting-workflow-mode`.
+
+Do not reclassify the task here.
+</WORKFLOW-MODE-GATE>
 
 **Announce at start:** "I'm using the writing-plans skill to create the implementation plan."
 

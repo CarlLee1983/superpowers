@@ -1,11 +1,22 @@
 ---
 name: brainstorming
-description: "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation."
+description: Use when the active workflow mode is strict and the task creates or changes behavior, or when the human partner explicitly requests design exploration
 ---
 
 # Brainstorming Ideas Into Designs
 
 Help turn ideas into fully formed designs and specs through natural collaborative dialogue.
+
+<WORKFLOW-MODE-GATE>
+If brainstorming was explicitly requested, run the full skill. Otherwise:
+
+- `strict`: run the full skill unchanged.
+- `standard` or `lean`: return control without asking questions or creating a
+  spec. Standard's inline design is owned by the selector contract.
+- no active mode: invoke `selecting-workflow-mode` before continuing.
+
+Do not reclassify the task here.
+</WORKFLOW-MODE-GATE>
 
 Start by understanding the current project context, then ask questions one at a time to refine the idea. Once you understand what you're building, present the design and get user approval.
 

@@ -1,6 +1,6 @@
 ---
 name: test-driven-development
-description: Use when implementing any feature or bugfix, before writing implementation code
+description: Use when strict mode implements a feature or bugfix, standard mode adds new logic or meaningful regression risk, or the human partner explicitly requests test-first development
 ---
 
 # Test-Driven Development (TDD)
@@ -13,9 +13,21 @@ Write the test first. Watch it fail. Write minimal code to pass.
 
 **Violating the letter of the rules is violating the spirit of the rules.**
 
+<WORKFLOW-MODE-GATE>
+Run this skill when explicitly requested. Otherwise:
+
+- `strict`: all existing TDD requirements remain mandatory.
+- `standard`: run for new logic or meaningful regression risk.
+- `lean`: TDD is optional; relevant verification remains mandatory.
+- no active mode: invoke `selecting-workflow-mode`.
+
+When this gate selects TDD, follow the complete skill. Do not weaken the
+RED-GREEN-REFACTOR cycle after selecting it.
+</WORKFLOW-MODE-GATE>
+
 ## When to Use
 
-**Always:**
+**When selected by the workflow-mode gate:**
 - New features
 - Bug fixes
 - Refactoring
