@@ -47,6 +47,9 @@ guide_contract_valid() {
   local expected_guarantees
 
   [[ -f "$file" ]] || return 1
+  if rg -q $'\t' "$file" || rg -q '^ {4,}' "$file"; then
+    return 1
+  fi
   headings="$(rg '^## ' "$file")"
   [[ "$headings" == $'## Lean\n## Standard\n## Strict\n## Guarantees' ]] || return 1
 
@@ -67,6 +70,55 @@ guide_contract_valid() {
   [[ "$standard" == "$expected_standard" ]] || return 1
   [[ "$strict" == "$expected_strict" ]] || return 1
   [[ "$guarantees" == "$expected_guarantees" ]] || return 1
+}
+
+normalized_text_contains() {
+  local normalized="$1" expected="$2"
+
+  [[ "$normalized" == *"$expected"* ]]
+}
+
+assert_normalized_guide_contains() {
+  local normalized="$1" expected="$2" label="$3"
+
+  if normalized_text_contains "$normalized" "$expected"; then
+    pass "$label"
+  else
+    fail "$label"
+  fi
+}
+
+public_guide_checks_valid() {
+  local file="$1"
+  local normalized required
+
+  normalized="$(normalize_contract_text <"$file")"
+  for required in \
+    "chooses workflow depth from task risk" \
+    "uncertainty, reversibility" \
+    "blast radius, and external effects" \
+    "does not use model names or a model allowlist" \
+    "Every new task begins with one declaration" \
+    "## Lean" \
+    "## Standard" \
+    "## Strict" \
+    "Mode: lean" \
+    "Mode: standard" \
+    "Mode: strict" \
+    "Strict TDD is optional in lean mode" \
+    "Relevant verification remains mandatory" \
+    "proceeds without an approval pause" \
+    "complete upstream Superpowers workflow" \
+    "forced lean mode on high-risk work produces a warning but remains lean" \
+    "may promote a mode when new risk appears" \
+    "never demotes it" \
+    "Fresh verification evidence is required in every mode" \
+    "Explicit skill requests still run" \
+    "Domain skills" \
+    "platform safety controls remain active"
+  do
+    normalized_text_contains "$normalized" "$required" || return 1
+  done
 }
 
 insert_before_next_section() {
@@ -135,28 +187,29 @@ runner_contract_valid() {
 
 assert_file "$DOC" "workflow mode guide exists"
 if [[ -f "$DOC" ]]; then
-  assert_contains "$DOC" "chooses workflow depth from task risk" "guide documents risk-based selection"
-  assert_contains "$DOC" "uncertainty, reversibility" "guide considers uncertainty and reversibility"
-  assert_contains "$DOC" "blast radius, and external effects" "guide considers blast radius and external effects"
-  assert_contains "$DOC" "does not use model names or a model allowlist" "guide rejects model allowlists"
-  assert_contains "$DOC" "Every new task begins with one declaration" "guide requires one mode declaration"
-  assert_contains "$DOC" "## Lean" "guide documents lean"
-  assert_contains "$DOC" "## Standard" "guide documents standard"
-  assert_contains "$DOC" "## Strict" "guide documents strict"
+  normalized_guide="$(normalize_contract_text <"$DOC")"
+  assert_normalized_guide_contains "$normalized_guide" "chooses workflow depth from task risk" "guide documents risk-based selection"
+  assert_normalized_guide_contains "$normalized_guide" "uncertainty, reversibility" "guide considers uncertainty and reversibility"
+  assert_normalized_guide_contains "$normalized_guide" "blast radius, and external effects" "guide considers blast radius and external effects"
+  assert_normalized_guide_contains "$normalized_guide" "does not use model names or a model allowlist" "guide rejects model allowlists"
+  assert_normalized_guide_contains "$normalized_guide" "Every new task begins with one declaration" "guide requires one mode declaration"
+  assert_normalized_guide_contains "$normalized_guide" "## Lean" "guide documents lean"
+  assert_normalized_guide_contains "$normalized_guide" "## Standard" "guide documents standard"
+  assert_normalized_guide_contains "$normalized_guide" "## Strict" "guide documents strict"
   for mode in lean standard strict; do
-    assert_contains "$DOC" "Mode: $mode" "guide documents $mode override syntax"
+    assert_normalized_guide_contains "$normalized_guide" "Mode: $mode" "guide documents $mode override syntax"
   done
-  assert_contains "$DOC" "Strict TDD is optional in lean mode" "guide makes lean TDD optional"
-  assert_contains "$DOC" "Relevant verification remains mandatory" "guide keeps lean verification mandatory"
-  assert_contains "$DOC" "proceeds without an approval pause" "guide keeps standard execution continuous"
-  assert_contains "$DOC" "complete upstream Superpowers workflow" "guide preserves the upstream strict workflow"
-  assert_contains "$DOC" "forced lean mode on high-risk work produces a warning but remains lean" "guide documents forced-lean warning behavior"
-  assert_contains "$DOC" "may promote a mode when new risk appears" "guide documents risk promotion"
-  assert_contains "$DOC" "never demotes it" "guide forbids automatic demotion"
-  assert_contains "$DOC" "Fresh verification evidence is required in every mode" "guide documents the verification invariant"
-  assert_contains "$DOC" "Explicit skill requests still run" "guide preserves explicit skill requests"
-  assert_contains "$DOC" "Domain skills" "guide preserves domain skills"
-  assert_contains "$DOC" "platform safety controls remain active" "guide preserves platform safety controls"
+  assert_normalized_guide_contains "$normalized_guide" "Strict TDD is optional in lean mode" "guide makes lean TDD optional"
+  assert_normalized_guide_contains "$normalized_guide" "Relevant verification remains mandatory" "guide keeps lean verification mandatory"
+  assert_normalized_guide_contains "$normalized_guide" "proceeds without an approval pause" "guide keeps standard execution continuous"
+  assert_normalized_guide_contains "$normalized_guide" "complete upstream Superpowers workflow" "guide preserves the upstream strict workflow"
+  assert_normalized_guide_contains "$normalized_guide" "forced lean mode on high-risk work produces a warning but remains lean" "guide documents forced-lean warning behavior"
+  assert_normalized_guide_contains "$normalized_guide" "may promote a mode when new risk appears" "guide documents risk promotion"
+  assert_normalized_guide_contains "$normalized_guide" "never demotes it" "guide forbids automatic demotion"
+  assert_normalized_guide_contains "$normalized_guide" "Fresh verification evidence is required in every mode" "guide documents the verification invariant"
+  assert_normalized_guide_contains "$normalized_guide" "Explicit skill requests still run" "guide preserves explicit skill requests"
+  assert_normalized_guide_contains "$normalized_guide" "Domain skills" "guide preserves domain skills"
+  assert_normalized_guide_contains "$normalized_guide" "platform safety controls remain active" "guide preserves platform safety controls"
   assert_not_matches "$DOC" "upstream.*typo|typo.*upstream" "guide makes no unsupported upstream typo claim"
   if guide_contract_valid "$DOC"; then
     pass "guide sections satisfy the invariant contract"
@@ -176,6 +229,47 @@ if [[ -f "$DOC" ]]; then
     fail "contract wording changes require a canonical expectation update"
   else
     pass "contract wording changes require a canonical expectation update"
+  fi
+  indentation_mutation="$TEST_TMP/indented-normative-content.md"
+  awk '
+    $0 == "- Fresh verification evidence is required in every mode." {
+      print "    " $0
+      next
+    }
+    { print }
+  ' "$DOC" >"$indentation_mutation"
+  if guide_contract_valid "$indentation_mutation"; then
+    fail "guide contract rejects four-space-indented normative content"
+  else
+    pass "guide contract rejects four-space-indented normative content"
+  fi
+  tab_mutation="$TEST_TMP/tab-indented-normative-content.md"
+  awk '
+    $0 == "- Fresh verification evidence is required in every mode." {
+      print "\t" $0
+      next
+    }
+    { print }
+  ' "$DOC" >"$tab_mutation"
+  if guide_contract_valid "$tab_mutation"; then
+    fail "guide contract rejects tab-indented normative content"
+  else
+    pass "guide contract rejects tab-indented normative content"
+  fi
+  reflow_mutation="$TEST_TMP/reflowed-preamble.md"
+  awk '
+    $0 == "Superpowers chooses workflow depth from task risk, uncertainty, reversibility," {
+      print "Superpowers chooses workflow depth from task"
+      print "risk, uncertainty, reversibility,"
+      next
+    }
+    { print }
+  ' "$DOC" >"$reflow_mutation"
+  if guide_contract_valid "$reflow_mutation" &&
+    public_guide_checks_valid "$reflow_mutation"; then
+    pass "guide contract and public checks accept semantic line reflow"
+  else
+    fail "guide contract and public checks accept semantic line reflow"
   fi
 fi
 
