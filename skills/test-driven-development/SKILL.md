@@ -18,8 +18,10 @@ Run this skill when explicitly requested. Otherwise:
 
 - `strict`: all existing TDD requirements remain mandatory.
 - `standard`: run for new logic or meaningful regression risk.
-- `lean`: TDD is optional; relevant verification remains mandatory.
+- `lean`: return control; relevant verification remains mandatory.
 - no active mode: invoke `selecting-workflow-mode`.
+
+Do not reclassify the task here.
 
 When this gate selects TDD, follow the complete skill. Do not weaken the
 RED-GREEN-REFACTOR cycle after selecting it.

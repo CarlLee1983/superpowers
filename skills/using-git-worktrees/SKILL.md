@@ -20,6 +20,7 @@ Run this skill when explicitly requested. Otherwise:
 - `lean`: return control and work in the current workspace.
 - no active mode: invoke `selecting-workflow-mode`.
 
+Do not reclassify the task here.
 Do not create isolation merely because a task changes multiple files.
 </WORKFLOW-MODE-GATE>
 

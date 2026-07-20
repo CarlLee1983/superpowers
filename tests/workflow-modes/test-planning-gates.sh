@@ -3,12 +3,53 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 source "$ROOT/tests/workflow-modes/lib.sh"
 
+assert_count() {
+  local path="$1" pattern="$2" expected="$3" label="$4" actual
+  actual="$(rg -c -- "$pattern" "$path" || true)"
+  [[ "$actual" == "$expected" ]] && pass "$label" || fail "$label"
+}
+
 for skill in brainstorming writing-plans using-git-worktrees test-driven-development; do
   assert_contains "$ROOT/skills/$skill/SKILL.md" "<WORKFLOW-MODE-GATE>" "$skill has a mode gate"
+  assert_count "$ROOT/skills/$skill/SKILL.md" '^<WORKFLOW-MODE-GATE>$' 1 "$skill has one opening mode gate"
+  assert_count "$ROOT/skills/$skill/SKILL.md" '^</WORKFLOW-MODE-GATE>$' 1 "$skill has one closing mode gate"
 done
 
-assert_contains "$ROOT/skills/brainstorming/SKILL.md" "Standard's inline design is owned by the selector contract" "brainstorming does not hijack standard"
-assert_contains "$ROOT/skills/writing-plans/SKILL.md" "durable cross-session handoff" "planning permits standard handoff"
-assert_contains "$ROOT/skills/using-git-worktrees/SKILL.md" "materially useful isolation" "worktree is conditional in standard"
-assert_contains "$ROOT/skills/test-driven-development/SKILL.md" "new logic or meaningful regression risk" "TDD is risk-selected in standard"
+brainstorming="$ROOT/skills/brainstorming/SKILL.md"
+writing_plans="$ROOT/skills/writing-plans/SKILL.md"
+worktrees="$ROOT/skills/using-git-worktrees/SKILL.md"
+tdd="$ROOT/skills/test-driven-development/SKILL.md"
+
+assert_contains "$brainstorming" "description: Use when the active workflow mode is strict and the task creates or changes behavior, or when the human partner explicitly requests design exploration" "brainstorming has exact trigger description"
+assert_contains "$brainstorming" "If brainstorming was explicitly requested, run the full skill." "brainstorming preserves explicit requests"
+assert_contains "$brainstorming" '- `strict`: run the full skill unchanged.' "brainstorming runs fully in strict"
+assert_contains "$brainstorming" '- `standard` or `lean`: return control without asking questions or creating a' "brainstorming bypasses in standard and lean"
+assert_contains "$brainstorming" "Standard's inline design is owned by the selector contract" "brainstorming does not hijack standard"
+assert_contains "$brainstorming" '- no active mode: invoke `selecting-workflow-mode` before continuing.' "brainstorming selects when mode is absent"
+assert_contains "$brainstorming" "Do not reclassify the task here." "brainstorming does not reclassify"
+
+assert_contains "$writing_plans" "description: Use when strict mode has an approved design, standard mode needs a durable cross-session handoff, or the human partner explicitly requests a written implementation plan" "writing-plans has exact trigger description"
+assert_contains "$writing_plans" "Run this skill when explicitly requested." "writing-plans preserves explicit requests"
+assert_contains "$writing_plans" '- `strict`: run the full skill.' "writing-plans runs fully in strict"
+assert_contains "$writing_plans" '- `standard`: run only for a durable cross-session handoff; inline execution' "writing-plans permits standard durable handoff"
+assert_contains "$writing_plans" '- `lean`: return control.' "writing-plans bypasses in lean"
+assert_contains "$writing_plans" '- no active mode: invoke `selecting-workflow-mode`.' "writing-plans selects when mode is absent"
+assert_contains "$writing_plans" "Do not reclassify the task here." "writing-plans does not reclassify"
+
+assert_contains "$worktrees" "description: Use when strict mode begins implementation, standard mode needs materially useful isolation, or the human partner explicitly requests an isolated workspace" "using-git-worktrees has exact trigger description"
+assert_contains "$worktrees" "Run this skill when explicitly requested." "using-git-worktrees preserves explicit requests"
+assert_contains "$worktrees" '- `strict`: follow the full isolation workflow.' "using-git-worktrees runs fully in strict"
+assert_contains "$worktrees" '- `standard`: continue only when isolation prevents interference, protects' "using-git-worktrees is conditional in standard"
+assert_contains "$worktrees" '- `lean`: return control and work in the current workspace.' "using-git-worktrees bypasses in lean"
+assert_contains "$worktrees" '- no active mode: invoke `selecting-workflow-mode`.' "using-git-worktrees selects when mode is absent"
+assert_contains "$worktrees" "Do not reclassify the task here." "using-git-worktrees does not reclassify"
+
+assert_contains "$tdd" "description: Use when strict mode implements a feature or bugfix, standard mode adds new logic or meaningful regression risk, or the human partner explicitly requests test-first development" "test-driven-development has exact trigger description"
+assert_contains "$tdd" "Run this skill when explicitly requested." "test-driven-development preserves explicit requests"
+assert_contains "$tdd" '- `strict`: all existing TDD requirements remain mandatory.' "test-driven-development runs fully in strict"
+assert_contains "$tdd" '- `standard`: run for new logic or meaningful regression risk.' "test-driven-development is risk-selected in standard"
+assert_contains "$tdd" '- `lean`: return control; relevant verification remains mandatory.' "test-driven-development bypasses in lean"
+assert_contains "$tdd" '- no active mode: invoke `selecting-workflow-mode`.' "test-driven-development selects when mode is absent"
+assert_contains "$tdd" "Do not reclassify the task here." "test-driven-development does not reclassify"
+assert_contains "$tdd" "Do not weaken the" "test-driven-development preserves full cycle after selection"
 finish
