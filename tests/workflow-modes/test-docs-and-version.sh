@@ -20,43 +20,53 @@ section_text() {
   ' "$file"
 }
 
-text_matches() {
-  local content="$1" pattern="$2"
-  rg -iq -- "$pattern" <<<"$content"
+guide_preamble_text() {
+  local file="$1"
+  awk '/^## Lean$/ { exit } { print }' "$file"
+}
+
+normalize_contract_text() {
+  awk '
+    {
+      gsub(/[[:space:]]+/, " ")
+      sub(/^ /, "")
+      sub(/ $/, "")
+      if (length) {
+        if (out != "") out = out " "
+        out = out $0
+      }
+    }
+    END { print out }
+  '
 }
 
 guide_contract_valid() {
   local file="$1"
-  local lean standard strict guarantees full
+  local headings preamble lean standard strict guarantees
+  local expected_preamble expected_lean expected_standard expected_strict
+  local expected_guarantees
 
   [[ -f "$file" ]] || return 1
-  [[ "$(rg -c '^## Lean$' "$file")" -eq 1 ]] || return 1
-  [[ "$(rg -c '^## Standard$' "$file")" -eq 1 ]] || return 1
-  [[ "$(rg -c '^## Strict$' "$file")" -eq 1 ]] || return 1
+  headings="$(rg '^## ' "$file")"
+  [[ "$headings" == $'## Lean\n## Standard\n## Strict\n## Guarantees' ]] || return 1
 
-  lean="$(section_text "$file" "## Lean")"
-  standard="$(section_text "$file" "## Standard")"
-  strict="$(section_text "$file" "## Strict")"
-  guarantees="$(section_text "$file" "## Guarantees")"
-  full="$(<"$file")"
+  expected_preamble='# Adaptive workflow modes Superpowers chooses workflow depth from task risk, uncertainty, reversibility, blast radius, and external effects. It does not use model names or a model allowlist. Every new task begins with one declaration: `Mode: lean — localized, reversible change with direct verification.` Use `Mode: lean`, `Mode: standard`, or `Mode: strict` in your request to override automatic selection.'
+  expected_lean='Lean mode is for clear, localized, reversible work. The agent inspects, changes, runs the most relevant verification, reviews the diff, and reports evidence. Written specs, worktrees, subagents, and independent review are optional. Strict TDD is optional in lean mode. Relevant verification remains mandatory.'
+  expected_standard='Standard mode is for bounded multi-component work. The agent gives a short inline design and execution outline, then proceeds without an approval pause. It uses test-first development, isolation, subagents, and independent review only when they materially control risk.'
+  expected_strict='Strict mode is for security, payments, production data, migrations, irreversible operations, breaking APIs, broad architecture, or material ambiguity. It preserves the complete upstream Superpowers workflow.'
+  expected_guarantees='- Fresh verification evidence is required in every mode. - Explicit skill requests still run. - Domain skills remain active. - Host and platform safety controls remain active. - The agent may promote a mode when new risk appears, but never demotes it automatically within a task. - A forced lean mode on high-risk work produces a warning but remains lean.'
 
-  [[ "$lean" == *"Strict TDD is optional in lean mode"* ]] || return 1
-  [[ "$lean" == *"Relevant verification remains mandatory"* ]] || return 1
-  ! text_matches "$lean" 'skip(s|ping)? (all |relevant )?verification|verification (is )?optional|no verification (is )?required|need not[^.]*verif' || return 1
-  ! text_matches "$lean" '(disable|override|bypass|ignore|skip)[^.]*platform safety|platform safety[^.]*(disabled|optional|overridden|bypassed|ignored)' || return 1
+  preamble="$(guide_preamble_text "$file" | normalize_contract_text)"
+  lean="$(section_text "$file" "## Lean" | normalize_contract_text)"
+  standard="$(section_text "$file" "## Standard" | normalize_contract_text)"
+  strict="$(section_text "$file" "## Strict" | normalize_contract_text)"
+  guarantees="$(section_text "$file" "## Guarantees" | normalize_contract_text)"
 
-  [[ "$standard" == *"inline design and execution outline"* ]] || return 1
-  [[ "$standard" == *"proceeds without an approval pause"* ]] || return 1
-  ! text_matches "$standard" 'requires?[^.]*approval pause|waits? for approval|approval pause[^.]*required' || return 1
-
-  [[ "$strict" == *"preserves the complete upstream Superpowers workflow"* ]] || return 1
-  ! text_matches "$strict" 'omit(s|ting)?[^.]*complete upstream|does not preserve[^.]*complete upstream|skip(s|ping)?[^.]*upstream workflow' || return 1
-
-  [[ "$guarantees" == *"Fresh verification evidence is required in every mode"* ]] || return 1
-  [[ "$guarantees" == *"Host and platform safety controls remain active"* ]] || return 1
-  [[ "$guarantees" == *"never demotes it"* ]] || return 1
-  ! text_matches "$full" 'mode selection (uses|routes with|selects with)[^.]*model[- ](name )?allowlist' || return 1
-  ! text_matches "$full" '(may|can|will) automatically demote|automatically demotes|auto-demot' || return 1
+  [[ "$preamble" == "$expected_preamble" ]] || return 1
+  [[ "$lean" == "$expected_lean" ]] || return 1
+  [[ "$standard" == "$expected_standard" ]] || return 1
+  [[ "$strict" == "$expected_strict" ]] || return 1
+  [[ "$guarantees" == "$expected_guarantees" ]] || return 1
 }
 
 insert_before_next_section() {
@@ -153,12 +163,20 @@ if [[ -f "$DOC" ]]; then
   else
     fail "guide sections satisfy the invariant contract"
   fi
-  assert_guide_mutation_rejected "lean-skips-verification" "## Lean" "Lean may skip relevant verification."
-  assert_guide_mutation_rejected "lean-overrides-platform-safety" "## Lean" "Lean overrides platform safety controls."
-  assert_guide_mutation_rejected "standard-requires-approval" "## Standard" "Standard requires an approval pause before execution."
-  assert_guide_mutation_rejected "strict-omits-upstream" "## Strict" "Strict omits the complete upstream workflow."
-  assert_guide_mutation_rejected "model-name-allowlist" "## Guarantees" "Mode selection uses a model-name allowlist."
-  assert_guide_mutation_rejected "automatic-demotion" "## Guarantees" "The agent may automatically demote the active mode."
+  assert_guide_mutation_rejected "lean-omits-verification" "## Lean" "Lean can omit relevant verification."
+  assert_guide_mutation_rejected "lean-controls-do-not-apply" "## Lean" "Platform safety controls do not apply in Lean."
+  assert_guide_mutation_rejected "standard-pauses-for-approval" "## Standard" "Standard pauses for approval before execution."
+  assert_guide_mutation_rejected "strict-partial-upstream" "## Strict" "Strict follows only part of the upstream Superpowers workflow."
+  assert_guide_mutation_rejected "model-capability-name-routing" "## Guarantees" "Mode selection routes by model capability and name."
+  assert_guide_mutation_rejected "automatic-mode-lowering" "## Guarantees" "The agent may lower the mode automatically."
+  wording_mutation="$TEST_TMP/legitimate-wording-change.md"
+  sed 's/Relevant verification remains mandatory/Relevant verification is still mandatory/' \
+    "$DOC" >"$wording_mutation"
+  if guide_contract_valid "$wording_mutation"; then
+    fail "contract wording changes require a canonical expectation update"
+  else
+    pass "contract wording changes require a canonical expectation update"
+  fi
 fi
 
 assert_contains "$README" "## Adaptive workflow modes" "README introduces modes"
@@ -183,7 +201,10 @@ how_it_works="$(section_text "$README" "## How it works")"
 [[ "$how_it_works" == *"Strict"* && "$how_it_works" == *"full questions, design, plan, TDD, and subagent workflow"* ]] \
   && pass "README How it works scopes the full workflow to strict" \
   || fail "README How it works scopes the full workflow to strict"
-if text_matches "$how_it_works" "As soon as it sees that you're building.*asks|Once it's teased a spec|After you've signed off|once you say \"go\""; then
+if [[ "$how_it_works" == *"As soon as it sees that you're building"* ||
+  "$how_it_works" == *"Once it's teased a spec"* ||
+  "$how_it_works" == *"After you've signed off"* ||
+  "$how_it_works" == *'once you say "go"'* ]]; then
   fail "README How it works has no universal strict-workflow claims"
 else
   pass "README How it works has no universal strict-workflow claims"
