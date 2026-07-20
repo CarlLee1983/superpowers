@@ -347,10 +347,12 @@ capability bump in one move.
 **Every round, either way:** the implementer fixes, re-runs the tests
 covering the amended code, appends its fix report to the same report file,
 and returns the short contract. Before re-dispatching the reviewer, confirm
-the fix report contains the covering tests, the command run, and the
-output; dispatch the re-review once all three are present. Name the
-covering test files in the fix message — a one-line fix does not need the
-whole suite.
+the fix report contains the covering tests, the command run, and the output;
+dispatch the re-review once all three are present. Name the covering test
+files in the fix message — a one-line fix does not need the whole suite.
+Append the re-review's returned text to `<workspace>/task-<N>-review.md` as
+well — the artifact accumulates every verdict, and the file's last entry is
+the one completion relies on.
 
 **The re-review is scoped.** Run `scripts/review-package PLAN_FILE FIX_BASE HEAD`
 where FIX_BASE is the head the previous review saw, and dispatch
