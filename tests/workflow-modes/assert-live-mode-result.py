@@ -374,54 +374,55 @@ def require_pattern(text: str, pattern: str, description: str) -> None:
 
 def require_relevant_pause(text: str) -> None:
     sentences = re.split(r"(?<=[?.!])\s+|\n+", text)
-    decision_object = re.compile(
-        r"\b(?:requirements?|constraints?|rollback|design|migration|rollout|"
-        r"compatib\w*|clients?|consumers?|schema|data|deprecat\w*|break\w*|"
-        r"aliases?|amount|cents?|retain|remove|versions?|support|proceed|"
-        r"implement\w*|options?|choices?)\b",
-        re.IGNORECASE,
+    decision_object = (
+        r"(?:requirements?|scope|rollback\s+requirements?|"
+        r"migration\s+(?:approach|plan|strategy|options?)|"
+        r"rollout(?:\s+(?:approach|plan|strategy|options?))?|"
+        r"API\s+(?:compatibility|contract(?:\s+change)?|changes?|versions?|"
+        r"breaking\s+change)|compatibility(?:\s+(?:requirements?|plan|"
+        r"aliases?))?|breaking\s+(?:API\s+)?(?:change|release)|"
+        r"deprecation\s+window|schema\s+(?:change|conversion|migration)|"
+        r"data\s+(?:conversion|migration)|named\s+(?:option|choice)\s+"
+        r"`?[A-Za-z_][A-Za-z0-9_-]*`?|(?:option|choice)\s+"
+        r"`?[A-Za-z_][A-Za-z0-9_-]*`?|existing\s+API\s+clients?"
+        r".{0,60}\balias|(?:retain|remove|preserve)\w*.{0,50}\balias|"
+        r"amount\s+alias|old\s+amount\s+key.{0,80}\bcompatibility\s+alias)"
     )
-    decision_patterns = (
-        r"\b(?:which|what)\b.{0,120}\b(?:requirements?|constraints?|rollback|"
-        r"design|migration|compatib\w*|clients?|consumers?|schema|data|"
-        r"deprecat\w*|break\w*|aliases?|amount|versions?|options?|choices?)\b",
-        r"\b(?:can|could|would|do|will)\s+you\s+(?:please\s+)?"
-        r"(?:approve|confirm|clarify|choose|provide|review)\b",
-        r"\b(?:should|shall)\b.{0,120}\b(?:retain|remove|approve|confirm|choose|"
-        r"use|migrate|rollback|alias|version|support|proceed|remain)\b",
-        r"\bmust\b.{0,120}\b(?:or\s+may|or\s+should|or\s+must)\b",
+    decision_target = (
+        rf"(?:(?:the|this|that|a|an|proposed|payment)\s+)*{decision_object}"
+    )
+    task_action = (
+        r"(?:use|choose|adopt|retain|remove|preserve|approve|implement|"
+        r"proceed\s+with|roll\s+out)"
+    )
+    decision_forms = (
+        rf"^\s*which\s+{decision_target}[^?]*\?\s*$",
+        rf"^\s*should\s+(?:I|we)\s+{task_action}\s+"
+        rf"{decision_target}[^?]*\?\s*$",
+        rf"^\s*do\s+you\s+want\s+(?:me|us)\s+to\s+{task_action}\s+"
+        rf"{decision_target}[^?]*\?\s*$",
+        rf"^\s*would\s+you\s+like\s+(?:me|us)\s+to\s+{task_action}\s+"
+        rf"{decision_target}[^?]*\?\s*$",
+        rf"^\s*(?:can|could)\s+you\s+(?:please\s+)?"
+        rf"(?:confirm|clarify|choose|approve|decide|provide)\s+"
+        rf"(?:whether\s+)?{decision_target}[^?]*\?\s*$",
+        rf"^\s*please\s+(?:confirm|clarify|choose|approve|decide|provide)\s+"
+        rf"{decision_target}[^.!?]*(?:[.!]|$)\s*$",
+        rf"^\s*(?:I|we)\s+(?:need|await)\s+your\s+"
+        rf"(?:approval|decision|confirmation|clarification)\s+"
+        rf"(?:on|about|for)\s+{decision_target}[^.!?]*"
+        rf"\bbefore\s+proceeding(?:[.!]|$)\s*$",
+        rf"^\s*(?:first\s+decision:\s*)?must\s+{decision_target}[^?]*"
+        rf"\bor\s+may\b[^?]*\?\s*$",
+        r"^\s*(?:first\s+decision:\s*)?must\s+existing\s+API\s+clients?"
+        r"[^?]*\bdeprecation\s+window\b[^?]*\bor\s+may\b[^?]*"
+        r"\bbreaking\s+release\b[^?]*\?\s*$",
+        r"^\s*should\s+(?:the\s+)?old\s+amount\s+key\b[^?]*\bor\b[^?]*"
+        r"\bcompatibility\s+alias\b[^?]*\?\s*$",
+        rf"^\s*should\s+{decision_target}[^?]*\bor\b[^?]*\?\s*$",
     )
     for sentence in sentences:
-        has_imperative = re.search(
-            r"^\s*(?:please\s+)?(?:approve|confirm|clarify|choose|provide|review)\b",
-            sentence,
-            re.IGNORECASE,
-        )
-        awaits_user = re.search(
-            r"\b(?:I|we)\s+(?:need|require|await|will\s+wait\s+for)\s+"
-            r"(?:your\s+)?(?:approval|decision|confirmation|choice)\b.{0,100}"
-            r"\bbefore\s+(?:proceed\w*|continu\w*|implement\w*|edit\w*|"
-            r"chang\w*|migrat\w*)\b",
-            sentence,
-            re.IGNORECASE,
-        )
-        has_decision = any(
-            re.search(pattern, sentence, re.IGNORECASE)
-            for pattern in decision_patterns
-        )
-        asks_for_opinion = re.search(
-            r"\b(?:like|opinion|feel\s+about|think\s+about)\b",
-            sentence,
-            re.IGNORECASE,
-        )
-        is_pause_form = (
-            "?" in sentence and has_decision
-        ) or has_imperative or awaits_user
-        if (
-            is_pause_form
-            and decision_object.search(sentence)
-            and not asks_for_opinion
-        ):
+        if any(re.search(pattern, sentence, re.IGNORECASE) for pattern in decision_forms):
             return
     raise ValidationError(
         "assistant-visible text lacks relevant clarification/approval pause"
@@ -450,32 +451,46 @@ def require_affirmative_brainstorming(text: str) -> None:
         r"invoked|run)\s*,?\s*(?:the\s+)?brainstorming(?:\s+skill)?\b",
         r"\bbrainstorming\s+skill\s+(?:is|was|will\s+be)\s+not\s+"
         r"(?:used|invoked|run|running)\b",
+        r"\b(?:I|we)\s+(?:(?:am|are|was|were)\s+)?(?:not|no\s+longer)\s+"
+        r"(?:actually\s+)?(?:using|invoking|running|use|invoke|run)\s+"
+        r"(?:it|that\s+skill|the\s+skill)\b",
+        r"\b(?:I|we)\s+(?:won't|wouldn't|can't|couldn't|don't|doesn't|didn't)\s+"
+        r"(?:actually\s+)?(?:use|invoke|run)\s+"
+        r"(?:it|that\s+skill|the\s+skill)\b",
+        r"\b(?:not|no\s+longer)\s+(?:actually\s+)?"
+        r"(?:using|invoking|running|use|invoke|run)\s+"
+        r"(?:it|that\s+skill|the\s+skill)\b",
     )
-    invocation_polarity: bool | None = None
+    affirmative_seen = False
+    negated_after_affirmative = False
     for clause in clauses:
-        if any(
+        is_negative = any(
             re.search(pattern, clause, re.IGNORECASE)
             for pattern in negative_patterns
-        ):
-            invocation_polarity = False
-        elif any(
+        )
+        is_affirmative = any(
             re.search(pattern, clause, re.IGNORECASE)
             for pattern in affirmative_patterns
-        ):
-            invocation_polarity = True
-    if invocation_polarity is not True:
+        )
+        if is_negative and affirmative_seen:
+            negated_after_affirmative = True
+        elif is_affirmative and not is_negative:
+            affirmative_seen = True
+    if not affirmative_seen or negated_after_affirmative:
         raise ValidationError(
             "assistant-visible text lacks affirmative brainstorming skill use/invocation"
         )
     candidates: set[str] = set()
-    negative = re.compile(
+    negative_status = re.compile(
         r"\b(?:reject(?:ed)?|avoid|ruled\s+out|do\s+not\s+use|"
-        r"not\s+an?\s+option|not\s+recommended|current[- ]only)\b",
+        r"not\s+an?\s+option|not\s+recommended|current[- ]only|"
+        r"struck|strikeout|strikethrough)\b",
         re.IGNORECASE,
     )
     label = re.compile(
-        r"(?:^|\s)(?:\d+[.)]\s*)?(?:\*\*)?(?:option|candidate)"
-        r"(?:\s+\d+)?\s*(?::|is|are)\s*(?:\*\*)?`?"
+        r"^\s*(?:(?:[-*]|\d+[.)])\s+(?:\*\*)?"
+        r"(?:option|candidate)(?:\s+\d+)?|(?:\*\*)?"
+        r"(?:option|candidate)\s+\d+)\s*:\s*(?:\*\*)?`?"
         r"([A-Za-z_][A-Za-z0-9_-]*)",
         re.IGNORECASE,
     )
@@ -483,42 +498,51 @@ def require_affirmative_brainstorming(text: str) -> None:
         r"\b(?:two|2)?\s*(?:options|candidates)\s*(?:are|:)\s*([^.;\n]+)",
         re.IGNORECASE,
     )
-    bullet = re.compile(
-        r"^\s*(?:[-*]|\d+[.)])\s+(?:`([A-Za-z_][A-Za-z0-9_-]*)`|"
-        r"([a-z][A-Za-z0-9]*(?:[A-Z_][A-Za-z0-9_]*)+))"
-    )
+
+    def negative_candidate(unit: str, identifier: str | None = None) -> bool:
+        status_text = re.sub(
+            r"\bkeep(?:ing)?\s+the\s+current\s+name\b",
+            "",
+            unit,
+            flags=re.IGNORECASE,
+        )
+        has_current_status = re.search(
+            r"(?:^|[(:—-])\s*(?:current|existing)\b|"
+            r"\b(?:current|existing)\s+(?:name|identifier|option|candidate)\b",
+            status_text,
+            re.IGNORECASE,
+        )
+        return bool(
+            "~~" in unit
+            or negative_status.search(status_text)
+            or has_current_status
+            or (
+                identifier is not None
+                and identifier.lower().startswith(("current", "existing"))
+            )
+        )
+
     for line in text.splitlines():
         for unit in line.split(";"):
-            if (
-                "~~" in unit
-                or re.search(
-                    r"^\s*(?:current|existing)\s+"
-                    r"(?:candidates?|options?|identifiers?)\b",
-                    unit,
-                    re.IGNORECASE,
-                )
-            ):
+            if negative_candidate(unit):
                 continue
             group_match = group.search(unit)
             if group_match:
                 for segment in re.split(
                     r"\s+(?:and|or)\s+|,", group_match.group(1)
                 ):
-                    if negative.search(segment) or "~~" in segment:
-                        continue
-                    identifier = re.search(
-                        r"`?([A-Za-z_][A-Za-z0-9_-]*)`?", segment
+                    identifier_match = re.fullmatch(
+                        r"\s*`?([A-Za-z_][A-Za-z0-9_-]*)`?\s*", segment
                     )
-                    if identifier:
-                        candidates.add(identifier.group(1))
+                    if identifier_match and not negative_candidate(
+                        segment, identifier_match.group(1)
+                    ):
+                        candidates.add(identifier_match.group(1))
                 continue
-            if negative.search(unit):
+            label_match = label.search(unit)
+            if not label_match or negative_candidate(unit, label_match.group(1)):
                 continue
-            for match in label.finditer(unit):
-                candidates.add(match.group(1))
-            bullet_match = bullet.search(unit)
-            if bullet_match:
-                candidates.add(bullet_match.group(1) or bullet_match.group(2))
+            candidates.add(label_match.group(1))
     if len(candidates) < 2:
         raise ValidationError(
             "assistant-visible brainstorming lacks at least two distinct positive options"

@@ -282,7 +282,7 @@ class ValidatorTest(unittest.TestCase):
             codex_event(
                 "Mode: strict — public payment API risk discovered.\n"
                 "I am promoting the workflow because this is a production billing API. "
-                "Should the compatibility alias remain during migration?"
+                "Should we retain the compatibility alias during migration?"
             ),
             {"type": "turn.completed", "usage": {}},
         ]
@@ -305,8 +305,8 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: strict — renaming an amount field can affect payment-domain "
                 "compatibility across downstream consumers.\n"
                 "The repository exposes this field through a public response, so the "
-                "rename changes its public response shape. Should existing API clients "
-                "retain the amount alias during migration?"
+                "rename changes its public response shape. Should we retain the amount "
+                "alias for existing API clients during migration?"
             ),
             {"type": "turn.completed", "usage": {}},
         ]
@@ -767,7 +767,9 @@ class ValidatorTest(unittest.TestCase):
             "Mode: strict — migration design is complete. What do you like about this API?",
             "Mode: strict — migration design is complete. Do you approve this API?",
             "Mode: strict — migration design is complete. Please approve lunch.",
+            "Mode: strict — migration design is complete. Please approve lunch before implementation.",
             "Mode: strict — migration design is complete. Please confirm API.",
+            "Mode: strict — migration design is complete. What seems nicest about this API migration approach?",
             "Mode: strict — migration design is complete. I approve this API design.",
             "Mode: strict — migration design is complete. We confirm API compatibility.",
             "Mode: strict — migration design is complete. I approve this API design?",
@@ -785,12 +787,17 @@ class ValidatorTest(unittest.TestCase):
     def test_strict_accepts_concrete_decision_or_requirement_questions(self) -> None:
         questions = (
             "Which rollback requirement applies to this migration?",
+            "Which migration approach should I use?",
+            "Should we use migration plan alpha?",
+            "Do you want me to preserve API compatibility?",
+            "Would you like us to use rollout option blue?",
             "Can you confirm whether existing API clients must retain the alias?",
-            "Could you approve this API design?",
-            "Please approve the proposed payment migration design before implementation.",
+            "Could you approve this API contract change?",
+            "Please approve the proposed payment migration plan before implementation.",
+            "Please choose named option blue for the schema conversion.",
             "Please confirm API compatibility before implementation.",
-            "I need your approval before proceeding with the API migration.",
-            "I need your decision before proceeding with the payment migration.",
+            "I need your approval on the API contract change before proceeding.",
+            "I await your decision about the migration approach before proceeding.",
         )
         for question in questions:
             with self.subTest(question=question):
@@ -885,25 +892,33 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_explicit_skill_uses_final_invocation_polarity(self) -> None:
-        events = [
-            {"type": "thread.started", "thread_id": "thread"},
-            codex_event(
-                "Mode: lean — explicit override.\n"
-                "I am using the brainstorming skill.\n"
-                "Options are welcomeUser and greetUser.\n"
-                "I am not using the brainstorming skill after all."
-            ),
-            {"type": "turn.completed", "usage": {}},
-        ]
-        result = self.run_validator("codex", "explicit-skill", events)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("affirmative brainstorming", result.stderr)
+        negations = (
+            "I am not using the brainstorming skill after all.",
+            "I am not invoking it after all.",
+            "We are no longer using that skill.",
+            "I won't use it after all.",
+            "I didn't invoke that skill.",
+        )
+        for negation in negations:
+            with self.subTest(negation=negation):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: lean — explicit override.\n"
+                        "I am using the brainstorming skill.\n"
+                        "Options are welcomeUser and greetUser.\n"
+                        f"{negation}"
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "explicit-skill", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("affirmative brainstorming", result.stderr)
 
     def test_explicit_skill_parses_candidate_polarity_per_clause(self) -> None:
         positives = (
             "Options are welcomeUser and greetUser; avoid currentName.",
-            "Candidate: welcomeUser; rejected candidate: currentName; Option: greetUser.",
-            "Option: welcomeUser; ~~Option: currentName~~; Option: greetUser.",
+            "Candidates are welcomeUser and greetUser; ~~Option: currentName~~.",
         )
         for candidates in positives:
             with self.subTest(candidates=candidates):
@@ -931,6 +946,31 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "explicit-skill", negative)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("two distinct positive", result.stderr)
+
+    def test_explicit_skill_rejects_current_existing_or_struck_candidate_units(self) -> None:
+        candidate_units = (
+            "1. Option: currentName (current)\n2. Option: welcomeUser",
+            "1. Option: currentName (existing identifier)\n2. Option: welcomeUser",
+            "1. Option: currentName (struck)\n2. Option: welcomeUser",
+            "1. Option: currentName (strikeout)\n2. Option: welcomeUser",
+            "Rejected options are currentName and greetUser.\n1. Option: welcomeUser",
+            "Existing candidates are currentName and greetUser.\n1. Option: welcomeUser",
+            "~~Options are currentName and greetUser~~.\n1. Option: welcomeUser",
+        )
+        for candidate_units_text in candidate_units:
+            with self.subTest(candidate_units=candidate_units_text):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: lean — explicit override.\n"
+                        "I am using the brainstorming skill.\n"
+                        f"{candidate_units_text}"
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "explicit-skill", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("two distinct positive", result.stderr)
 
     def test_claude_requires_exact_inline_checkout_plugin_identity(self) -> None:
         for init in (

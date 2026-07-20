@@ -51,7 +51,7 @@ elif "production data migration" in prompt:
             check=True,
             capture_output=True,
         )
-    text = "Mode: strict — production payment migration and public API change.\nBefore the design, which rollback constraints apply?"
+    text = "Mode: strict — production payment migration and public API change.\nWhich rollback requirement applies to this migration?"
 elif "authentication sample" in prompt:
     case = "override"
     (project / "src/auth.js").write_text(
@@ -66,7 +66,7 @@ elif "authentication sample" in prompt:
     text = "Mode: lean — explicit override.\nWarning: authentication is security-sensitive; I will remain lean as requested. Verification passed."
 elif "Rename the amount field" in prompt:
     case = "escalation"
-    text = "Mode: strict — production payment API risk discovered during inspection.\nI am promoting the workflow because this public billing API requires design clarification. Should existing clients retain an amount compatibility alias?"
+    text = "Mode: strict — production payment API risk discovered during inspection.\nI am promoting the workflow because this public billing API requires design clarification. Should we retain the compatibility alias for existing API clients?"
 elif "brainstorming skill" in prompt:
     case = "explicit-skill"
     text = "Mode: lean — explicit override.\nI am using the brainstorming skill. Two options are welcomeUser and greetUser."
