@@ -16,16 +16,26 @@ Random fixes waste time and create new bugs. Quick patches mask underlying issue
 <WORKFLOW-MODE-DEPTH>
 Root-cause evidence is mandatory in every mode.
 
-- `lean`: reproduce or inspect the symptom, identify the root cause from
-  evidence, make the smallest fix, run the regression check, and inspect the
-  diff. If evidence does not identify the cause directly, promote to standard.
+- `lean`: reproduce the symptom, then identify an evidence-backed root cause
+  before making any fix. Make the smallest fix, run the regression check, and
+  inspect the diff. If evidence does not identify the cause directly, escalate
+  to standard debugging depth without changing the active workflow mode.
 - `standard`: use an explicit hypothesis-and-test loop, then implement and
   verify the root-cause fix. The work may stay inline.
 - `strict`: follow all four phases and every existing gate unchanged.
 - no active mode: invoke `selecting-workflow-mode`.
 
 Do not reclassify the task here.
+A debugging-depth escalation does not change the active workflow mode.
+If investigation reveals materially higher task risk, invoke
+`selecting-workflow-mode`; only that selector may promote the active workflow mode.
 Do not use mode selection to justify guessing or symptom patching.
+Run reproduction and regression checks as standalone commands so each tool
+result exposes its actual exit status.
+Appending status-printing or masking syntax such as `; echo`, `|| true`,
+pipelines, or fallback commands invalidates that evidence; rerun the check
+standalone.
+After editing, run `git diff` as a standalone command and inspect its result.
 </WORKFLOW-MODE-DEPTH>
 
 ## The Iron Law
@@ -34,7 +44,9 @@ Do not use mode selection to justify guessing or symptom patching.
 NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST
 ```
 
-If you haven't completed Phase 1, you cannot propose fixes.
+In strict mode, if you haven't completed Phase 1, you cannot propose fixes.
+In standard and lean, you cannot propose a fix until you have reproduced the
+symptom and identified an evidence-backed root cause.
 
 ## When to Use
 
