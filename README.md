@@ -185,7 +185,23 @@ pi -e /path/to/superpowers
 
 The Pi package loads the Superpowers skills and a small extension that injects the `using-superpowers` bootstrap at session startup and again after compaction. Pi has native skills, so no compatibility `Skill` tool is required. Subagent and task-list tools remain optional Pi companion packages.
 
-## The Basic Workflow
+## Adaptive workflow modes
+
+This fork selects process depth from task risk instead of applying the complete
+workflow to every change:
+
+- **lean** — direct implementation and focused verification for clear,
+  reversible, low-impact work
+- **standard** — a short inline design followed by continuous execution
+  without an approval pause for bounded multi-component work
+- **strict** — the complete upstream workflow for high-risk or materially
+  ambiguous work
+
+The agent declares the selected mode once. Override it by including
+`Mode: lean`, `Mode: standard`, or `Mode: strict` in the request. See
+[`docs/workflow-modes.md`](docs/workflow-modes.md).
+
+## The Strict Workflow
 
 1. **brainstorming** - Activates before writing code. Refines rough ideas through questions, explores alternatives, presents design in sections for validation. Saves design document.
 
@@ -201,7 +217,9 @@ The Pi package loads the Superpowers skills and a small extension that injects t
 
 7. **finishing-a-development-branch** - Activates when tasks complete. Verifies tests, presents options (merge/PR/keep/discard), cleans up worktree.
 
-**The agent checks for relevant skills before any task.** Mandatory workflows, not suggestions.
+The complete sequence is mandatory in strict mode. Lean and standard use the
+reduced contracts described above. Relevant domain skills still apply in every
+mode.
 
 ## What's Inside
 
@@ -231,7 +249,7 @@ The Pi package loads the Superpowers skills and a small extension that injects t
 
 ## Philosophy
 
-- **Test-Driven Development** - Write tests first, always
+- **Risk-proportionate TDD** - mandatory in strict, selected for meaningful risk in standard, optional in lean
 - **Systematic over ad-hoc** - Process over guessing
 - **Complexity reduction** - Simplicity as primary goal
 - **Evidence over claims** - Verify before declaring success
