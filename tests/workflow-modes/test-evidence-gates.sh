@@ -33,6 +33,7 @@ assert_contains "$EVIDENCE_VALIDATOR" "negative self-test rejects extra files in
 assert_contains "$EVIDENCE_VALIDATOR" "negative self-test rejects broad claims from focused evidence" "validator self-tests focused-claim scope"
 assert_contains "$EVIDENCE_VALIDATOR" "negative self-test rejects missing strict plan assertion" "validator self-tests strict requirement enumeration"
 assert_contains "$EVIDENCE_VALIDATOR" "negative self-test rejects labels that appear only before final evidence" "validator self-tests early-only labels"
+assert_contains "$EVIDENCE_VALIDATOR" "negative self-test rejects early-plus-final duplicate exact labels" "validator self-tests transcript-wide label uniqueness"
 assert_contains "$EVIDENCE_VALIDATOR" "negative self-test rejects PASS followed by contradictory FAIL" "validator self-tests contradictory final labels"
 assert_contains "$EVIDENCE_VALIDATOR" "uses the exact standalone Bash allowlist" "validator enforces per-scenario command allowlists"
 assert_contains "$EVIDENCE_VALIDATOR" "has exactly one total later result per call and no orphan results" "validator enforces global call/result integrity"

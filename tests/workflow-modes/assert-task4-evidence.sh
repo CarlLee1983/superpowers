@@ -282,6 +282,7 @@ final_labels_pass() {
     | ([.[] | select(.kind == "result") | .order] | max // -1) as $last_result
     | ([.[] | select(.kind == "text") | (.message_order // .order)] | max)
       as $final_message
+    | ([.[] | select(.kind == "text") | .content] | join("\n")) as $all_text
     | ([.[] | select(.kind == "text"
           and (.message_order // .order) == $final_message) | .content]
        | join("\n")) as $final
@@ -294,11 +295,13 @@ final_labels_pass() {
       and all($expected[];
         . as $label
         | occurrences($final; $label) == 1
-          and occurrences($after; $label) == 1)
+          and occurrences($after; $label) == 1
+          and occurrences($all_text; $label) == 1)
       and all($bases[];
         . as $base
         | occurrences($final; $base) == 1
-          and occurrences($after; $base) == 1)
+          and occurrences($after; $base) == 1
+          and occurrences($all_text; $base) == 1)
       and ($after | test("(^|[^[:alnum:]_])(FAIL|FAILED)([^[:alnum:]_]|$)|(?i:not[[:space:]]+ok)"; "m") | not)
   ' "$file" >/dev/null
 }
@@ -661,13 +664,14 @@ expect_success_output_accepted() {
 run_self_tests() {
   local file decoy mixed duplicate_result duplicate_call mixed_success
   local pre_post_result missing_result status_extra strict_extra_diff broad early_labels
-  local contradictory_labels command
+  local duplicate_labels contradictory_labels command
   file="$(mktemp)"; decoy="$(mktemp)"; mixed="$(mktemp)"
   duplicate_result="$(mktemp)"; duplicate_call="$(mktemp)"
   mixed_success="$(mktemp)"; pre_post_result="$(mktemp)"
   missing_result="$(mktemp)"; status_extra="$(mktemp)"
   strict_extra_diff="$(mktemp)"; broad="$(mktemp)"
-  early_labels="$(mktemp)"; contradictory_labels="$(mktemp)"
+  early_labels="$(mktemp)"; duplicate_labels="$(mktemp)"
+  contradictory_labels="$(mktemp)"
 
   expect_command_rejected "masked exit status" "npm test; echo $?" "$file"
   expect_command_rejected "pipe without spaces" "npm test|cat" "$file"
@@ -856,6 +860,19 @@ run_self_tests() {
     fail "negative self-test rejects labels that appear only before final evidence"
   else
     pass "negative self-test rejects labels that appear only before final evidence"
+  fi
+
+  jq -n '[
+    {order:1,message_order:1,kind:"text",content:"SPEC label exact — PASS"},
+    {order:2,kind:"call",name:"Bash",command:"npm test",id:"test"},
+    {order:3,kind:"result",id:"test",is_error:false,interrupted:false,
+     exit_code:0,content:"PASS"},
+    {order:4,message_order:4,kind:"text",content:"SPEC label exact — PASS\nSPEC syntax valid — PASS\nSPEC integrated import — PASS\nPLAN complete suite — PASS\nPLAN output and exit status — PASS\nPLAN current diff — PASS\nPLAN requirements checked — PASS"}
+  ]' > "$duplicate_labels"
+  if strict_labels_pass "$duplicate_labels"; then
+    fail "negative self-test rejects early-plus-final duplicate exact labels"
+  else
+    pass "negative self-test rejects early-plus-final duplicate exact labels"
   fi
 
   jq -n '[
