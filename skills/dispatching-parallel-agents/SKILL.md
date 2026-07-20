@@ -1,6 +1,6 @@
 ---
 name: dispatching-parallel-agents
-description: Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies
+description: Use in standard or strict mode when 2+ independent tasks can run without shared state or sequential dependencies
 ---
 
 # Dispatching Parallel Agents
@@ -12,6 +12,15 @@ You delegate tasks to specialized agents with isolated context. By precisely cra
 When you have multiple unrelated failures (different test files, different subsystems, different bugs), investigating them sequentially wastes time. Each investigation is independent and can happen in parallel.
 
 **Core principle:** Dispatch one agent per independent problem domain. Let them work concurrently.
+
+<WORKFLOW-MODE-GATE>
+- `strict`: follow the skill when its independence conditions hold.
+- `standard`: use only when parallelism provides material wall-clock benefit.
+- `lean`: return control unless explicitly requested.
+- no active mode: invoke `selecting-workflow-mode`.
+
+Host limits and instructions may prohibit subagent dispatch.
+</WORKFLOW-MODE-GATE>
 
 ## When to Use
 

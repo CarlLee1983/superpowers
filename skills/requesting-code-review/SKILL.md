@@ -1,11 +1,21 @@
 ---
 name: requesting-code-review
-description: Use when completing tasks, implementing major features, or before merging to verify work meets requirements
+description: Use when strict mode requires review, standard mode needs independent review for material risk, or the human partner explicitly requests code review
 ---
 
 # Requesting Code Review
 
 Dispatch a code reviewer subagent to catch issues before they cascade. The reviewer gets precisely crafted context for evaluation — never your session's history. This keeps the reviewer focused on the work product, not your thought process, and preserves your own context for continued work.
+
+<WORKFLOW-MODE-GATE>
+Run when explicitly requested. Otherwise:
+
+- `strict`: preserve every existing mandatory review point.
+- `standard`: perform one integrated self-review; dispatch an independent
+  reviewer only for material risk or broad impact.
+- `lean`: inspect the diff directly and return control.
+- no active mode: invoke `selecting-workflow-mode`.
+</WORKFLOW-MODE-GATE>
 
 **Core principle:** Review early, review often.
 
@@ -90,7 +100,7 @@ You: [Fix progress indicators]
 ## Red Flags
 
 **Never:**
-- Skip review because "it's simple"
+- Skip a review required by the active mode
 - Ignore Critical issues
 - Proceed with unfixed Important issues
 - Argue with valid technical feedback

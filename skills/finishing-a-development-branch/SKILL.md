@@ -1,6 +1,6 @@
 ---
 name: finishing-a-development-branch
-description: Use when implementation is complete, all tests pass, and you need to decide how to integrate the work - guides completion of development work by presenting structured options for merge, PR, or cleanup
+description: Use when strict mode completes implementation, a dedicated branch lifecycle needs integration, or the human partner explicitly requests merge, PR, or cleanup choices
 ---
 
 # Finishing a Development Branch
@@ -8,6 +8,18 @@ description: Use when implementation is complete, all tests pass, and you need t
 ## Overview
 
 Guide completion of development work by presenting clear options and handling chosen workflow.
+
+<WORKFLOW-MODE-GATE>
+Run when explicitly requested. Otherwise:
+
+- `strict`: follow the full skill.
+- `standard` or `lean`: continue only when this task created or owns a
+  dedicated branch lifecycle; otherwise return a concise handoff without the
+  option menu.
+- no active mode: invoke `selecting-workflow-mode`.
+
+Verification-before-completion still applies when this skill returns early.
+</WORKFLOW-MODE-GATE>
 
 **Core principle:** Verify tests → Detect environment → Present options → Execute choice → Clean up.
 
