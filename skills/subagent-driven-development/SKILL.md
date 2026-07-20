@@ -137,6 +137,11 @@ a ledger file, not only in todos.
   verbatim into `<workspace>/constraints.md`. Every dispatch's binding
   constraint values paste from that file — the plan itself stays closed
   after Setup, even across compaction.
+- The workspace is never committed to the project repo. Do not `git add`
+  anything under it, and never write a commit whose purpose is to record,
+  correct, or tidy a workspace artifact — reports and ledgers are session
+  records, not deliverables. If the repo lacks a `.gitignore` entry for
+  `.superpowers/`, leave the directory untracked rather than committing it.
 - The ledger is your recovery map: the commits it names exist in git even
   when your context no longer remembers creating them. After compaction,
   trust the ledger and `git log` over your own recollection.
