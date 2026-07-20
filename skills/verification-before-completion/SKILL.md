@@ -13,6 +13,19 @@ Claiming work is complete without verification is dishonesty, not efficiency.
 
 **Violating the letter of this rule is violating the spirit of this rule.**
 
+<WORKFLOW-MODE-DEPTH>
+The evidence rule is identical in every mode. Only verification breadth changes:
+
+- `lean`: run the most relevant test or check and inspect the resulting diff.
+- `standard`: run relevant tests, static checks, and integrated verification.
+- `strict`: run the complete suite and verify requirements against the written
+  spec and plan.
+- no active mode: invoke `selecting-workflow-mode`.
+
+Do not reclassify the task here.
+A narrower command must still directly prove the claim being made.
+</WORKFLOW-MODE-DEPTH>
+
 ## The Iron Law
 
 ```
@@ -27,7 +40,7 @@ If you haven't run the verification command in this message, you cannot claim it
 BEFORE claiming any status or expressing satisfaction:
 
 1. IDENTIFY: What command proves this claim?
-2. RUN: Execute the FULL command (fresh, complete)
+2. RUN: Execute the mode-appropriate command fresh and completely
 3. READ: Full output, check exit code, count failures
 4. VERIFY: Does output confirm the claim?
    - If NO: State actual status with evidence

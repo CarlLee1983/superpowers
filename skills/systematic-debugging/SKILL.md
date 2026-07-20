@@ -13,6 +13,21 @@ Random fixes waste time and create new bugs. Quick patches mask underlying issue
 
 **Violating the letter of this process is violating the spirit of debugging.**
 
+<WORKFLOW-MODE-DEPTH>
+Root-cause evidence is mandatory in every mode.
+
+- `lean`: reproduce or inspect the symptom, identify the root cause from
+  evidence, make the smallest fix, run the regression check, and inspect the
+  diff. If evidence does not identify the cause directly, promote to standard.
+- `standard`: use an explicit hypothesis-and-test loop, then implement and
+  verify the root-cause fix. The work may stay inline.
+- `strict`: follow all four phases and every existing gate unchanged.
+- no active mode: invoke `selecting-workflow-mode`.
+
+Do not reclassify the task here.
+Do not use mode selection to justify guessing or symptom patching.
+</WORKFLOW-MODE-DEPTH>
+
 ## The Iron Law
 
 ```
@@ -45,7 +60,8 @@ Use for ANY technical issue:
 
 ## The Four Phases
 
-You MUST complete each phase before proceeding to the next.
+In strict mode, you MUST complete each phase before proceeding to the next.
+In standard and lean, the depth contract above determines the required path.
 
 ### Phase 1: Root Cause Investigation
 
@@ -175,8 +191,10 @@ You MUST complete each phase before proceeding to the next.
    - Simplest possible reproduction
    - Automated test if possible
    - One-off test script if no framework
-   - MUST have before fixing
-   - Use the `superpowers:test-driven-development` skill for writing proper failing tests
+   - In strict mode, this is mandatory and uses `test-driven-development`.
+   - In standard mode, use test-first for meaningful regression risk.
+   - In lean mode, a reproducible regression check may be written before or
+     after the fix, but it must demonstrate the corrected behavior.
 
 2. **Implement Single Fix**
    - Address the root cause identified
