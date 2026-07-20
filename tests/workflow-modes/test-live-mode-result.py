@@ -110,6 +110,7 @@ class ValidatorTest(unittest.TestCase):
         *,
         expected_model: str = "test-model",
         plugin_identity: bool = False,
+        expected_plugin_root: str = "/expected/checkout",
     ) -> subprocess.CompletedProcess[str]:
         log = self.write_jsonl(f"{backend}-{case}.jsonl", events)
         command = [
@@ -121,7 +122,7 @@ class ValidatorTest(unittest.TestCase):
                 str(log),
             ]
         if plugin_identity or backend == "codex":
-            command.extend(["-", "/expected/checkout", "test-version"])
+            command.extend(["-", expected_plugin_root, "test-version"])
         return subprocess.run(
             command,
             text=True,
@@ -397,6 +398,60 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("claude", "lean", events, plugin_identity=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_claude_read_bootstrap_requires_exact_expected_root(self) -> None:
+        checkout = self.root / "checkout"
+        selector = checkout / "skills/selecting-workflow-mode/SKILL.md"
+        matrix = selector.parent / "references/risk-matrix.md"
+        matrix.parent.mkdir(parents=True)
+        selector.write_text("selector")
+        matrix.write_text("matrix")
+        alias = self.root / "checkout-alias"
+        alias.symlink_to(checkout, target_is_directory=True)
+        invalid_paths = (
+            self.root / "wrong/skills/selecting-workflow-mode/SKILL.md",
+            self.root / "checkout-evil/skills/selecting-workflow-mode/SKILL.md",
+            checkout / "other/../skills/selecting-workflow-mode/SKILL.md",
+            alias / "skills/selecting-workflow-mode/SKILL.md",
+        )
+        for path in invalid_paths:
+            with self.subTest(path=path):
+                events = [
+                    claude_init(path=str(checkout)),
+                    claude_tool_event("Read", {"file_path": str(path)}),
+                    claude_event(
+                        "Mode: lean — localized correction.\nVerification passed."
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator(
+                    "claude",
+                    "lean",
+                    events,
+                    plugin_identity=True,
+                    expected_plugin_root=str(checkout),
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("task-specific action before mode declaration", result.stderr)
+
+        for path in (selector, matrix):
+            with self.subTest(valid_path=path):
+                events = [
+                    claude_init(path=str(checkout)),
+                    claude_tool_event("Read", {"file_path": str(path)}),
+                    claude_event(
+                        "Mode: lean — localized correction.\nVerification passed."
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator(
+                    "claude",
+                    "lean",
+                    events,
+                    plugin_identity=True,
+                    expected_plugin_root=str(checkout),
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_codex_rejects_task_command_before_mode_declaration(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},
@@ -634,6 +689,9 @@ class ValidatorTest(unittest.TestCase):
             "Mode: strict — migration design is complete. Done.",
             "Mode: strict — migration design is complete. What time is it?",
             "Mode: strict — migration design is complete. Do you like this API?",
+            "Mode: strict — migration design is complete. I approve this API design.",
+            "Mode: strict — migration design is complete. We confirm API compatibility.",
+            "Mode: strict — migration design is complete. I approve this API design?",
         ):
             with self.subTest(text=text):
                 events = [
@@ -649,7 +707,11 @@ class ValidatorTest(unittest.TestCase):
         questions = (
             "Which rollback requirement applies to this migration?",
             "Can you confirm whether existing API clients must retain the alias?",
+            "Could you approve this API design?",
             "Please approve the proposed payment migration design before implementation.",
+            "Please confirm API compatibility before implementation.",
+            "I need your approval before proceeding with the API migration.",
+            "I need your decision before proceeding with the payment migration.",
         )
         for question in questions:
             with self.subTest(question=question):
@@ -695,6 +757,10 @@ class ValidatorTest(unittest.TestCase):
             "I am using the brainstorming skill. Current identifiers are greet and name. Candidate: welcomeUser.",
             "I am using the brainstorming skill.\n- Option 1: welcomeUser\n- Option 2: greetUser (rejected)",
             "I am using the brainstorming skill. One option is welcomeUser; do not use greetUser.",
+            "I am using the brainstorming skill.\nRejected candidate: currentName\nCandidate: welcomeUser",
+            "I am using the brainstorming skill.\nAvoid option: currentName\nOption: welcomeUser",
+            "I am using the brainstorming skill.\n~~Option: currentName~~\nOption: welcomeUser",
+            "I am using the brainstorming skill.\nCurrent-only option: currentName\nOption: welcomeUser",
         )
         for detail in details:
             with self.subTest(detail=detail):

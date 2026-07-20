@@ -146,7 +146,9 @@ def claude_visible_text(
     return texts
 
 
-def is_claude_bootstrap(block: dict[str, Any]) -> bool:
+def is_claude_bootstrap(
+    block: dict[str, Any], expected_root: Path | None
+) -> bool:
     name = block.get("name")
     tool_input = block.get("input")
     if not isinstance(tool_input, dict):
@@ -159,8 +161,19 @@ def is_claude_bootstrap(block: dict[str, Any]) -> bool:
         }
     if name == "Read":
         path = tool_input.get("file_path")
-        return isinstance(path, str) and path.endswith(
-            tuple(f"/{relative}" for relative in BOOTSTRAP_PATHS)
+        if not isinstance(path, str) or expected_root is None:
+            return False
+        candidate = Path(path)
+        allowed = {
+            expected_root / "skills/selecting-workflow-mode/SKILL.md",
+            expected_root
+            / "skills/selecting-workflow-mode/references/risk-matrix.md",
+        }
+        if not candidate.is_absolute() or candidate not in allowed:
+            return False
+        return any(
+            candidate.resolve() == allowed_path.resolve()
+            for allowed_path in allowed
         )
     return False
 
@@ -244,7 +257,7 @@ def validate_declaration_order(
                     if isinstance(text, str) and DECLARATION.search(text):
                         declared = True
                 elif block.get("type") == "tool_use" and not declared:
-                    if not is_claude_bootstrap(block):
+                    if not is_claude_bootstrap(block, expected_plugin_root):
                         raise ValidationError(
                             "task-specific action before mode declaration: "
                             f"Claude tool {block.get('name')!r}"
@@ -362,24 +375,34 @@ def require_relevant_pause(text: str) -> None:
     decision_patterns = (
         r"\b(?:which|what)\b.{0,120}\b(?:requirements?|constraints?|rollback|"
         r"design|migration|compatib\w*|clients?|consumers?|api|payment|billing)\b",
-        r"\b(?:can|could|would)\s+you\s+(?:please\s+)?"
+        r"\b(?:can|could|would|do|will)\s+you\s+(?:please\s+)?"
         r"(?:approve|confirm|clarify|choose|provide|review)\b",
-        r"\b(?:please\s+)?(?:approve|confirm|clarify|choose|provide|review)\b",
         r"\b(?:should|shall)\b.{0,120}\b(?:retain|remove|approve|confirm|choose|"
         r"use|migrate|rollback|alias|version|support|proceed|remain)\b",
         r"\bmust\b.{0,120}\b(?:or\s+may|or\s+should|or\s+must)\b",
     )
     for sentence in sentences:
-        has_request = re.search(decision_patterns[2], sentence, re.IGNORECASE)
+        has_imperative = re.search(
+            r"^\s*(?:please\s+)?(?:approve|confirm|clarify|choose|provide|review)\b",
+            sentence,
+            re.IGNORECASE,
+        )
+        awaits_user = re.search(
+            r"\b(?:I|we)\s+(?:need|require|await|will\s+wait\s+for)\s+"
+            r"(?:your\s+)?(?:approval|decision|confirmation|choice)\b.{0,100}"
+            r"\bbefore\s+(?:proceed\w*|continu\w*|implement\w*|edit\w*|"
+            r"chang\w*|migrat\w*)\b",
+            sentence,
+            re.IGNORECASE,
+        )
         has_decision = any(
             re.search(pattern, sentence, re.IGNORECASE)
             for pattern in decision_patterns
         )
-        if (
-            ("?" in sentence or has_request)
-            and has_decision
-            and PAUSE_TOPICS.search(sentence)
-        ):
+        is_pause_form = (
+            "?" in sentence and has_decision
+        ) or has_imperative or awaits_user
+        if is_pause_form and PAUSE_TOPICS.search(sentence):
             return
     raise ValidationError(
         "assistant-visible text lacks relevant clarification/approval pause"
@@ -409,7 +432,8 @@ def require_affirmative_brainstorming(text: str) -> None:
         )
     candidates: set[str] = set()
     negative = re.compile(
-        r"\b(?:reject(?:ed)?|avoid|ruled\s+out|do\s+not\s+use|not\s+an?\s+option)\b",
+        r"\b(?:reject(?:ed)?|avoid|ruled\s+out|do\s+not\s+use|"
+        r"not\s+an?\s+option|current[- ]only)\b",
         re.IGNORECASE,
     )
     label = re.compile(
@@ -427,20 +451,27 @@ def require_affirmative_brainstorming(text: str) -> None:
         r"([a-z][A-Za-z0-9]*(?:[A-Z_][A-Za-z0-9_]*)+))"
     )
     for line in text.splitlines():
+        negative_line = (
+            negative.search(line)
+            or "~~" in line
+            or re.search(
+                r"^\s*(?:current|existing)\s+(?:candidate|option|identifier)\b",
+                line,
+                re.IGNORECASE,
+            )
+        )
+        if negative_line:
+            continue
         for match in label.finditer(line):
-            suffix = line[match.start():]
-            if not negative.search(suffix):
-                candidates.add(match.group(1))
+            candidates.add(match.group(1))
         group_match = group.search(line)
         if group_match:
             for segment in re.split(r"\s+(?:and|or)\s+|,", group_match.group(1)):
-                if negative.search(segment):
-                    continue
                 identifier = re.search(r"`?([A-Za-z_][A-Za-z0-9_-]*)`?", segment)
                 if identifier:
                     candidates.add(identifier.group(1))
         bullet_match = bullet.search(line)
-        if bullet_match and not negative.search(line):
+        if bullet_match:
             candidates.add(bullet_match.group(1) or bullet_match.group(2))
     if len(candidates) < 2:
         raise ValidationError(
