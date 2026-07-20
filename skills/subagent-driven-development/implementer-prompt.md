@@ -156,7 +156,8 @@ Subagent (general-purpose):
     If BLOCKED or NEEDS_CONTEXT, put the specifics in the final message
     itself — the controller acts on it directly.
 
-    Use DONE_WITH_CONCERNS if you completed the work but have doubts about correctness.
+    Use DONE_WITH_CONCERNS if you completed the work but have doubts about correctness, or
+    when you are reporting a known deviation you could not safely fix.
     Use BLOCKED if you cannot complete the task. Use NEEDS_CONTEXT if you need
     information that wasn't provided. Never silently produce work you're unsure about.
 ```

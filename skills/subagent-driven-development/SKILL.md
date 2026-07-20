@@ -396,7 +396,9 @@ message as your other bookkeeping:
   downstream builds on. Record the ruling in the ledger. A green build with
   a parked, recorded deviation is complete — do not fail the task, and do
   not rewrite landed history to chase cosmetics. A load-bearing violation
-  is different: that is a BLOCKED, not a deviation.
+  is different: that is a BLOCKED, not a deviation. This valve is not the
+  breaker: it needs no exhausted fix rounds — a mechanical deviation
+  discovered at completion parks here directly, with its ruling in the ledger.
 
 Then mark the todo complete and move on. Never move to the next task while
 the review has open Critical/Important issues that are neither fixed nor
