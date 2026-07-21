@@ -1865,6 +1865,42 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("codex", "escalation", events)
                 self.assertNotEqual(result.returncode, 0)
 
+    def test_escalation_promotion_rejects_negated_surface_and_path_only_billing(
+        self,
+    ) -> None:
+        reasons = (
+            "inspection found src/schema.js defines amount consumed by "
+            "src/billing.js as part of the public billing API but never a response; "
+            "renaming it would break compatibility.",
+            "inspection found src/schema.js defines amount consumed by "
+            "src/billing.js as part of the public billing API; renaming it would "
+            "break compatibility but never change the response.",
+            "inspection found src/schema.js defines amount consumed by "
+            "src/billing.js as part of the public ledger API response surface; "
+            "renaming it would break compatibility.",
+        )
+        for reason in reasons:
+            with self.subTest(reason=reason):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *codex_command_lifecycle(
+                        "cat src/schema.js src/billing.js", "inspection"
+                    ),
+                    codex_event(
+                        f"Promoting to strict — {reason}\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("structured promotion relation", result.stderr)
+
     def test_escalation_structured_parenthetical_is_only_observed_alias_relation(
         self,
     ) -> None:

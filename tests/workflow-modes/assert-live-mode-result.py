@@ -1069,6 +1069,24 @@ def has_negated_required_relation(reason: str) -> bool:
     )
 
 
+def has_affirmative_surface_relation(reason: str) -> bool:
+    clauses = re.split(
+        r"[.;,]+|\b(?:but|though|although|however)\b",
+        reason,
+        flags=re.IGNORECASE,
+    )
+    for clause in clauses:
+        if re.search(r"\b(?:surface|response)\b", clause, re.IGNORECASE) is None:
+            continue
+        if re.search(
+            r"\b(?:no|never|without|not(?!\s+only\b))\b",
+            clause,
+            re.IGNORECASE,
+        ) is None:
+            return True
+    return False
+
+
 def has_structured_promotion_relation(reason: str) -> bool:
     if not has_valid_promotion_formatting(reason):
         return False
@@ -1124,11 +1142,13 @@ def has_structured_promotion_relation(reason: str) -> bool:
         after_source,
         re.IGNORECASE,
     )
-    if consumed_by is None and billing_uses is None:
+    consumer = consumed_by or billing_uses
+    if consumer is None:
         return False
 
+    public_relation_tail = after_source[consumer.end() :]
     if not all(
-        re.search(pattern, evidence, re.IGNORECASE) is not None
+        re.search(pattern, public_relation_tail, re.IGNORECASE) is not None
         for pattern in (
             r"\bpublic\b",
             r"\b(?:billing|payments?)\b",
@@ -1136,7 +1156,9 @@ def has_structured_promotion_relation(reason: str) -> bool:
         )
     ):
         return False
-    if re.search(r"\b(?:surface|response)\b", normalized, re.IGNORECASE) is None:
+    if not has_affirmative_surface_relation(
+        f"{public_relation_tail} {consequence}"
+    ):
         return False
 
     if re.search(
