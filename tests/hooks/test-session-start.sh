@@ -183,8 +183,8 @@ assert_command_output \
 assert_command_output \
     "Claude Code uses dedicated read-only inspection before promotion" \
     "nested" \
-    "CLAUDE PRE-PROMOTION INSPECTION: use only dedicated Read, Glob, and Grep tools" \
-    "use Read only; never use ToolSearch, Agent, or Bash" \
+    "CLAUDE PRE-PROMOTION INSPECTION: use Read only" \
+    "" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash "$HOOK_UNDER_TEST"
@@ -237,7 +237,16 @@ assert_command_output \
 assert_command_output \
     "Claude Code forbids shell during pre-promotion inspection" \
     "nested" \
-    "CLAUDE PRE-PROMOTION INSPECTION: use only dedicated Read, Glob, and Grep tools. Never use Bash or shell before promotion" \
+    "Do not invoke ToolSearch, Agent, Bash, Glob, or Grep" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code directly reads known promotion evidence without discovery" \
+    "nested" \
+    "CLAUDE PRE-PROMOTION INSPECTION: use Read only. Do not invoke ToolSearch, Agent, Bash, Glob, or Grep. Read the user-named source and a likely same-directory consumer directly; if no consumer path can be identified, pause instead of searching" \
     "" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
@@ -255,7 +264,16 @@ assert_command_output \
 assert_command_output \
     "Claude Code keeps explicit-skill inspection on dedicated read tools" \
     "nested" \
-    "CLAUDE EXPLICIT-SKILL INSPECTION: after a user-requested skill invocation, inspect the project only with Glob, Grep, and Read. Never use Bash or shell for that inspection" \
+    "CLAUDE EXPLICIT-SKILL INSPECTION: use Read only" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code directly reads explicit-skill context without discovery" \
+    "nested" \
+    "CLAUDE EXPLICIT-SKILL INSPECTION: use Read only. Do not invoke ToolSearch, Agent, Bash, Glob, or Grep. Read a user-named or obvious likely source directly; if its path is unknown, ask for the path instead of searching" \
     "" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \

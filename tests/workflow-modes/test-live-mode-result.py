@@ -3398,6 +3398,95 @@ class ValidatorTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_escalation_accepts_claude_host_hook_context_read(self) -> None:
+        hook_context = (
+            self.root
+            / ".claude/projects/-fixture/session-id/tool-results"
+            / "hook-951317c4-a5eb-4682-9442-259d2ddd08f8-1-additionalContext.txt"
+        )
+        hook_context.parent.mkdir(parents=True)
+        hook_context.write_text("<EXTREMELY_IMPORTANT>workflow context</EXTREMELY_IMPORTANT>")
+        events = [
+            claude_init(),
+            claude_event(
+                "Mode: standard — bounded rename pending repository inspection.\n"
+                "Approach: inspect the schema and update its consumers. "
+                "Files/components: src/schema.js and adjacent consumers. "
+                "Verification: run tests and check the public response."
+            ),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(hook_context)},
+                tool_id="hook-context",
+            ),
+            claude_tool_result("hook-context", content="workflow context"),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/schema.js")},
+                tool_id="schema",
+            ),
+            claude_tool_result("schema", content="export const amount = 1;"),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/billing.js")},
+                tool_id="billing",
+            ),
+            claude_tool_result(
+                "billing",
+                content="export const response = payment => ({ amount: payment.amount });",
+            ),
+            claude_event(
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+                "Should we retain the compatibility alias during migration?"
+            ),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        result = self.run_validator("claude", "escalation", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_claude_host_hook_context_read_uses_closed_path_shape(self) -> None:
+        tool_results = (
+            self.root / ".claude/projects/-fixture/session-id/tool-results"
+        )
+        tool_results.mkdir(parents=True)
+        outside = self.root / "outside.txt"
+        outside.write_text("outside")
+        wrong_name = tool_results / "additionalContext.txt"
+        wrong_name.write_text("context")
+        symlink = (
+            tool_results
+            / "hook-951317c4-a5eb-4682-9442-259d2ddd08f8-1-additionalContext.txt"
+        )
+        symlink.symlink_to(outside)
+
+        for index, path in enumerate((wrong_name, symlink)):
+            with self.subTest(path=path):
+                events = [
+                    claude_init(),
+                    claude_event(
+                        "Mode: standard — bounded rename pending inspection.\n"
+                        "Approach: inspect and rename the schema. "
+                        "Files/components: src/schema.js. "
+                        "Verification: run tests."
+                    ),
+                    claude_tool_event(
+                        "Read",
+                        {"file_path": str(path)},
+                        tool_id=f"invalid-context-{index}",
+                    ),
+                    claude_tool_result(
+                        f"invalid-context-{index}", content="context"
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+
+                result = self.run_validator("claude", "escalation", events)
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("invalid project inspection: Read", result.stderr)
+
     def test_escalation_accepts_exact_claude_possessive_consumer_promotion(
         self,
     ) -> None:
@@ -4956,6 +5045,33 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator(
             "codex", "override", negated_transition_verification
         )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_override_accepts_zero_fail_verification_counter(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit authentication override.\n"
+                "Warning: Authentication is strict-risk work. "
+                "Retaining your explicit lean override.",
+                item_id="mode-warning",
+            ),
+            codex_event(
+                "src/auth.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/auth.js", item_type="file_change", item_id="mutation"),
+            codex_event(
+                "Verified with npm test: 5 pass, 0 fail.",
+                item_id="verify",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "override", events)
+
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_explicit_standard_override_keeps_required_inline_outline(self) -> None:

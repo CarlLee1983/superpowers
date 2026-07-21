@@ -174,6 +174,10 @@ def is_claude_bootstrap(
         }
     if name == "Read":
         path = tool_input.get("file_path")
+        if isinstance(path, str) and is_claude_host_hook_context_path(
+            path, tool_input
+        ):
+            return True
         if not isinstance(path, str) or expected_root is None:
             return False
         root = expected_root.resolve(strict=False)
@@ -199,6 +203,41 @@ def is_claude_bootstrap(
                 return False
         return True
     return False
+
+
+def is_claude_host_hook_context_path(
+    path: str, tool_input: dict[str, Any]
+) -> bool:
+    if not set(tool_input).issubset({"file_path", "offset", "limit"}):
+        return False
+    if any(
+        key in tool_input
+        and (
+            type(tool_input[key]) is not int
+            or tool_input[key] < (1 if key == "offset" else 0)
+        )
+        for key in ("offset", "limit")
+    ):
+        return False
+    candidate = Path(path)
+    if not candidate.is_absolute() or ".." in candidate.parts:
+        return False
+    if re.search(
+        r"(?:^|/)\.claude/projects/[^/]+/[^/]+/tool-results/"
+        r"hook-[A-Za-z0-9-]+-\d+-additionalContext\.txt\Z",
+        candidate.as_posix(),
+    ) is None:
+        return False
+    try:
+        claude_index = candidate.parts.index(".claude")
+        current = Path(*candidate.parts[: claude_index + 1])
+        for part in candidate.parts[claude_index + 1 :]:
+            current /= part
+            if current.is_symlink():
+                return False
+        return candidate.resolve(strict=True).is_file()
+    except (OSError, ValueError):
+        return False
 
 
 def split_read_command(command: str) -> list[str] | None:
@@ -3012,7 +3051,7 @@ def has_positive_verification(text: str) -> bool:
         ):
             continue
         normalized = re.sub(
-            r"\b0\s+(?:tests?\s+)?fail(?:ed|ures?)\b",
+            r"\b0\s+(?:tests?\s+)?fail(?:ed|ures?)?\b",
             "",
             clause,
             flags=re.IGNORECASE,
