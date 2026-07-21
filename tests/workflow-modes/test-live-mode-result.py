@@ -192,6 +192,32 @@ LATEST_F1B_CODEX_OUTPUTS = (
     "Should I proceed in strict mode with the rename and update all repository "
     "consumers?",
 )
+LATEST_E52_CLAUDE_INITIAL_OUTPUT = (
+    "Mode: standard — a schema field rename with unknown blast radius starts in "
+    "standard until inspection establishes whether a strict compatibility surface "
+    "is present.\n\n"
+    "I'll inspect the schema and its consumers before changing anything, starting "
+    "with the named source file."
+)
+LATEST_E52_CLAUDE_MIDDLE_OUTPUT = (
+    "The schema comment claims a billing/public-API consumer, but I need actual "
+    "consumer evidence from a file I've read. Checking likely adjacent consumers:"
+)
+LATEST_E52_CLAUDE_FINAL_OUTPUT = (
+    "Inspection found real consumer evidence: `src/billing.js:2` imports `payment` "
+    "from the schema and returns `{ amount: payment.amount }` as "
+    "`publicPaymentResponse` — the rename would alter a payment field in a public "
+    "billing API response shape, which is a strict compatibility surface.\n\n"
+    "Promoting to strict — inspection found src/schema.js defines amount consumed "
+    "by src/billing.js's publicPaymentResponse as part of the public billing API "
+    "payment surface; renaming amount to amountCents would break the externally "
+    "visible response field for existing API clients.\n\n"
+    "Before I make any changes, please confirm: do you want to proceed in strict "
+    "mode with this rename? If so, also let me know whether the public response "
+    "field in `publicPaymentResponse` should be renamed too (a breaking API "
+    "change) or kept as `amount` for external compatibility while the internal "
+    "schema field becomes `amountCents`."
+)
 
 
 def claude_event(text: str, *, block_type: str = "text") -> dict:
@@ -1878,6 +1904,19 @@ class ValidatorTest(unittest.TestCase):
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_accepts_latest_e52_claude_output(self) -> None:
+        events = [
+            claude_init(),
+            claude_event(LATEST_E52_CLAUDE_INITIAL_OUTPUT),
+            *claude_read_lifecycle(self.project, "src/schema.js", "schema"),
+            claude_event(LATEST_E52_CLAUDE_MIDDLE_OUTPUT),
+            *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
+            claude_event(LATEST_E52_CLAUDE_FINAL_OUTPUT),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "escalation", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_escalation_structured_promotion_rejects_missing_or_safe_relations(

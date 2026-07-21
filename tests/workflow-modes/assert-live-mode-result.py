@@ -655,6 +655,9 @@ def has_relevant_pause(text: str) -> bool:
         r"^\s*(?:i['’]m\s+pausing\s+before\s+making\s+any\s+change:\s*)?"
         r"do\s+you\s+want\s+me\s+to\s+proceed\s+with\s+the\s+rename\s+"
         r"in\s+strict\s+mode\s*\?\s*$",
+        r"^\s*(?:before\s+i\s+make\s+any\s+changes,\s+please\s+confirm:\s*)?"
+        r"do\s+you\s+want\s+to\s+proceed\s+in\s+strict\s+mode\s+with\s+"
+        r"(?:this|the)\s+rename\s*\?\s*$",
         r"^\s*proceed\s+in\s+strict\s+mode\s+with\s+the\s+rename\s+and\s+"
         r"consumer\s+updates\s*\?\s*$",
     )
@@ -1113,6 +1116,36 @@ def has_affirmative_public_api_relation(reason: str) -> bool:
     return False
 
 
+def has_affirmative_consequence_impact(consequence: str) -> bool:
+    clauses = re.split(
+        r"[.;,]+|\b(?:but|though|although|however)\b",
+        consequence,
+        flags=re.IGNORECASE,
+    )
+    signal_sets = (
+        (r"\bcompatibility\b",),
+        (r"\bresponse\b", r"\b(?:shape|contract|field)\b"),
+        (r"\b(?:clients?|consumers?)\b",),
+        (r"\bapi\b", r"\bchange\b"),
+    )
+    for clause in clauses:
+        if re.search(
+            r"\b(?:no|never|without|not(?!\s+only\b))\b",
+            clause,
+            re.IGNORECASE,
+        ) is not None:
+            continue
+        if any(
+            all(
+                re.search(pattern, clause, re.IGNORECASE) is not None
+                for pattern in signals
+            )
+            for signals in signal_sets
+        ):
+            return True
+    return False
+
+
 def has_structured_promotion_relation(reason: str) -> bool:
     if not has_valid_promotion_formatting(reason):
         return False
@@ -1187,17 +1220,7 @@ def has_structured_promotion_relation(reason: str) -> bool:
     ) is None:
         return False
 
-    return any(
-        re.search(pattern, consequence, re.IGNORECASE) is not None
-        for pattern in (
-            r"\bcompatibility\b",
-            r"\bapi\b.*\bresponse\s+shape\b",
-            r"\bapi\b.*\bresponse\s+contract\b",
-            r"\bexternal\b.*\bapi\b.*\b(?:consumers?|clients?)\b",
-            r"\bapi\b.*\bchange\b",
-            r"\bresponse\s+shape\b.*\bexternal\b.*\b(?:consumers?|clients?)\b",
-        )
-    )
+    return has_affirmative_consequence_impact(consequence)
 
 
 def validate_escalation_order(
