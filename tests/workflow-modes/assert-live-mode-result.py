@@ -1444,6 +1444,201 @@ def claude_invoked_brainstorming_skill(events: list[dict[str, Any]]) -> bool:
     return any(status == "successful" for status in invocations.values())
 
 
+def explicit_shell_payload(command: str) -> str | None:
+    try:
+        arguments = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    if (
+        len(arguments) == 3
+        and arguments[0] in {"/bin/zsh", "/bin/bash", "/bin/sh"}
+        and arguments[1] == "-lc"
+    ):
+        return arguments[2]
+    return command
+
+
+def explicit_read_only_segment(segment: str, expected_project_root: Path) -> bool:
+    try:
+        arguments = shlex.split(segment, posix=True)
+    except ValueError:
+        return False
+    if not arguments:
+        return False
+    if arguments[0] == "ls":
+        operands = [argument for argument in arguments[1:] if not argument.startswith("-")]
+        return bool(operands) and all(
+            project_path(operand, expected_project_root) is not None
+            for operand in operands
+        )
+    if arguments[0] == "git":
+        git_arguments = arguments[1:]
+        if len(git_arguments) >= 3 and git_arguments[0] == "-C":
+            root = project_path(
+                git_arguments[1], expected_project_root, require_directory=True
+            )
+            if root != expected_project_root.resolve(strict=True):
+                return False
+            git_arguments = git_arguments[2:]
+        return bool(git_arguments) and git_arguments[0] == "log" and all(
+            argument in {"--oneline", "--decorate"}
+            or re.fullmatch(r"-\d+", argument) is not None
+            for argument in git_arguments[1:]
+        )
+    return False
+
+
+def is_explicit_read_only_command(
+    command: str,
+    expected_plugin_root: Path | None,
+    expected_project_root: Path,
+) -> bool:
+    if is_read_only_inspection_command(
+        command, expected_plugin_root, expected_project_root
+    ):
+        return True
+    arguments = split_read_command(command)
+    if arguments and expected_plugin_root:
+        operands: list[str] = []
+        if arguments[0] == "cat" and not any(
+            argument.startswith("-") for argument in arguments[1:]
+        ):
+            operands = arguments[1:]
+        elif (
+            arguments[0] == "sed"
+            and len(arguments) >= 4
+            and arguments[1] == "-n"
+            and re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", arguments[2])
+            is not None
+            and not any(argument.startswith("-") for argument in arguments[3:])
+        ):
+            operands = arguments[3:]
+        allowed_skill = (
+            expected_plugin_root / "skills/brainstorming/SKILL.md"
+        ).resolve(strict=False)
+        if operands and all(
+            Path(operand).is_absolute()
+            and ".." not in Path(operand).parts
+            and Path(operand).resolve(strict=False) == allowed_skill
+            for operand in operands
+        ):
+            return True
+    payload = explicit_shell_payload(command)
+    if payload is None or any(
+        token in payload for token in (";", "<", ">", "\n", "`", "$(")
+    ):
+        return False
+    if "||" in payload or re.search(r"(?<!&)&(?!&)", payload):
+        return False
+    if "|" in payload and "&&" not in payload:
+        pipeline = payload.split("|")
+        if len(pipeline) != 2:
+            return False
+        try:
+            producer = shlex.split(pipeline[0], posix=True)
+            consumer = shlex.split(pipeline[1], posix=True)
+        except ValueError:
+            return False
+        valid_producer = producer[:2] == ["rg", "--files"]
+        producer_options = producer[2:]
+        while valid_producer and producer_options:
+            if (
+                len(producer_options) < 2
+                or producer_options[0] != "-g"
+                or re.fullmatch(r"!?[A-Za-z0-9._/-]+", producer_options[1]) is None
+            ):
+                valid_producer = False
+                break
+            producer_options = producer_options[2:]
+        return (
+            valid_producer
+            and len(consumer) == 3
+            and consumer[:2] == ["sed", "-n"]
+            and re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", consumer[2])
+            is not None
+        )
+    segments = payload.split("&&")
+    return all(
+        explicit_read_only_segment(segment, expected_project_root)
+        for segment in segments
+    )
+
+
+def validate_explicit_skill_actions(
+    backend: str,
+    events: list[dict[str, Any]],
+    expected_plugin_root: Path | None,
+    expected_project_root: Path,
+) -> None:
+    declared = False
+    for event in events:
+        if backend == "claude":
+            message = event.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if event.get("type") == "assistant" and block.get("type") == "text":
+                    value = block.get("text")
+                    if isinstance(value, str) and DECLARATION.search(value):
+                        declared = True
+                    continue
+                if not (
+                    declared
+                    and event.get("type") == "assistant"
+                    and block.get("type") == "tool_use"
+                ):
+                    continue
+                name = block.get("name")
+                tool_input = block.get("input")
+                if (
+                    name == "Skill"
+                    and isinstance(tool_input, dict)
+                    and tool_input.get("skill") == "superpowers:brainstorming"
+                ):
+                    continue
+                if name in {"Read", "Glob", "Grep"} and (
+                    valid_claude_inspection(name, tool_input, expected_project_root)
+                    or (name == "Read" and safe_claude_read_probe(
+                        tool_input, expected_project_root
+                    ))
+                ):
+                    continue
+                if name == "Bash" and isinstance(tool_input, dict):
+                    command = tool_input.get("command")
+                    if isinstance(command, str) and is_explicit_read_only_command(
+                        command, expected_plugin_root, expected_project_root
+                    ):
+                        continue
+                raise ValidationError(
+                    f"explicit-skill action is mutating or unrecognized: {name!r}"
+                )
+            continue
+
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if item_type == "agent_message":
+            text = item.get("text")
+            if isinstance(text, str) and DECLARATION.search(text):
+                declared = True
+            continue
+        if not declared or item_type in {"reasoning", "todo_list"}:
+            continue
+        if item_type == "command_execution":
+            command = item.get("command")
+            if isinstance(command, str) and is_explicit_read_only_command(
+                command, expected_plugin_root, expected_project_root
+            ):
+                continue
+        raise ValidationError(
+            f"explicit-skill action is mutating or unrecognized: {item_type!r}"
+        )
+
+
 def require_affirmative_brainstorming(
     text: str, *, structured_invocation: bool = False
 ) -> None:
@@ -1637,6 +1832,13 @@ def validate(
 
     if case == "escalation":
         validate_escalation_order(
+            backend,
+            events,
+            expected_plugin_root,
+            transcript.parent / "project",
+        )
+    elif case == "explicit-skill":
+        validate_explicit_skill_actions(
             backend,
             events,
             expected_plugin_root,

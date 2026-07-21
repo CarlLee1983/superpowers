@@ -3612,6 +3612,126 @@ class ValidatorTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("affirmative brainstorming", result.stderr)
 
+    def test_explicit_skill_rejects_mutation_and_unknown_actions(self) -> None:
+        declaration = claude_event(
+            "Mode: lean — explicit read-only naming exploration.\n"
+            "I am using the brainstorming skill.\n"
+            "Option 1: `greet`\nOption 2: `greeting`"
+        )
+        claude_mutations = (
+            ("Write", {"file_path": str(self.project / "new.js"), "content": "x"}),
+            (
+                "Edit",
+                {
+                    "file_path": str(self.project / "src/schema.js"),
+                    "old_string": "amount",
+                    "new_string": "amountCents",
+                },
+            ),
+            (
+                "Bash",
+                {"command": "python3 -c 'open(\"new.js\", \"w\").write(\"x\")'"},
+            ),
+            ("OpaqueTool", {"path": str(self.project)}),
+        )
+        for index, (name, tool_input) in enumerate(claude_mutations):
+            with self.subTest(backend="claude", action=name):
+                tool_id = f"mutation-{index}"
+                events = [
+                    claude_init(),
+                    declaration,
+                    claude_tool_event(name, tool_input, tool_id=tool_id),
+                    claude_tool_result(tool_id),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator("claude", "explicit-skill", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("explicit-skill action", result.stderr)
+
+        for label, inspection in (
+            ("Read", claude_read_lifecycle(self.project, "src/schema.js", "read")),
+            (
+                "closed Bash",
+                [
+                    claude_tool_event(
+                        "Bash",
+                        {
+                            "command": f"ls -la {self.project} && git -C "
+                            f"{self.project} log --oneline -5"
+                        },
+                        tool_id="bash-read",
+                    ),
+                    claude_tool_result("bash-read"),
+                ],
+            ),
+        ):
+            with self.subTest(backend="claude", read_only=label):
+                read_only_claude = [
+                    claude_init(),
+                    declaration,
+                    *inspection,
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator(
+                    "claude", "explicit-skill", read_only_claude
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+        codex_declaration = codex_event(
+            "Mode: lean — explicit read-only naming exploration.\n"
+            "I am using the brainstorming skill.\n"
+            "Option 1: `greet`\nOption 2: `greeting`",
+            item_id="declaration",
+        )
+        codex_actions = (
+            codex_command_lifecycle(
+                "python3 -c 'open(\"new.js\", \"w\").write(\"x\")'",
+                "mutation",
+            ),
+            [
+                codex_event(
+                    "opaque",
+                    item_type="mcp_tool_call",
+                    event_type="item.started",
+                    item_id="unknown",
+                ),
+                codex_event(
+                    "opaque", item_type="mcp_tool_call", item_id="unknown"
+                ),
+            ],
+        )
+        for index, action in enumerate(codex_actions):
+            with self.subTest(backend="codex", action=index):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_declaration,
+                    *action,
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "explicit-skill", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("explicit-skill action", result.stderr)
+
+        for label, command in (
+            ("cat", "cat src/schema.js"),
+            (
+                "closed rg pipeline",
+                "/bin/zsh -lc \"rg --files -g '!node_modules' -g '!vendor' "
+                "| sed -n '1,160p'\"",
+            ),
+        ):
+            with self.subTest(backend="codex", read_only=label):
+                read_only_codex = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_declaration,
+                    *codex_command_lifecycle(command, "read"),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator(
+                    "codex", "explicit-skill", read_only_codex
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_explicit_skill_uses_final_invocation_polarity(self) -> None:
         negations = (
             "I am not using the brainstorming skill after all.",
