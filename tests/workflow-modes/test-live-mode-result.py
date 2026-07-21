@@ -3139,6 +3139,7 @@ class ValidatorTest(unittest.TestCase):
             "Mode: strict — migration design is complete. Should I proceed in strict mode?",
             "Mode: strict — migration design is complete. Should I proceed in strict mode with lunch?",
             "Mode: strict — migration design is complete. Is strict mode relevant to the API?",
+            "Mode: strict — migration design is complete. Do you approve this API in strict mode?",
         ):
             with self.subTest(text=text):
                 events = [
@@ -3205,6 +3206,28 @@ class ValidatorTest(unittest.TestCase):
             codex_event(
                 f"Promoting to strict — {CANONICAL_PROMOTION_REASON}",
                 item_id="promotion",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("relevant clarification/approval pause", result.stderr)
+
+    def test_escalation_rejects_vague_strict_api_approval_question(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
+            codex_event(
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}",
+                item_id="promotion",
+            ),
+            codex_event(
+                "Do you approve this API in strict mode?",
+                item_id="vague-pause",
             ),
             {"type": "turn.completed", "usage": {}},
         ]

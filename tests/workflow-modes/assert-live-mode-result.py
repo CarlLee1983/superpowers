@@ -676,7 +676,7 @@ def has_relevant_pause(text: str) -> bool:
         ) is None:
             continue
         if re.search(
-            r"\b(?:rename|amountcents|compatibility|schema|api)\b|"
+            r"\b(?:rename|amountcents|compatibility|schema)\b|"
             r"\bpublic\s+response\b|\bresponse\s+field\b",
             sentence,
             re.IGNORECASE,
