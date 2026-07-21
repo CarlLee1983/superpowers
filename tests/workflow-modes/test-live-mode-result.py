@@ -3533,6 +3533,27 @@ class ValidatorTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("relevant clarification/approval pause", result.stderr)
 
+        reviewer_adversarials = (
+            "Does the API exist?\n1. No API.\n2. No schema.",
+            "What should the public API expose?\n1. API\n1. API",
+            "Is the system okay?\n1. API\n2. schema",
+        )
+        for discovery in reviewer_adversarials:
+            with self.subTest(discovery=discovery):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: strict — payments production migration and public "
+                        f"API risk.\n{discovery}"
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "strict", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "relevant clarification/approval pause", result.stderr
+                )
+
     def test_escalation_requires_a_relevant_question_or_approval_request(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},

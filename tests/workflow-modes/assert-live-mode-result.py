@@ -720,11 +720,19 @@ def require_relevant_pause(text: str) -> None:
 
 def has_concrete_discovery_pause(text: str) -> bool:
     question = re.search(
-        r"(?mi)^\s*(?:\*\*)?[^?\n]*"
-        r"(?:system|stack|migration|public\s+API|API)[^?\n]*\?",
+        r"(?mi)^\s*(?:\*\*)?((?:where|what|which|how)\b[^?\n]*"
+        r"(?:system|stack|migration|public\s+API|API)\b[^?\n]*\?)",
         text,
     )
     if question is None:
+        return False
+    question_text = question.group(1)
+    if re.search(
+        r"\b(?:live|stack|expose|store|format|transition|version|migrat\w*|"
+        r"architecture|implementation|look\s+like|use)\b",
+        question_text,
+        re.IGNORECASE,
+    ) is None:
         return False
 
     high_risk_signals = (
@@ -739,7 +747,7 @@ def has_concrete_discovery_pause(text: str) -> bool:
         return False
 
     option_pattern = re.compile(
-        r"(?m)^\s*(?:[-*]\s+)?(?:\*\*)?(?:[A-Z]|\d+)[.)]"
+        r"(?m)^\s*(?:[-*]\s+)?(?:\*\*)?([A-Z]|\d+)[.)]"
         r"(?:\*\*)?\s+(.+)$"
     )
     concrete_signal = re.compile(
@@ -748,12 +756,39 @@ def has_concrete_discovery_pause(text: str) -> bool:
         r"dollars?|cents?|versioned|v\d+)\b",
         re.IGNORECASE,
     )
-    concrete_options = [
-        option
-        for option in option_pattern.findall(text)
-        if concrete_signal.search(option)
+    negative_option = re.compile(
+        r"^\s*(?:\*\*)?(?:no|none|not|neither|without)\b",
+        re.IGNORECASE,
+    )
+    options = option_pattern.findall(text)
+    if len(options) < 2:
+        return False
+    labels = [label.casefold() for label, _ in options]
+    normalized_options = [
+        re.sub(r"[^a-z0-9_]+", " ", option.casefold()).strip()
+        for _, option in options
     ]
-    return len(concrete_options) >= 2
+    if len(set(labels)) != len(labels) or len(set(normalized_options)) != len(options):
+        return False
+    if any(
+        negative_option.search(option) or concrete_signal.search(option) is None
+        for _, option in options
+    ):
+        return False
+
+    if re.search(r"\b(?:public\s+API|API|expose)\b", question_text, re.IGNORECASE):
+        responsive_signal = re.compile(
+            r"`[A-Za-z_][^`]*`|\b(?:API|amount|field|integer|dollars?|cents?|"
+            r"versioned|v\d+)\b",
+            re.IGNORECASE,
+        )
+    else:
+        responsive_signal = re.compile(
+            r"\b(?:system|repo|Postgres|MySQL|REST|database|framework|"
+            r"implementation|schema|migration|API|runbook|document)\b",
+            re.IGNORECASE,
+        )
+    return all(responsive_signal.search(option) for _, option in options)
 
 
 def require_strict_pause(text: str) -> None:
