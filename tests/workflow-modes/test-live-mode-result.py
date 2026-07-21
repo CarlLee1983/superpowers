@@ -1403,27 +1403,28 @@ class ValidatorTest(unittest.TestCase):
 
     def test_escalation_promotion_rejects_opposing_and_quoted_claims(self) -> None:
         claimed_relation = CANONICAL_PROMOTION_REASON.removesuffix(".")
+        relation_after_inspection = claimed_relation.removeprefix("inspection found ")
         invalid_reasons = (
             CANONICAL_PROMOTION_REASON.replace(
+                "defines the amount field", "never defines the amount field"
+            ),
+            CANONICAL_PROMOTION_REASON.replace(
                 "consumed by", "never consumed by"
+            ),
+            CANONICAL_PROMOTION_REASON.replace(
+                "amount field consumed by", "amount field isn't consumed by"
+            ),
+            CANONICAL_PROMOTION_REASON.replace(
+                "would break compatibility.", "would never break compatibility."
             ),
             CANONICAL_PROMOTION_REASON.replace(
                 "would break compatibility.",
                 "would break compatibility, but actually preserve compatibility.",
             ),
             claimed_relation + ", though that claim is incorrect.",
-            claimed_relation.replace(
-                "inspection found ", "inspection found '"
-            )
-            + "'.",
-            claimed_relation.replace(
-                "inspection found ", "inspection found ‘"
-            )
-            + "’.",
-            claimed_relation.replace(
-                "inspection found ", "inspection found «"
-            )
-            + "».",
+            f"inspection found the note '{relation_after_inspection}'.",
+            f"inspection found the note ‘{relation_after_inspection}’.",
+            f"inspection found the note «{relation_after_inspection}».",
         )
         for reason in invalid_reasons:
             with self.subTest(reason=reason):

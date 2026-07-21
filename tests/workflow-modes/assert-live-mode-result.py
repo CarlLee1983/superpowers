@@ -1037,23 +1037,46 @@ def has_valid_promotion_formatting(reason: str) -> bool:
     return not stack
 
 
+def has_quoted_required_relation(reason: str) -> bool:
+    required_signals = (
+        r"\bsrc/schema\.js\b.*\bdefines?\b.*\bamount\b",
+        r"\bsrc/billing\.js\b",
+        r"\b(?:uses?|consumes?|consumed)\b",
+        r"\bpublic\b",
+        r"\b(?:billing|payments?)\b",
+        r"\bapi\b",
+        r"\b(?:surface|response)\b",
+        r"\brenaming\b",
+        r"\bbreak(?:ing)?\b",
+    )
+    for quote_pattern in (r"'(.+)'", r"‘(.+)’", r"«(.+)»"):
+        for match in re.finditer(quote_pattern, reason):
+            quoted = match.group(1)
+            if all(
+                re.search(signal, quoted, re.IGNORECASE) is not None
+                for signal in required_signals
+            ):
+                return True
+    return False
+
+
 def has_structured_promotion_relation(reason: str) -> bool:
     if not has_valid_promotion_formatting(reason):
         return False
 
     normalized = re.sub(r"`+", "", reason)
     normalized = re.sub(r"\s+", " ", normalized).strip()
-    if re.fullmatch(
-        r"inspection\s+found\s+(?:'.+'|‘.+’|«.+»)\s*\.",
-        normalized,
-        re.IGNORECASE,
-    ):
+    if has_quoted_required_relation(normalized):
         return False
     if re.search(
         r"\b(?:no|not|without|harmless|unrelated|merely|documentation|docs?|"
         r"examples?|quotations?|quotes?|false|nonpublic|private)\b|"
         r"\bdoes\s+not\s+consume\b|"
         r"\bnever\s+(?:uses?|consumes?|consumed)\b|"
+        r"\bsrc/schema\.js\b[^.;]*\bnever\s+defines?\b[^.;]*\bamount\b|"
+        r"\b(?:isn['’]t|wasn['’]t)\s+(?:used|consumed)\s+by\s+"
+        r"src/billing\.js\b|"
+        r"\b(?:would|will)\s+never\s+break\b|"
         r"\bbut\b[^.]*\b(?:actually\s+)?preserv(?:e|es|ed|ing)\s+"
         r"compatibility\b|"
         r"\b(?:claim|statement|relation)\s+is\s+incorrect\b",
