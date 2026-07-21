@@ -3697,7 +3697,7 @@ def require_affirmative_brainstorming(
         r"^\s*(?:(?:[-*]|\d+[.)])\s+(?:\*\*)?"
         r"(?:option|candidate)(?:\s+\d+)?|(?:\*\*)?"
         r"(?:option|candidate)\s+\d+)\s*:\s*(?:\*\*)?"
-        r"(?:`([A-Za-z_][A-Za-z0-9_-]*)`|"
+        r"(?:`([A-Za-z_][A-Za-z0-9_-]*)(?:\([^()`\n]*\))?`|"
         r"([A-Za-z_][A-Za-z0-9_-]*)(?=\s*(?:\*\*)?\s*(?:$|[:—–-])))",
         re.IGNORECASE,
     )

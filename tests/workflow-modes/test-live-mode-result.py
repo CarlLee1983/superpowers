@@ -7351,6 +7351,35 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "explicit-skill", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_explicit_skill_accepts_function_signatures_in_option_labels(
+        self,
+    ) -> None:
+        events = [
+            claude_init(),
+            claude_event(
+                "Mode: lean — explicit read-only naming exploration."
+            ),
+            claude_tool_event(
+                "Skill",
+                {
+                    "skill": "superpowers:brainstorming",
+                    "args": "Explore two greeting function names",
+                },
+                tool_id="brainstorming",
+            ),
+            claude_tool_result("brainstorming"),
+            claude_event(
+                "**Option 1: `greet(name)`** — concise and action-oriented.\n"
+                "**Option 2: `buildGreeting(name)` / `build_greeting(name)`** — "
+                "signals that the function constructs and returns a value."
+            ),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        result = self.run_validator("claude", "explicit-skill", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_explicit_skill_accepts_explicitly_requested_invocation_wording(
         self,
     ) -> None:
