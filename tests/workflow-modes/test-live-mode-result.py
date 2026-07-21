@@ -27,12 +27,40 @@ def claude_event(text: str, *, block_type: str = "text") -> dict:
     }
 
 
-def claude_tool_event(name: str, tool_input: dict) -> dict:
+def claude_tool_event(
+    name: str, tool_input: dict, *, tool_id: str = "tool_1"
+) -> dict:
     return {
         "type": "assistant",
         "message": {
             "role": "assistant",
-            "content": [{"type": "tool_use", "name": name, "input": tool_input}],
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": tool_id,
+                    "name": name,
+                    "input": tool_input,
+                }
+            ],
+        },
+    }
+
+
+def claude_tool_result(
+    tool_id: str, *, is_error: bool = False, content: str = "ok"
+) -> dict:
+    return {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": tool_id,
+                    "is_error": is_error,
+                    "content": content,
+                }
+            ],
         },
     }
 
@@ -66,16 +94,21 @@ def codex_event(
     item_type: str = "agent_message",
     event_type: str = "item.completed",
     item_id: str = "item_1",
+    exit_code: int | None = None,
 ) -> dict:
     item = {"id": item_id, "type": item_type}
     if item_type == "agent_message":
         item["text"] = text
     else:
         item["command"] = text
+    if exit_code is not None:
+        item["exit_code"] = exit_code
     return {"type": event_type, "item": item}
 
 
-def codex_command_lifecycle(command: str, item_id: str) -> list[dict]:
+def codex_command_lifecycle(
+    command: str, item_id: str, *, exit_code: int | None = 0
+) -> list[dict]:
     return [
         codex_event(
             command,
@@ -83,7 +116,12 @@ def codex_command_lifecycle(command: str, item_id: str) -> list[dict]:
             event_type="item.started",
             item_id=item_id,
         ),
-        codex_event(command, item_type="command_execution", item_id=item_id),
+        codex_event(
+            command,
+            item_type="command_execution",
+            item_id=item_id,
+            exit_code=exit_code,
+        ),
     ]
 
 
@@ -93,6 +131,9 @@ class ValidatorTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        self.project = self.root / "project"
+        (self.project / "src").mkdir(parents=True)
+        (self.project / "src/schema.js").write_text("export const amount = 1;\n")
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -294,6 +335,343 @@ class ValidatorTest(unittest.TestCase):
         ]
         result = self.run_validator("codex", "escalation", events)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_claude_accepts_successful_project_read_result(self) -> None:
+        events = [
+            claude_init(),
+            claude_event(
+                "Mode: standard — bounded rename pending repository inspection."
+            ),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/schema.js")},
+                tool_id="inspect",
+            ),
+            claude_tool_result("inspect"),
+            claude_event(
+                "Promoting to strict — inspection found a public API breaking "
+                "compatibility risk in payment billing.\n"
+                "Should we retain the compatibility alias during migration?"
+            ),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_claude_accepts_successful_project_glob_and_grep_results(self) -> None:
+        for name, tool_input in (
+            ("Glob", {"path": str(self.project), "pattern": "src/*.js"}),
+            ("Grep", {"path": str(self.project), "pattern": "amount"}),
+        ):
+            with self.subTest(name=name):
+                events = [
+                    claude_init(),
+                    claude_event(
+                        "Mode: standard — bounded rename pending repository inspection."
+                    ),
+                    claude_tool_event(name, tool_input, tool_id="inspect"),
+                    claude_tool_result("inspect"),
+                    claude_event(
+                        "Promoting to strict — inspection found a public API breaking "
+                        "compatibility risk in payment billing.\n"
+                        "Should we retain the compatibility alias during migration?"
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator("claude", "escalation", events)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_claude_requires_correlated_successful_tool_result(self) -> None:
+        read = claude_tool_event(
+            "Read",
+            {"file_path": str(self.project / "src/schema.js")},
+            tool_id="inspect",
+        )
+        invalid_results = (
+            ("missing", []),
+            ("mismatched", [claude_tool_result("different")]),
+            ("error", [claude_tool_result("inspect", is_error=True)]),
+        )
+        for label, result_events in invalid_results:
+            with self.subTest(label=label):
+                events = [
+                    claude_init(),
+                    claude_event(
+                        "Mode: standard — bounded rename pending repository inspection."
+                    ),
+                    read,
+                    *result_events,
+                    claude_event(
+                        "Promoting to strict — inspection found a public API breaking "
+                        "compatibility risk in payment billing.\n"
+                        "Should we retain the compatibility alias during migration?"
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator("claude", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("tool result", result.stderr)
+
+    def test_escalation_claude_rejects_invalid_project_inspection_inputs(self) -> None:
+        invalid_tools = (
+            ("Read", {"file_path": ""}),
+            ("Read", {"file_path": str(self.root / "outside.js")}),
+            ("Glob", {"path": str(self.project), "pattern": ""}),
+            ("Glob", {"path": str(self.root), "pattern": "*.js"}),
+            ("Grep", {"path": str(self.project), "pattern": ""}),
+            ("Grep", {"path": str(self.root), "pattern": "amount"}),
+        )
+        for name, tool_input in invalid_tools:
+            with self.subTest(name=name, tool_input=tool_input):
+                events = [
+                    claude_init(),
+                    claude_event(
+                        "Mode: standard — bounded rename pending repository inspection."
+                    ),
+                    claude_tool_event(name, tool_input, tool_id="inspect"),
+                    claude_tool_result("inspect"),
+                    claude_event(
+                        "Promoting to strict — inspection found a public API breaking "
+                        "compatibility risk in payment billing.\n"
+                        "Should we retain the compatibility alias during migration?"
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator("claude", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("invalid project inspection", result.stderr)
+
+    def test_escalation_claude_rejects_unknown_tools_before_and_after_promotion(self) -> None:
+        declaration = claude_event(
+            "Mode: standard — bounded rename pending repository inspection."
+        )
+        inspection = [
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/schema.js")},
+                tool_id="inspect",
+            ),
+            claude_tool_result("inspect"),
+        ]
+        promotion = claude_event(
+            "Promoting to strict — inspection found a public API breaking "
+            "compatibility risk in payment billing.\n"
+            "Should we retain the compatibility alias during migration?"
+        )
+        unknowns = ("Task", "mcp__example__read")
+        for name in unknowns:
+            for position in ("before", "after"):
+                with self.subTest(name=name, position=position):
+                    unknown = claude_tool_event(name, {}, tool_id="unknown")
+                    body = (
+                        [declaration, unknown, *inspection, promotion]
+                        if position == "before"
+                        else [declaration, *inspection, promotion, unknown]
+                    )
+                    events = [
+                        claude_init(),
+                        *body,
+                        {"type": "result", "subtype": "success", "result": "done"},
+                    ]
+                    result = self.run_validator("claude", "escalation", events)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("unrecognized escalation action", result.stderr)
+
+    def test_escalation_codex_requires_successful_completed_inspection(self) -> None:
+        for label, lifecycle in (
+            (
+                "failed",
+                codex_command_lifecycle(
+                    "cat src/schema.js", "inspection", exit_code=1
+                ),
+            ),
+            (
+                "missing exit code",
+                codex_command_lifecycle(
+                    "cat src/schema.js", "inspection", exit_code=None
+                ),
+            ),
+            (
+                "cat missing file exits one",
+                codex_command_lifecycle(
+                    "cat src/missing-schema.js", "inspection", exit_code=1
+                ),
+            ),
+        ):
+            with self.subTest(label=label):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *lifecycle,
+                    codex_event(
+                        "Promoting to strict — inspection found a public API breaking "
+                        "compatibility risk in payment billing.\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("successful completed inspection", result.stderr)
+
+    def test_escalation_codex_rejects_find_delete_and_unknown_items(self) -> None:
+        unsafe = codex_command_lifecycle(
+            "find src -delete", "unsafe", exit_code=0
+        )
+        unknown = [
+            codex_event(
+                "opaque",
+                item_type="mcp_tool_call",
+                event_type="item.started",
+                item_id="unknown",
+            ),
+            codex_event(
+                "opaque", item_type="mcp_tool_call", item_id="unknown"
+            ),
+        ]
+        promotion = [
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                "Promoting to strict — inspection found a public API breaking "
+                "compatibility risk in payment billing.\n"
+                "Should we retain the compatibility alias during migration?",
+                item_id="promotion",
+            ),
+        ]
+        for label, action, expected_error in (
+            ("find delete", unsafe, "mutation before strict promotion/approval pause"),
+            ("unknown MCP item", unknown, "unrecognized escalation action"),
+            (
+                "unknown MCP item after promotion",
+                [*promotion, *unknown],
+                "unrecognized escalation action",
+            ),
+        ):
+            with self.subTest(label=label):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *action,
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected_error, result.stderr)
+
+    def test_escalation_rejects_negated_or_harmless_promotion_reasons(self) -> None:
+        reasons = (
+            "inspection found no public API or payment compatibility risk; this change is harmless",
+            "inspection found the change has no payment or public API breaking compatibility risk",
+            "inspection found the change works without any public API compatibility risk",
+            "inspection found this is not a breaking compatibility change for the public API",
+        )
+        for reason in reasons:
+            with self.subTest(reason=reason):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    codex_event(
+                        f"Promoting to strict — {reason}.\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("affirmative discovered risk", result.stderr)
+
+    def test_escalation_rejects_semantic_duplicate_promotions(self) -> None:
+        duplicates = (
+            "Escalating to strict because the API is breaking.",
+            "Raising workflow to strict because payment compatibility is at risk.",
+            "Switching to strict because the public API is affected.",
+            "Moving to strict because payment compatibility is at risk.",
+        )
+        for duplicate in duplicates:
+            with self.subTest(duplicate=duplicate):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    codex_event(
+                        "Promoting to strict — inspection found a public API breaking "
+                        "compatibility risk in payment billing.",
+                        item_id="promotion",
+                    ),
+                    codex_event(
+                        duplicate
+                        + "\nShould we retain the compatibility alias during migration?",
+                        item_id="duplicate",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("exactly one semantic promotion", result.stderr)
+
+    def test_escalation_requires_one_canonical_promotion_not_only_a_synonym(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                "Escalating to strict because inspection found a public API breaking "
+                "compatibility risk in payment billing.\n"
+                "Should we retain the compatibility alias during migration?",
+                item_id="promotion",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one canonical promotion", result.stderr)
+
+    def test_escalation_rejects_automatic_demotion_after_promotion(self) -> None:
+        demotions = (
+            "Demoting to standard automatically.",
+            "Lowering workflow to lean after the review.",
+            "Switching to standard now.",
+            "Moving to lean for implementation.",
+        )
+        for demotion in demotions:
+            with self.subTest(demotion=demotion):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    codex_event(
+                        "Promoting to strict — inspection found a public API breaking "
+                        "compatibility risk in payment billing.\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                    codex_event(demotion, item_id="demotion"),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("automatic demotion", result.stderr)
 
     def test_escalation_rejects_invalid_transition_order(self) -> None:
         declaration = codex_event(

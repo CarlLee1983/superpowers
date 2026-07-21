@@ -95,8 +95,15 @@ if case == "escalation":
         {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": declaration}]}},
         {"type": "assistant", "message": {"role": "assistant", "content": [{
             "type": "tool_use",
+            "id": "inspection",
             "name": "Read",
             "input": {"file_path": str(project / "src/schema.js")},
+        }]}},
+        {"type": "user", "message": {"role": "user", "content": [{
+            "type": "tool_result",
+            "tool_use_id": "inspection",
+            "is_error": False,
+            "content": "schema inspected",
         }]}},
         {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}},
     ]
@@ -105,6 +112,7 @@ if case == "escalation":
             "type": "assistant",
             "message": {"role": "assistant", "content": [{
                 "type": "tool_use",
+                "id": "mutation",
                 "name": "Write",
                 "input": {"file_path": str(project / "src/schema.js")},
             }]},

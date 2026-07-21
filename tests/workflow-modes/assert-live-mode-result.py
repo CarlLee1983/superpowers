@@ -23,8 +23,30 @@ DECLARATION = re.compile(r"(?im)^\s*Mode:\s*(lean|standard|strict)\b")
 PROMOTION = re.compile(
     r"(?im)^\s*Promoting\s+to\s+(lean|standard|strict)\s+[—-]\s*([^\n]+)"
 )
-PROMOTION_REASON = re.compile(
+SUBSTANTIVE_PROMOTION_TRIGGER = re.compile(
     r"\bpayment\b|\bpublic\s+API\b|\bbreaking\b.{0,50}\bcompatib\w*\b",
+    re.IGNORECASE,
+)
+DISCOVERED_RISK = re.compile(
+    r"\b(?:finds?|found|discover(?:s|ed)?|reveal(?:s|ed)?|identif(?:y|ies|ied)|"
+    r"expos(?:e|es|ed)|show(?:s|ed)?|confirm(?:s|ed)?)\b",
+    re.IGNORECASE,
+)
+NEGATED_RISK = re.compile(
+    r"\b(?:no|not|without|never|none|harmless|safe|doesn't|doesn’t|isn't|isn’t)\b",
+    re.IGNORECASE,
+)
+SEMANTIC_PROMOTION = re.compile(
+    r"\b(?:promot(?:e|es|ed|ing)|escalat(?:e|es|ed|ing)|"
+    r"rais(?:e|es|ed|ing)|switch(?:es|ed|ing)|mov(?:e|es|ed|ing))"
+    r"(?:\s+(?:the\s+)?(?:workflow|mode))?\s+to\s+strict\b",
+    re.IGNORECASE,
+)
+AUTOMATIC_DEMOTION = re.compile(
+    r"\b(?:demot(?:e|es|ed|ing)|lower(?:s|ed|ing)?|"
+    r"switch(?:es|ed|ing)|mov(?:e|es|ed|ing))"
+    r"(?:\s+(?:the\s+)?(?:workflow|mode))?\s+(?:back\s+)?to\s+"
+    r"(?:lean|standard)\b",
     re.IGNORECASE,
 )
 BOOTSTRAP_PATHS = (
@@ -242,8 +264,66 @@ def is_codex_bootstrap(command: str, expected_root: Path | None) -> bool:
     return all(exact_bootstrap_path(operand, expected_root) for operand in operands)
 
 
+def project_path(
+    value: object,
+    expected_project_root: Path,
+    *,
+    require_file: bool = False,
+    require_directory: bool = False,
+) -> Path | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = Path(value)
+    if ".." in raw.parts:
+        return None
+    candidate = raw if raw.is_absolute() else expected_project_root / raw
+    try:
+        root = expected_project_root.resolve(strict=True)
+        resolved = candidate.resolve(strict=require_file or require_directory)
+        resolved.relative_to(root)
+    except (OSError, ValueError):
+        return None
+    if require_file and not resolved.is_file():
+        return None
+    if require_directory and not resolved.is_dir():
+        return None
+    return resolved
+
+
+def valid_claude_inspection(
+    name: object, tool_input: object, expected_project_root: Path
+) -> bool:
+    if not isinstance(tool_input, dict):
+        return False
+    if name == "Read":
+        return project_path(
+            tool_input.get("file_path"),
+            expected_project_root,
+            require_file=True,
+        ) is not None
+    if name not in {"Glob", "Grep"}:
+        return False
+    pattern = tool_input.get("pattern")
+    if not isinstance(pattern, str) or not pattern.strip() or "\x00" in pattern:
+        return False
+    return project_path(
+        tool_input.get("path"),
+        expected_project_root,
+        require_directory=True,
+    ) is not None
+
+
+def project_operands(arguments: list[str], expected_project_root: Path) -> bool:
+    return bool(arguments) and all(
+        project_path(argument, expected_project_root) is not None
+        for argument in arguments
+    )
+
+
 def is_read_only_inspection_command(
-    command: str, expected_root: Path | None
+    command: str,
+    expected_root: Path | None,
+    expected_project_root: Path,
 ) -> bool:
     if expected_root is not None and is_codex_bootstrap(command, expected_root):
         return False
@@ -252,18 +332,57 @@ def is_read_only_inspection_command(
         return False
     executable = Path(arguments[0]).name
     if executable == "cat":
-        return len(arguments) > 1
-    if executable == "sed":
+        operands = arguments[1:]
+        if operands[:1] == ["--"]:
+            operands = operands[1:]
         return (
+            bool(operands)
+            and not any(operand.startswith("-") for operand in operands)
+            and project_operands(operands, expected_project_root)
+        )
+    if executable == "sed":
+        operands = arguments[3:]
+        return bool(operands) and (
             len(arguments) >= 4
             and arguments[1] == "-n"
             and re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", arguments[2])
             is not None
+            and project_operands(operands, expected_project_root)
         )
-    if executable in {"rg", "grep", "ls", "find", "pwd", "head", "tail", "wc", "stat"}:
-        return True
+    if executable in {"rg", "grep"}:
+        operands = arguments[1:]
+        allowed_flags = {
+            "-n", "--line-number", "-i", "--ignore-case", "-F",
+            "--fixed-strings", "-l", "--files-with-matches",
+        }
+        if executable == "rg" and operands[:1] == ["--files"]:
+            paths = operands[1:] or ["."]
+            return project_operands(paths, expected_project_root)
+        while operands and operands[0] in allowed_flags:
+            operands = operands[1:]
+        return (
+            len(operands) >= 2
+            and bool(operands[0])
+            and project_operands(operands[1:], expected_project_root)
+        )
+    if executable == "ls":
+        operands = arguments[1:]
+        while operands and re.fullmatch(r"-[A-Za-z]+", operands[0]):
+            if set(operands[0][1:]) - set("alh"):
+                return False
+            operands = operands[1:]
+        return project_operands(operands or ["."], expected_project_root)
+    if executable == "pwd":
+        return len(arguments) == 1
     if executable == "git" and len(arguments) > 1:
-        return arguments[1] in {"status", "diff", "log", "show", "ls-files", "grep"}
+        return (
+            arguments[1] in {"status", "diff", "log", "show", "ls-files", "grep"}
+            and not any(
+                argument in {"--output", "--exec", "-o"}
+                or argument.startswith(("--output=", "--exec="))
+                for argument in arguments[2:]
+            )
+        )
     return False
 
 
@@ -479,12 +598,13 @@ def escalation_records(
     backend: str,
     events: list[dict[str, Any]],
     expected_plugin_root: Path | None,
+    expected_project_root: Path,
 ) -> list[tuple[str, str]]:
     records: list[tuple[str, str]] = []
     if backend == "claude":
+        tool_uses: dict[str, str] = {}
+        completed_tool_uses: set[str] = set()
         for event in events:
-            if event.get("type") != "assistant":
-                continue
             message = event.get("message")
             content = message.get("content") if isinstance(message, dict) else None
             if not isinstance(content, list):
@@ -492,29 +612,85 @@ def escalation_records(
             for block in content:
                 if not isinstance(block, dict):
                     continue
-                if block.get("type") == "text":
+                block_type = block.get("type")
+                if event.get("type") == "assistant" and block_type == "text":
                     value = block.get("text")
                     if isinstance(value, str):
                         records.append(("text", value))
                     continue
-                if block.get("type") != "tool_use":
-                    continue
-                if is_claude_bootstrap(block, expected_plugin_root):
-                    continue
-                name = block.get("name")
-                tool_input = block.get("input")
-                if name in {"Read", "Glob", "Grep"}:
-                    records.append(("inspection", str(name)))
-                elif name == "Bash" and isinstance(tool_input, dict):
-                    command = tool_input.get("command")
-                    if isinstance(command, str) and is_read_only_inspection_command(
-                        command, expected_plugin_root
-                    ):
-                        records.append(("inspection", command))
-                    else:
+                if event.get("type") == "assistant" and block_type == "tool_use":
+                    tool_id = block.get("id")
+                    if not isinstance(tool_id, str) or not tool_id:
+                        records.append(("invalid", "Claude tool_use lacks stable id"))
+                        continue
+                    if tool_id in tool_uses:
+                        records.append(("invalid", f"Claude tool_use reused id {tool_id!r}"))
+                        continue
+                    if is_claude_bootstrap(block, expected_plugin_root):
+                        tool_uses[tool_id] = "bootstrap"
+                        continue
+                    name = block.get("name")
+                    tool_input = block.get("input")
+                    if name in {"Read", "Glob", "Grep"}:
+                        if valid_claude_inspection(
+                            name, tool_input, expected_project_root
+                        ):
+                            tool_uses[tool_id] = "inspection"
+                        else:
+                            tool_uses[tool_id] = "invalid"
+                            records.append(
+                                ("invalid", f"invalid project inspection: {name}")
+                            )
+                    elif name == "Bash" and isinstance(tool_input, dict):
+                        command = tool_input.get("command")
+                        if isinstance(command, str) and is_read_only_inspection_command(
+                            command,
+                            expected_plugin_root,
+                            expected_project_root,
+                        ):
+                            tool_uses[tool_id] = "inspection"
+                        else:
+                            tool_uses[tool_id] = "mutation"
+                            records.append(("mutation", str(name)))
+                    elif name in {"Edit", "Write", "NotebookEdit"}:
+                        tool_uses[tool_id] = "mutation"
                         records.append(("mutation", str(name)))
-                elif name in {"Edit", "Write", "NotebookEdit"}:
-                    records.append(("mutation", str(name)))
+                    else:
+                        tool_uses[tool_id] = "invalid"
+                        records.append(
+                            ("invalid", f"unrecognized escalation action: {name!r}")
+                        )
+                    continue
+                if block_type != "tool_result":
+                    continue
+                tool_id = block.get("tool_use_id")
+                if not isinstance(tool_id, str) or tool_id not in tool_uses:
+                    records.append(("invalid", "tool result lacks matching tool_use id"))
+                    continue
+                if tool_id in completed_tool_uses:
+                    records.append(("invalid", f"duplicate tool result for {tool_id!r}"))
+                    continue
+                completed_tool_uses.add(tool_id)
+                if tool_uses[tool_id] == "inspection":
+                    if block.get("is_error") is True:
+                        records.append(
+                            ("invalid", f"inspection tool result reported error for {tool_id!r}")
+                        )
+                    else:
+                        records.append(("inspection", tool_id))
+        missing_results = [
+            tool_id
+            for tool_id, kind in tool_uses.items()
+            if kind == "inspection" and tool_id not in completed_tool_uses
+        ]
+        if missing_results:
+            records.insert(
+                0,
+                (
+                    "invalid",
+                    f"inspection tool result missing for {missing_results[0]!r}",
+                ),
+            )
         return records
 
     for event in events:
@@ -529,28 +705,66 @@ def escalation_records(
         elif event.get("type") == "item.started" and item_type == "command_execution":
             command = item.get("command")
             if not isinstance(command, str):
-                records.append(("mutation", "command_execution"))
+                records.append(("invalid", "unrecognized escalation action: command_execution"))
             elif is_codex_bootstrap(command, expected_plugin_root):
                 continue
-            elif is_read_only_inspection_command(command, expected_plugin_root):
-                records.append(("inspection", command))
+            elif is_read_only_inspection_command(
+                command, expected_plugin_root, expected_project_root
+            ):
+                continue
             else:
                 records.append(("mutation", command))
+        elif event.get("type") == "item.completed" and item_type == "command_execution":
+            command = item.get("command")
+            if (
+                isinstance(command, str)
+                and not is_codex_bootstrap(command, expected_plugin_root)
+                and is_read_only_inspection_command(
+                    command, expected_plugin_root, expected_project_root
+                )
+            ):
+                if item.get("exit_code") == 0:
+                    records.append(("inspection", command))
+                else:
+                    records.append(
+                        ("invalid", "Codex command lacks successful completed inspection")
+                    )
         elif event.get("type") == "item.started" and item_type == "file_change":
             records.append(("mutation", str(item_type)))
+        elif (
+            event.get("type") == "item.started"
+            and item_type not in {"agent_message", "reasoning"}
+        ):
+            records.append(
+                ("invalid", f"unrecognized escalation action: {item_type!r}")
+            )
     return records
+
+
+def affirmative_promotion_reason(reason: str) -> bool:
+    return bool(
+        DISCOVERED_RISK.search(reason)
+        and SUBSTANTIVE_PROMOTION_TRIGGER.search(reason)
+        and not NEGATED_RISK.search(reason)
+    )
 
 
 def validate_escalation_order(
     backend: str,
     events: list[dict[str, Any]],
     expected_plugin_root: Path | None,
+    expected_project_root: Path,
 ) -> None:
     inspection_seen = False
     promotion_seen = False
     pause_seen = False
-    promotion_count = 0
-    for kind, value in escalation_records(backend, events, expected_plugin_root):
+    canonical_promotion_count = 0
+    semantic_promotion_count = 0
+    for kind, value in escalation_records(
+        backend, events, expected_plugin_root, expected_project_root
+    ):
+        if kind == "invalid":
+            raise ValidationError(value)
         if kind == "inspection":
             inspection_seen = True
             continue
@@ -561,25 +775,45 @@ def validate_escalation_order(
                 )
             continue
 
+        if promotion_seen and AUTOMATIC_DEMOTION.search(value):
+            raise ValidationError("escalation attempted automatic demotion after promotion")
+
+        semantic_matches = list(SEMANTIC_PROMOTION.finditer(value))
+        for _match in semantic_matches:
+            semantic_promotion_count += 1
+            if semantic_promotion_count > 1:
+                raise ValidationError(
+                    "escalation requires exactly one semantic promotion to strict"
+                )
+            if not inspection_seen:
+                raise ValidationError(
+                    "strict promotion occurred before project inspection"
+                )
+
         matches = list(PROMOTION.finditer(value))
         if matches:
             for match in matches:
-                promotion_count += 1
-                if promotion_count > 1:
+                canonical_promotion_count += 1
+                if canonical_promotion_count > 1:
                     raise ValidationError(
-                        "escalation requires exactly one promotion to strict"
+                        "escalation requires exactly one canonical promotion to strict"
                     )
                 if match.group(1).lower() != "strict":
                     raise ValidationError("escalation requires promotion to strict")
-                if not PROMOTION_REASON.search(match.group(2)):
+                if not affirmative_promotion_reason(match.group(2)):
                     raise ValidationError(
-                        "strict promotion lacks payment/public API/breaking compatibility reason"
+                        "strict promotion lacks affirmative discovered risk with a "
+                        "payment/public API/breaking compatibility trigger"
                     )
                 if not inspection_seen:
                     raise ValidationError(
                         "strict promotion occurred before project inspection"
                     )
                 promotion_seen = True
+                if AUTOMATIC_DEMOTION.search(value[match.end() :]):
+                    raise ValidationError(
+                        "escalation attempted automatic demotion after promotion"
+                    )
                 if has_relevant_pause(value[match.end() :]):
                     pause_seen = True
         elif promotion_seen and has_relevant_pause(value):
@@ -589,8 +823,10 @@ def validate_escalation_order(
         raise ValidationError(
             "escalation lacks project inspection after initial declaration"
         )
-    if not promotion_seen:
-        raise ValidationError("escalation lacks promotion to strict")
+    if canonical_promotion_count != 1 or not promotion_seen:
+        raise ValidationError("escalation lacks exactly one canonical promotion to strict")
+    if semantic_promotion_count != 1:
+        raise ValidationError("escalation requires exactly one semantic promotion to strict")
     if not pause_seen:
         raise ValidationError(
             "assistant-visible text lacks relevant clarification/approval pause"
@@ -781,7 +1017,12 @@ def validate(
         )
 
     if case == "escalation":
-        validate_escalation_order(backend, events, expected_plugin_root)
+        validate_escalation_order(
+            backend,
+            events,
+            expected_plugin_root,
+            transcript.parent / "project",
+        )
     validate_case(case, visible)
     return visible
 
