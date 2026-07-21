@@ -66,7 +66,7 @@ elif "authentication sample" in prompt:
     text = "Mode: lean — explicit override.\nWarning: authentication is security-sensitive; I will remain lean as requested. Verification passed."
 elif "Rename the amount field" in prompt:
     case = "escalation"
-    text = "Mode: strict — production payment API risk discovered during inspection.\nI am promoting the workflow because this public billing API requires design clarification. Should we retain the compatibility alias for existing API clients?"
+    text = "Promoting to strict — repository inspection found a public API breaking compatibility risk in payment billing.\nShould we retain the compatibility alias for existing API clients?"
 elif "brainstorming skill" in prompt:
     case = "explicit-skill"
     text = "Mode: lean — explicit override.\nI am using the brainstorming skill. Two options are welcomeUser and greetUser."
@@ -89,6 +89,26 @@ events = [
     {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}},
     {"type": "result", "subtype": "success", "result": text},
 ]
+if case == "escalation":
+    declaration = "Mode: standard — bounded rename pending repository inspection."
+    events[1:2] = [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": declaration}]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{
+            "type": "tool_use",
+            "name": "Read",
+            "input": {"file_path": str(project / "src/schema.js")},
+        }]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}},
+    ]
+    if os.environ.get("STUB_ESCALATION_MUTATION") == "1":
+        events.insert(3, {
+            "type": "assistant",
+            "message": {"role": "assistant", "content": [{
+                "type": "tool_use",
+                "name": "Write",
+                "input": {"file_path": str(project / "src/schema.js")},
+            }]},
+        })
 if os.environ.get("STUB_NO_MODE") == "1":
     events[1]["message"]["content"][0]["text"] = "Finished and verified without a declaration."
 for event in events:
@@ -301,6 +321,23 @@ committed_artifact_failure="$({
 }
 [[ "$committed_artifact_failure" == *"case artifact assertions failed"* ]] || {
   printf 'committed strict artifact failure was not reported clearly:\n%s\n' "$committed_artifact_failure" >&2
+  exit 1
+}
+
+escalation_order_failure="$({
+  PATH="$TEST_TMP/bin:$PATH" \
+    EXPECTED_PLUGIN_ROOT="$ROOT" \
+    EXPECTED_PLUGIN_VERSION="$PLUGIN_VERSION" \
+    STUB_ESCALATION_MUTATION=1 \
+    ADAPTIVE_MODE_EVAL_ROOT="$TEST_TMP/escalation-order-evals" \
+    "$RUNNER" claude test-model escalation
+} 2>&1)" && {
+  printf 'expected pre-promotion escalation mutation to fail\n' >&2
+  exit 1
+}
+[[ "$escalation_order_failure" == *"mutation before strict promotion/approval pause"* ]] || {
+  printf 'escalation ordering failure was not explicit:\n%s\n' \
+    "$escalation_order_failure" >&2
   exit 1
 }
 

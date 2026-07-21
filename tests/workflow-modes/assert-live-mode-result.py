@@ -16,10 +16,17 @@ EXPECTED_MODE = {
     "standard": "standard",
     "strict": "strict",
     "override": "lean",
-    "escalation": "strict",
+    "escalation": "standard",
     "explicit-skill": "lean",
 }
 DECLARATION = re.compile(r"(?im)^\s*Mode:\s*(lean|standard|strict)\b")
+PROMOTION = re.compile(
+    r"(?im)^\s*Promoting\s+to\s+(lean|standard|strict)\s+[—-]\s*([^\n]+)"
+)
+PROMOTION_REASON = re.compile(
+    r"\bpayment\b|\bpublic\s+API\b|\bbreaking\b.{0,50}\bcompatib\w*\b",
+    re.IGNORECASE,
+)
 BOOTSTRAP_PATHS = (
     "skills/using-superpowers/SKILL.md",
     "skills/selecting-workflow-mode/SKILL.md",
@@ -235,6 +242,31 @@ def is_codex_bootstrap(command: str, expected_root: Path | None) -> bool:
     return all(exact_bootstrap_path(operand, expected_root) for operand in operands)
 
 
+def is_read_only_inspection_command(
+    command: str, expected_root: Path | None
+) -> bool:
+    if expected_root is not None and is_codex_bootstrap(command, expected_root):
+        return False
+    arguments = split_read_command(command)
+    if not arguments:
+        return False
+    executable = Path(arguments[0]).name
+    if executable == "cat":
+        return len(arguments) > 1
+    if executable == "sed":
+        return (
+            len(arguments) >= 4
+            and arguments[1] == "-n"
+            and re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", arguments[2])
+            is not None
+        )
+    if executable in {"rg", "grep", "ls", "find", "pwd", "head", "tail", "wc", "stat"}:
+        return True
+    if executable == "git" and len(arguments) > 1:
+        return arguments[1] in {"status", "diff", "log", "show", "ls-files", "grep"}
+    return False
+
+
 def validate_declaration_order(
     backend: str,
     events: list[dict[str, Any]],
@@ -372,7 +404,7 @@ def require_pattern(text: str, pattern: str, description: str) -> None:
         raise ValidationError(f"assistant-visible text lacks {description}")
 
 
-def require_relevant_pause(text: str) -> None:
+def has_relevant_pause(text: str) -> bool:
     sentences = re.split(r"(?<=[?.!])\s+|\n+", text)
     decision_object_body = (
         r"(?:requirements?|scope|rollback\s+requirements?|"
@@ -431,10 +463,138 @@ def require_relevant_pause(text: str) -> None:
     )
     for sentence in sentences:
         if any(re.search(pattern, sentence, re.IGNORECASE) for pattern in decision_forms):
-            return
+            return True
+    return False
+
+
+def require_relevant_pause(text: str) -> None:
+    if has_relevant_pause(text):
+        return
     raise ValidationError(
         "assistant-visible text lacks relevant clarification/approval pause"
     )
+
+
+def escalation_records(
+    backend: str,
+    events: list[dict[str, Any]],
+    expected_plugin_root: Path | None,
+) -> list[tuple[str, str]]:
+    records: list[tuple[str, str]] = []
+    if backend == "claude":
+        for event in events:
+            if event.get("type") != "assistant":
+                continue
+            message = event.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text":
+                    value = block.get("text")
+                    if isinstance(value, str):
+                        records.append(("text", value))
+                    continue
+                if block.get("type") != "tool_use":
+                    continue
+                if is_claude_bootstrap(block, expected_plugin_root):
+                    continue
+                name = block.get("name")
+                tool_input = block.get("input")
+                if name in {"Read", "Glob", "Grep"}:
+                    records.append(("inspection", str(name)))
+                elif name == "Bash" and isinstance(tool_input, dict):
+                    command = tool_input.get("command")
+                    if isinstance(command, str) and is_read_only_inspection_command(
+                        command, expected_plugin_root
+                    ):
+                        records.append(("inspection", command))
+                    else:
+                        records.append(("mutation", str(name)))
+                elif name in {"Edit", "Write", "NotebookEdit"}:
+                    records.append(("mutation", str(name)))
+        return records
+
+    for event in events:
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get("type")
+        if event.get("type") == "item.completed" and item_type == "agent_message":
+            value = item.get("text")
+            if isinstance(value, str):
+                records.append(("text", value))
+        elif event.get("type") == "item.started" and item_type == "command_execution":
+            command = item.get("command")
+            if not isinstance(command, str):
+                records.append(("mutation", "command_execution"))
+            elif is_codex_bootstrap(command, expected_plugin_root):
+                continue
+            elif is_read_only_inspection_command(command, expected_plugin_root):
+                records.append(("inspection", command))
+            else:
+                records.append(("mutation", command))
+        elif event.get("type") == "item.started" and item_type == "file_change":
+            records.append(("mutation", str(item_type)))
+    return records
+
+
+def validate_escalation_order(
+    backend: str,
+    events: list[dict[str, Any]],
+    expected_plugin_root: Path | None,
+) -> None:
+    inspection_seen = False
+    promotion_seen = False
+    pause_seen = False
+    promotion_count = 0
+    for kind, value in escalation_records(backend, events, expected_plugin_root):
+        if kind == "inspection":
+            inspection_seen = True
+            continue
+        if kind == "mutation":
+            if not promotion_seen or not pause_seen:
+                raise ValidationError(
+                    "escalation mutation before strict promotion/approval pause"
+                )
+            continue
+
+        matches = list(PROMOTION.finditer(value))
+        if matches:
+            for match in matches:
+                promotion_count += 1
+                if promotion_count > 1:
+                    raise ValidationError(
+                        "escalation requires exactly one promotion to strict"
+                    )
+                if match.group(1).lower() != "strict":
+                    raise ValidationError("escalation requires promotion to strict")
+                if not PROMOTION_REASON.search(match.group(2)):
+                    raise ValidationError(
+                        "strict promotion lacks payment/public API/breaking compatibility reason"
+                    )
+                if not inspection_seen:
+                    raise ValidationError(
+                        "strict promotion occurred before project inspection"
+                    )
+                promotion_seen = True
+                if has_relevant_pause(value[match.end() :]):
+                    pause_seen = True
+        elif promotion_seen and has_relevant_pause(value):
+            pause_seen = True
+
+    if not inspection_seen:
+        raise ValidationError(
+            "escalation lacks project inspection after initial declaration"
+        )
+    if not promotion_seen:
+        raise ValidationError("escalation lacks promotion to strict")
+    if not pause_seen:
+        raise ValidationError(
+            "assistant-visible text lacks relevant clarification/approval pause"
+        )
 
 
 def require_affirmative_brainstorming(text: str) -> None:
@@ -574,16 +734,6 @@ def validate_case(case: str, text: str) -> None:
         require_relevant_pause(text)
     elif case == "override":
         require_pattern(text, r"\b(warn|risk|security|authentication)", "high-risk override warning")
-    elif case == "escalation":
-        require_pattern(
-            text,
-            r"(?:\b(?:promot|escalat)\w*|"
-            r"\bpublic\b.{0,80}\b(?:response|api)\b.{0,80}"
-            r"\b(?:shape|compatib\w*|break\w*|chang\w*)\b)",
-            "promotion/escalation signal or discovered public compatibility risk",
-        )
-        require_pattern(text, r"\b(production|public|payment|billing)\b", "discovered high-risk signal")
-        require_relevant_pause(text)
     elif case == "explicit-skill":
         require_affirmative_brainstorming(text)
 
@@ -630,6 +780,8 @@ def validate(
             f"expected Mode: {expected_mode}; found Mode: {declarations[0].lower()}"
         )
 
+    if case == "escalation":
+        validate_escalation_order(backend, events, expected_plugin_root)
     validate_case(case, visible)
     return visible
 

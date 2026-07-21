@@ -276,42 +276,113 @@ class ValidatorTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("expected model test-model", result.stderr)
 
-    def test_escalation_requires_strict_declaration_and_promotion_signal(self) -> None:
-        base = [
-            {"type": "thread.started", "thread_id": "thread"},
-            codex_event(
-                "Mode: strict — public payment API risk discovered.\n"
-                "I am promoting the workflow because this is a production billing API. "
-                "Should we retain the compatibility alias during migration?"
-            ),
-            {"type": "turn.completed", "usage": {}},
-        ]
-        passing = self.run_validator("codex", "escalation", base)
-        self.assertEqual(passing.returncode, 0, passing.stderr)
-
-        missing_signal = [
-            base[0],
-            codex_event("Mode: strict — payment rename."),
-            base[2],
-        ]
-        failing = self.run_validator("codex", "escalation", missing_signal)
-        self.assertNotEqual(failing.returncode, 0)
-        self.assertIn("promotion/escalation", failing.stderr)
-
-    def test_escalation_accepts_an_explicit_discovered_public_shape_risk(self) -> None:
+    def test_escalation_accepts_standard_inspection_promotion_then_pause(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
-                "Mode: strict — renaming an amount field can affect payment-domain "
-                "compatibility across downstream consumers.\n"
-                "The repository exposes this field through a public response, so the "
-                "rename changes its public response shape. Should we retain the amount "
-                "alias for existing API clients during migration?"
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                "Promoting to strict — repository inspection found a public API "
+                "breaking compatibility risk in payment billing.\n"
+                "Should we retain the compatibility alias during migration?",
+                item_id="promotion",
             ),
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "escalation", events)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_rejects_invalid_transition_order(self) -> None:
+        declaration = codex_event(
+            "Mode: standard — bounded rename pending repository inspection.",
+            item_id="declaration",
+        )
+        strict_declaration = codex_event(
+            "Mode: strict — payment API risk assumed before inspection.",
+            item_id="declaration",
+        )
+        inspection = codex_command_lifecycle("cat src/schema.js", "inspection")
+        mutation = codex_command_lifecycle(
+            "python3 -c 'open(\"src/schema.js\", \"w\").write(\"changed\")'",
+            "mutation",
+        )
+        promotion = codex_event(
+            "Promoting to strict — inspection found a public API breaking "
+            "compatibility risk in payment billing.\n"
+            "Should we retain the compatibility alias during migration?",
+            item_id="promotion",
+        )
+        cases = (
+            (
+                "initial strict without inspection",
+                [strict_declaration, promotion],
+                "expected Mode: standard",
+            ),
+            (
+                "promotion before inspection",
+                [declaration, promotion, *inspection],
+                "before project inspection",
+            ),
+            (
+                "mutation before promotion",
+                [declaration, *inspection, *mutation, promotion],
+                "mutation before strict promotion/approval pause",
+            ),
+            (
+                "second mode declaration",
+                [
+                    declaration,
+                    *inspection,
+                    codex_event(
+                        "Mode: strict — second declaration.\n"
+                        "Promoting to strict — public API breaking compatibility "
+                        "risk in payment billing.\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                ],
+                "exactly one assistant-visible mode declaration",
+            ),
+            (
+                "standard execution without promotion",
+                [
+                    declaration,
+                    *inspection,
+                    codex_event(
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="pause",
+                    ),
+                ],
+                "promotion to strict",
+            ),
+            (
+                "promotion to non-strict",
+                [
+                    declaration,
+                    *inspection,
+                    codex_event(
+                        "Promoting to lean — public API breaking compatibility risk "
+                        "in payment billing.\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                ],
+                "promotion to strict",
+            ),
+        )
+        for label, body, expected_error in cases:
+            with self.subTest(label=label):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    *body,
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected_error, result.stderr)
 
     def test_override_requires_risk_warning_without_mode_promotion(self) -> None:
         events = [
@@ -835,8 +906,14 @@ class ValidatorTest(unittest.TestCase):
         events = [
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
-                "Mode: strict — public payment API compatibility risk discovered.\n"
-                "I am promoting the workflow because this changes production billing. Done."
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                "Promoting to strict — inspection found a public API breaking "
+                "compatibility risk in production billing. Done.",
+                item_id="promotion",
             ),
             {"type": "turn.completed", "usage": {}},
         ]
