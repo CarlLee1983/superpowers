@@ -635,6 +635,7 @@ class ValidatorTest(unittest.TestCase):
                 {"file_path": str(self.project / "src/cli.js"), "content": "code"},
                 tool_id="mutation",
             ),
+            claude_tool_result("mutation", content="CLI written."),
             claude_event("Tests passed and summary output verified."),
             {"type": "result", "subtype": "success", "result": "done"},
         ]
@@ -989,6 +990,7 @@ class ValidatorTest(unittest.TestCase):
                 {"file_path": str(self.project / "src/cli.js"), "content": "code"},
                 tool_id="mutation",
             ),
+            claude_tool_result("mutation", content="CLI written."),
             claude_event("Tests passed and summary output verified."),
             {"type": "result", "subtype": "success", "result": "done"},
         ]
@@ -2805,10 +2807,9 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_escalation_accepts_latest_multimessage_codex_output(self) -> None:
-        preamble, declaration, promotion, explanation_and_pause = LATEST_CODEX_OUTPUTS
+        _preamble, declaration, promotion, explanation_and_pause = LATEST_CODEX_OUTPUTS
         events = [
             {"type": "thread.started", "thread_id": "thread"},
-            codex_event(preamble, item_id="preamble"),
             codex_event(declaration, item_id="declaration"),
             *codex_command_lifecycle("sed -n '1,200p' src/schema.js", "schema"),
             *codex_command_lifecycle(
@@ -2835,10 +2836,9 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_escalation_accepts_latest_19a_codex_output(self) -> None:
-        preamble, declaration, promotion_and_pause = LATEST_19A_CODEX_OUTPUTS
+        _preamble, declaration, promotion_and_pause = LATEST_19A_CODEX_OUTPUTS
         events = [
             {"type": "thread.started", "thread_id": "thread"},
-            codex_event(preamble, item_id="preamble"),
             codex_event(declaration, item_id="declaration"),
             *codex_command_lifecycle("sed -n '1,240p' src/schema.js", "schema"),
             *codex_command_lifecycle(
@@ -2892,10 +2892,9 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_escalation_accepts_latest_f1b_codex_output(self) -> None:
-        preamble, declaration, promotion_and_pause = LATEST_F1B_CODEX_OUTPUTS
+        _preamble, declaration, promotion_and_pause = LATEST_F1B_CODEX_OUTPUTS
         events = [
             {"type": "thread.started", "thread_id": "thread"},
-            codex_event(preamble, item_id="preamble"),
             codex_event(declaration, item_id="declaration"),
             *codex_command_lifecycle("sed -n '1,240p' src/schema.js", "schema"),
             *codex_command_lifecycle(
@@ -2934,10 +2933,9 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_escalation_accepts_latest_be5_codex_output(self) -> None:
-        preamble, declaration, promotion, pause = LATEST_BE5_CODEX_OUTPUTS
+        _preamble, declaration, promotion, pause = LATEST_BE5_CODEX_OUTPUTS
         events = [
             {"type": "thread.started", "thread_id": "thread"},
-            codex_event(preamble, item_id="preamble"),
             codex_event(declaration, item_id="declaration"),
             *codex_command_lifecycle("sed -n '1,240p' src/schema.js", "schema"),
             *codex_command_lifecycle("sed -n '1,240p' src/billing.js", "billing"),
@@ -3763,6 +3761,54 @@ class ValidatorTest(unittest.TestCase):
                     codex_event("Verification: authentication tests pass.", item_id="verify"),
                 ],
             ),
+            (
+                "switching mode to strict",
+                [
+                    declaration,
+                    warning,
+                    codex_event(
+                        "I am switching the workflow mode to strict.",
+                        item_id="strict-switch",
+                    ),
+                    *mutation,
+                    codex_event(
+                        "Verification: authentication tests pass.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
+            (
+                "escalating mode into strict",
+                [
+                    declaration,
+                    warning,
+                    codex_event(
+                        "I am escalating our mode into strict.",
+                        item_id="strict-escalation",
+                    ),
+                    *mutation,
+                    codex_event(
+                        "Verification: authentication tests pass.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
+            (
+                "strict mode active",
+                [
+                    declaration,
+                    warning,
+                    codex_event(
+                        "Strict mode is now active.",
+                        item_id="strict-active",
+                    ),
+                    *mutation,
+                    codex_event(
+                        "Verification: authentication tests pass.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
             ("no mutation", [declaration, warning, codex_event("Verification: tests pass.", item_id="verify")]),
             ("no verification", [declaration, warning, *mutation]),
             (
@@ -3816,6 +3862,23 @@ class ValidatorTest(unittest.TestCase):
                     codex_event(
                         "Authentication isn't a strict security risk; I’ll honor "
                         "the explicit lean override.",
+                        item_id="warning",
+                    ),
+                    *mutation,
+                    codex_event(
+                        "Verification: authentication tests pass.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
+            (
+                "contradictory risk warning",
+                [
+                    declaration,
+                    codex_event(
+                        "Authentication is a strict security risk; authentication "
+                        "is not actually a security risk; I’ll honor the explicit "
+                        "lean override.",
                         item_id="warning",
                     ),
                     *mutation,
@@ -3904,6 +3967,34 @@ class ValidatorTest(unittest.TestCase):
                 ]
                 result = self.run_validator("codex", "override", events)
                 self.assertNotEqual(result.returncode, 0)
+
+    def test_override_requires_successful_claude_mutation_result(self) -> None:
+        events = [
+            claude_init(),
+            claude_event(
+                "Mode: lean — explicit override.\n"
+                "Warning: authentication is security-sensitive; I will remain "
+                "lean as requested."
+            ),
+            claude_tool_event(
+                "Write",
+                {
+                    "file_path": str(self.project / "src/auth.js"),
+                    "content": "implemented",
+                },
+                tool_id="failed-write",
+            ),
+            claude_tool_result(
+                "failed-write",
+                is_error=True,
+                content="Permission denied.",
+            ),
+            claude_event("Verification: authentication tests pass."),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "override", events)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("mutation did not complete successfully", result.stderr)
 
     def test_explicit_skill_requires_assistant_visible_brainstorming_signal(self) -> None:
         passing = [
@@ -4004,6 +4095,26 @@ class ValidatorTest(unittest.TestCase):
         ]
         result = self.run_validator(
             "codex", "lean", risk_conclusion, inject_codex_bootstrap=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("assistant prose before mode declaration", result.stderr)
+
+        task_specific_loading = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "I’m loading the workflow selector before fixing the "
+                "authentication expiry bug.",
+                item_id="task-specific-loading",
+            ),
+            *codex_bootstrap_lifecycles(),
+            codex_event(
+                "Mode: lean — localized typo correction.\nVerification passed.",
+                item_id="mode",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator(
+            "codex", "lean", task_specific_loading, inject_codex_bootstrap=False
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("assistant prose before mode declaration", result.stderr)
@@ -4821,6 +4932,9 @@ class ValidatorTest(unittest.TestCase):
             "I am not currently waiting for your approval before proceeding.",
             "I am not actually waiting for your approval before proceeding.",
             "Without waiting for your approval before proceeding.",
+            "I won't wait for your approval before proceeding.",
+            "I refuse to wait for your approval before proceeding.",
+            "I do not plan to wait for your approval before proceeding.",
         ):
             with self.subTest(pause=pause):
                 negated_pause = [
@@ -4863,7 +4977,7 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("claude", "strict", events)
                 self.assertNotEqual(result.returncode, 0)
 
-    def test_strict_allows_failed_read_probe_for_missing_project_path(self) -> None:
+    def test_strict_validates_read_probe_result_for_missing_project_path(self) -> None:
         events = [
             claude_init(),
             claude_event(
@@ -4884,6 +4998,27 @@ class ValidatorTest(unittest.TestCase):
         ]
         result = self.run_validator("claude", "strict", events)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+        false_success = [
+            claude_init(),
+            claude_event(
+                "Mode: strict — production payment migration and public API risk."
+            ),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/missing.js")},
+                tool_id="missing-read",
+            ),
+            claude_tool_result(
+                "missing-read",
+                is_error=False,
+                content="Claimed success despite missing file.",
+            ),
+            claude_event("Which rollback requirement applies to this migration?"),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "strict", false_success)
+        self.assertNotEqual(result.returncode, 0)
 
     def test_strict_declarative_pause_allows_nonmutating_approval_tool(self) -> None:
         events = [
@@ -5004,7 +5139,10 @@ class ValidatorTest(unittest.TestCase):
         )
         codex_events = [
             {"type": "thread.started", "thread_id": "thread"},
-            *(codex_event(output, item_id=f"message-{index}") for index, output in enumerate(codex_outputs)),
+            *(
+                codex_event(output, item_id=f"message-{index}")
+                for index, output in enumerate(codex_outputs[1:], start=1)
+            ),
             {"type": "turn.completed", "usage": {}},
         ]
 
@@ -5233,6 +5371,7 @@ class ValidatorTest(unittest.TestCase):
             "I applied the brainstorming skill. I am no longer currently applying the brainstorming skill.",
             "I applied the brainstorming skill. I ceased applying the brainstorming skill.",
             "I applied the brainstorming skill. Without applying the brainstorming skill now.",
+            "I applied the brainstorming skill. We aren't using the brainstorming skill anymore.",
         )
         for detail in details:
             with self.subTest(detail=detail):

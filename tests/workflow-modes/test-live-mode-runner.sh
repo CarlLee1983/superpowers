@@ -122,6 +122,12 @@ if case == "standard":
             "name": "Write",
             "input": {"file_path": str(project / "src/cli.js"), "content": "implemented"},
         }]}},
+        {"type": "user", "message": {"role": "user", "content": [{
+            "type": "tool_result",
+            "tool_use_id": "standard-mutation",
+            "is_error": False,
+            "content": "CLI implementation written.",
+        }]}},
         {"type": "assistant", "message": {"role": "assistant", "content": [{
             "type": "text", "text": text,
         }]}},
@@ -187,15 +193,26 @@ elif case == "escalation":
         {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}},
     ]
     if os.environ.get("STUB_ESCALATION_MUTATION") == "1":
-        events.insert(3, {
-            "type": "assistant",
-            "message": {"role": "assistant", "content": [{
-                "type": "tool_use",
-                "id": "mutation",
-                "name": "Write",
-                "input": {"file_path": str(project / "src/schema.js")},
-            }]},
-        })
+        events[3:3] = [
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "content": [{
+                    "type": "tool_use",
+                    "id": "mutation",
+                    "name": "Write",
+                    "input": {"file_path": str(project / "src/schema.js")},
+                }]},
+            },
+            {
+                "type": "user",
+                "message": {"role": "user", "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": "mutation",
+                    "is_error": False,
+                    "content": "Schema mutation completed.",
+                }]},
+            },
+        ]
 elif case == "explicit-skill":
     events[2:2] = [
         {"type": "assistant", "message": {"role": "assistant", "content": [{

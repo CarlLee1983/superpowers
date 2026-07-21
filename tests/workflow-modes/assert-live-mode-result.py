@@ -765,6 +765,14 @@ def is_generic_codex_bootstrap_narration(text: str) -> bool:
         or len(stripped) > 400
         or DECLARATION.search(stripped)
         or re.search(r"(?:^|\s)(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+", stripped)
+        or re.search(
+            r"\b(?:auth\w*|authoriz\w*|credentials?|security|secrets?|tokens?|"
+            r"expir\w*|payments?|billing|finance|production|migrations?|schema|"
+            r"APIs?|compatib\w*|destructive|irreversible|bugs?|fix\w*|typos?|"
+            r"features?|renam\w*|fields?|consumers?|CLI|amount)\b",
+            stripped,
+            re.IGNORECASE,
+        )
     ):
         return False
     return re.search(
@@ -1285,7 +1293,10 @@ def has_strict_design_approval_pause(text: str) -> bool:
     )
     pause_prefix = text[clause_start + 1 : pause.start()]
     if re.search(
-        r"\b(?:not|never|without|no\s+longer)"
+        r"\b(?:won['’]t|will\s+not|refus\w*\s+to|"
+        r"do(?:es)?\s+not\s+(?:plan|intend)\s+to|"
+        r"don['’]t\s+(?:plan|intend)\s+to|not\s+going\s+to|"
+        r"not|never|without|no\s+longer)"
         r"(?:\s+(?:currently|actually|really|now|still)){0,3}\s*$",
         pause_prefix,
         re.IGNORECASE,
@@ -1375,6 +1386,7 @@ def strict_transcript_has_mutation(
     events: list[dict[str, Any]], expected_project_root: Path,
     expected_plugin_root: Path | None,
 ) -> bool:
+    pending_read_probes: set[str] = set()
     for event in events:
         item = event.get("item")
         if (
@@ -1399,7 +1411,20 @@ def strict_transcript_has_mutation(
                 return True
         message = event.get("message")
         content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, list) or event.get("type") != "assistant":
+        if not isinstance(content, list):
+            continue
+        if event.get("type") == "user":
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_result":
+                    continue
+                tool_id = block.get("tool_use_id")
+                if not isinstance(tool_id, str) or tool_id not in pending_read_probes:
+                    continue
+                pending_read_probes.remove(tool_id)
+                if block.get("is_error") is not True:
+                    return True
+            continue
+        if event.get("type") != "assistant":
             continue
         for block in content:
             if not isinstance(block, dict) or block.get("type") != "tool_use":
@@ -1419,6 +1444,10 @@ def strict_transcript_has_mutation(
             if name == "Read" and safe_claude_read_probe(
                 tool_input, expected_project_root
             ):
+                tool_id = block.get("id")
+                if not isinstance(tool_id, str) or not tool_id:
+                    return True
+                pending_read_probes.add(tool_id)
                 continue
             if (
                 name == "Bash"
@@ -1430,7 +1459,7 @@ def strict_transcript_has_mutation(
             ):
                 continue
             return True
-    return False
+    return bool(pending_read_probes)
 
 
 @dataclass(frozen=True)
@@ -1635,11 +1664,9 @@ def escalation_records(
                             )
                             tool_uses[tool_id] = ("inspection", paths or ())
                         else:
-                            tool_uses[tool_id] = ("mutation", ())
-                            add("mutation", str(name), event_index)
+                            tool_uses[tool_id] = ("mutation", (str(name),))
                     elif name in {"Edit", "Write", "NotebookEdit"}:
-                        tool_uses[tool_id] = ("mutation", ())
-                        add("mutation", str(name), event_index)
+                        tool_uses[tool_id] = ("mutation", (str(name),))
                     else:
                         tool_uses[tool_id] = ("invalid", ())
                         add(
@@ -1712,6 +1739,22 @@ def escalation_records(
                             "standard workflow Skill did not complete successfully",
                             event_index,
                         )
+                elif tool_kind == "mutation":
+                    if (
+                        ("is_error" in block and type(block["is_error"]) is not bool)
+                        or block.get("is_error") is True
+                    ):
+                        add(
+                            "invalid",
+                            "mutation did not complete successfully",
+                            event_index,
+                        )
+                    else:
+                        add(
+                            "mutation",
+                            inspection_paths[0] if inspection_paths else "mutation",
+                            event_index,
+                        )
         missing_results = [
             tool_id
             for tool_id, (kind, _) in tool_uses.items()
@@ -1720,6 +1763,7 @@ def escalation_records(
                 "inspection_probe",
                 "discovery",
                 "standard_skill",
+                "mutation",
             }
             and tool_id not in observed_tool_results
         ]
@@ -2368,6 +2412,13 @@ def has_override_warning(text: str) -> bool:
         and risk_level_pattern.search(clause)
         for clause in clauses[:1]
     )
+    if any(
+        negative.search(clause)
+        and risk_pattern.search(clause)
+        and risk_level_pattern.search(clause)
+        for clause in clauses
+    ):
+        return False
     retention_negative = re.compile(
         r"\b(?:not|never|without|won['’]t|wouldn['’]t|cannot|can['’]t)\s+"
         r"(?:continue(?:ing)?\s+(?:in|with)\s+|remain(?:ing)?\s+(?:in\s+)?|"
@@ -2399,6 +2450,18 @@ def has_override_warning(text: str) -> bool:
         for clause in clauses
     )
     return risk_seen and retention_seen
+
+
+def has_strict_override_transition(text: str) -> bool:
+    patterns = (
+        r"\b(?:switch(?:ing)?|escalat(?:e|ing)|chang(?:e|ing)|"
+        r"mov(?:e|ing)|promot(?:e|ing))\b.{0,60}"
+        r"\b(?:mode\b.{0,20})?(?:to|into)\s+strict\b",
+        r"\bstrict\s+mode\s+(?:is\s+)?(?:now\s+)?active\b",
+        r"\b(?:proceed|continu)(?:e|ing)\s+(?:in|under|with)\s+"
+        r"strict(?:\s+mode)?\b",
+    )
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
 
 
 def has_positive_verification(text: str) -> bool:
@@ -2468,10 +2531,7 @@ def validate_override_order(
                 if declaration is None:
                     continue
                 mode_seen = True
-            if re.search(
-                r"(?im)^\s*Promoting\s+to\s+strict\s+—",
-                record.value,
-            ) is not None:
+            if has_strict_override_transition(record.value):
                 raise ValidationError(
                     "explicit non-strict override must not promote to strict"
                 )
@@ -2867,6 +2927,10 @@ def require_affirmative_brainstorming(
         r"\b(?:I|we)\s+(?:(?:am|are|was|were)\s+)?(?:not|no\s+longer)\s+"
         r"(?:actually\s+)?(?:using|invoking|running|applying|use|invoke|run|apply)\s+"
         r"(?:it|that\s+skill|the\s+skill)\b",
+        r"\b(?:I|we)\s+(?:isn['’]t|aren['’]t|wasn['’]t|weren['’]t)\s+"
+        r"(?:currently\s+|actually\s+|now\s+)?"
+        r"(?:using|invoking|running|applying)\s+"
+        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
         r"\b(?:I|we)\s+(?:won't|wouldn't|can't|couldn't|don't|doesn't|didn't)\s+"
         r"(?:actually\s+)?(?:use|invoke|run|apply)\s+"
         r"(?:it|that\s+skill|the\s+skill)\b",
