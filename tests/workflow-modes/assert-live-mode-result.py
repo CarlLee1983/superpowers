@@ -1395,7 +1395,8 @@ def has_strict_design_approval_pause(text: str) -> bool:
     if pause is None:
         return False
     if re.search(
-        r"\bapproaches?\s+considered\b|\bdesign\s+options?\b",
+        r"\bapproaches?\s+considered\b|\bapproach\s+options?\b|"
+        r"\bdesign\s+options?\b",
         text,
         re.IGNORECASE,
     ) is None:
@@ -1407,7 +1408,8 @@ def has_strict_design_approval_pause(text: str) -> bool:
     ) is None:
         return False
     approaches = re.search(
-        r"\b(?:approaches?\s+considered|design\s+options?)\b[^\n]*",
+        r"\b(?:approaches?\s+considered|approach\s+options?|"
+        r"design\s+options?)\b[^\n]*",
         text,
         re.IGNORECASE,
     )
@@ -1475,7 +1477,7 @@ def has_strict_design_approval_pause(text: str) -> bool:
     if len(set(normalized_bodies)) != len(options):
         return False
     strong_option_action = re.compile(
-        r"\b(?:add|backfill|change|contract|convert|cutover|continue|"
+        r"\b(?:add|backfill|change|contract|conversion|convert|cutover|continue|"
         r"dual[- ]write|expand|expos|introduce|keep|maintain|migrate|"
         r"preserve|reject|remove|replace|retain|rewrite|serve|switch|"
         r"version)\w*\b|"
@@ -1495,6 +1497,7 @@ def has_strict_design_approval_pause(text: str) -> bool:
         r"\b(?:boundary\s+conversion|at\s+the\s+boundary|"
         r"coordinated\s+cutoff)\b|"
         r"\b(?:change[- ]data[- ]capture|CDC|cut\s+traffic\s+over)\b|"
+        r"\bnever\b[^.;\n]{0,80}\b(?:migrat\w*|convert\w*|replace\w*)\b|"
         r"\b(?:expand|add)\w*\b[^.;\n]{0,80}\bbackfill\w*\b|"
         r"\b(?:keep|retain)\w*\b[^.;\n]{0,80}\b(?:version|expos)\w*\b|"
         r"\bswitch\w*\b[^.;\n]{0,80}\bmaintain\w*\b|"
@@ -1503,8 +1506,8 @@ def has_strict_design_approval_pause(text: str) -> bool:
         re.IGNORECASE,
     )
     risk_families = (
-        r"\b(?:payments?|billing|financial|amount(?:_cents)?|dollars?|cents?|"
-        r"overcharge)\b",
+        r"\b(?:payments?|billing|financial|money|amount(?:_cents)?|dollars?|"
+        r"cents?|overcharge)\b",
         r"\b(?:production\s+data|data\s+migration|schema|columns?|rows?|"
         r"storage|stores?|database|migration|backfill)\b",
         r"\b(?:public\s+API|API|endpoints?|compatibility|versioned|v\d+|"
@@ -1979,7 +1982,7 @@ def escalation_records(
                     name = block.get("name")
                     tool_input = block.get("input")
                     if (
-                        action_context == "standard"
+                        action_context in {"standard", "escalation"}
                         and name == "Skill"
                         and isinstance(tool_input, dict)
                         and tool_input.get("skill")
@@ -2206,7 +2209,7 @@ def escalation_records(
             elif is_codex_bootstrap(command, expected_plugin_root):
                 continue
             elif (
-                action_context == "standard"
+                action_context in {"standard", "escalation"}
                 and is_exact_codex_process_skill_read(
                     command,
                     expected_plugin_root,

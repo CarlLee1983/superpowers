@@ -181,9 +181,9 @@ assert_command_output \
     bash "$HOOK_UNDER_TEST"
 
 assert_command_output \
-    "Claude Code uses platform-neutral read-only inspection before promotion" \
+    "Claude Code uses dedicated read-only inspection before promotion" \
     "nested" \
-    "For pre-promotion inspection, use dedicated Read when available; otherwise follow the selector's standalone shell fallback" \
+    "CLAUDE PRE-PROMOTION INSPECTION: use only dedicated Read, Glob, and Grep tools" \
     "use Read only; never use ToolSearch, Agent, or Bash" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
@@ -220,6 +220,42 @@ assert_command_output \
     "Claude Code injects the closed override warning sequence" \
     "nested" \
     "the warning must be the very next assistant-visible content after the Mode line; no project tool, discovery, skill announcement, or other prose may precede it" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the exact atomic override warning template" \
+    "nested" \
+    "CLAUDE EXPLICIT NON-STRICT OVERRIDE ENTRY: output exactly: Warning: <strict trigger> is strict-risk work. Retaining your explicit <lean|standard> override. End that assistant block immediately after the warning" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code forbids shell during pre-promotion inspection" \
+    "nested" \
+    "CLAUDE PRE-PROMOTION INSPECTION: use only dedicated Read, Glob, and Grep tools. Never use Bash or shell before promotion" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the exact promotion template" \
+    "nested" \
+    "CLAUDE PROMOTION ENTRY: output exactly: Promoting to strict — inspection found <source> defines <field> consumed by <consumer> as part of <strict surface>; <change> would <consequence>." \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code keeps explicit-skill inspection on dedicated read tools" \
+    "nested" \
+    "CLAUDE EXPLICIT-SKILL INSPECTION: after a user-requested skill invocation, inspect the project only with Glob, Grep, and Read. Never use Bash or shell for that inspection" \
     "" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \

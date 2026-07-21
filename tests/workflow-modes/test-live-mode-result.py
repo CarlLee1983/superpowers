@@ -3357,6 +3357,47 @@ class ValidatorTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_escalation_accepts_standard_process_skill_reads_before_promotion(
+        self,
+    ) -> None:
+        plugin_root = "/expected/checkout"
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle(
+                f"sed -n '1,260p' "
+                f"{plugin_root}/skills/test-driven-development/SKILL.md",
+                "tdd-skill-1",
+            ),
+            *codex_command_lifecycle(
+                f"sed -n '261,520p' "
+                f"{plugin_root}/skills/test-driven-development/SKILL.md",
+                "tdd-skill-2",
+            ),
+            *codex_command_lifecycle(
+                "cat src/schema.js src/billing.js",
+                "inspection",
+            ),
+            codex_event(
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+                "Should we retain the compatibility alias during migration?",
+                item_id="promotion",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator(
+            "codex",
+            "escalation",
+            events,
+            expected_plugin_root=plugin_root,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_escalation_accepts_exact_claude_possessive_consumer_promotion(
         self,
     ) -> None:
@@ -6332,6 +6373,36 @@ class ValidatorTest(unittest.TestCase):
             "API compatibility.\n"
             "## Recommended design\n"
             "Use B with reversible migration gates and a versioned public API.\n"
+            "Waiting on your approval before proceeding."
+        )
+        events = [
+            claude_init(),
+            claude_event(design),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        result = self.run_validator("claude", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_approach_options_heading(self) -> None:
+        design = (
+            "Mode: strict — production payment migration and public API risk.\n"
+            "## Approach options\n"
+            "**Option A — Expand and migrate.** Add an amount_cents schema "
+            "column, backfill while dual-writing, and preserve API compatibility "
+            "through a versioned rollout.\n"
+            "**Option B — One-shot in-place conversion.** Maintenance window; "
+            "update payments plus simultaneous code deploy. Simple, but requires "
+            "downtime, has no incremental rollback, and an in-place overwrite "
+            "is a double-conversion hazard. Rule this out for production money "
+            "data.\n"
+            "**Option C — Database view/computed-column shim.** Expose "
+            "amount_cents as a generated column over amount. Fast to ship, but "
+            "it never actually migrates storage, keeps float math in the money "
+            "path, and defers the real work. Ruled out.\n"
+            "## Recommended design (Option A)\n"
+            "Use A with reversible migration gates and contract tests.\n"
             "Waiting on your approval before proceeding."
         )
         events = [
