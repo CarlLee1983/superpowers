@@ -760,7 +760,53 @@ def has_concrete_discovery_pause(text: str) -> bool:
         r"^\s*(?:\*\*)?(?:no|none|not|neither|without)\b",
         re.IGNORECASE,
     )
-    options = option_pattern.findall(text[question.end():])
+    option_lines = text[question.end():].splitlines()
+    line_index = 0
+    introductory_line_seen = False
+    while line_index < len(option_lines):
+        line = option_lines[line_index]
+        if not line.strip():
+            line_index += 1
+            continue
+        if option_pattern.fullmatch(line) is not None:
+            break
+        if (
+            not introductory_line_seen
+            and line.strip().endswith("?")
+            and re.search(r"\b(?:which|options?|matches?)\b", line, re.IGNORECASE)
+        ):
+            introductory_line_seen = True
+            line_index += 1
+            continue
+        break
+    options: list[tuple[str, str]] = []
+    while line_index < len(option_lines):
+        line = option_lines[line_index]
+        option_match = option_pattern.fullmatch(line)
+        if option_match is not None:
+            options.append((option_match.group(1), option_match.group(2)))
+            line_index += 1
+            continue
+        if not line.strip():
+            next_index = line_index
+            while (
+                next_index < len(option_lines)
+                and not option_lines[next_index].strip()
+            ):
+                next_index += 1
+            if (
+                next_index < len(option_lines)
+                and option_pattern.fullmatch(option_lines[next_index]) is not None
+            ):
+                line_index = next_index
+                continue
+            break
+        if options and re.match(r"^\s{2,}\S", line):
+            label, option = options[-1]
+            options[-1] = (label, f"{option} {line.strip()}")
+            line_index += 1
+            continue
+        break
     if len(options) < 2:
         return False
     labels = [label.casefold() for label, _ in options]
@@ -776,6 +822,13 @@ def has_concrete_discovery_pause(text: str) -> bool:
     )
     for _, option in options:
         if concrete_signal.search(option) is None:
+            return False
+        if re.match(
+            r"^\s*(?:review|inspect|read|check|analyze|investigate|explore|"
+            r"audit|search|look\s+(?:at|for|through))\b",
+            option,
+            re.IGNORECASE,
+        ):
             return False
         if negative_option.search(option):
             alternative = concrete_negative_alternative.search(option)
@@ -911,7 +964,7 @@ def escalation_records(
     expected_plugin_root: Path | None,
     expected_project_root: Path,
     *,
-    reject_unknown_actions: bool = True,
+    action_context: str = "escalation",
 ) -> list[EscalationRecord]:
     records: list[EscalationRecord] = []
     record_order = 0
@@ -1000,16 +1053,12 @@ def escalation_records(
                         tool_uses[tool_id] = ("mutation", ())
                         add("mutation", str(name), event_index)
                     else:
-                        tool_uses[tool_id] = (
-                            "invalid" if reject_unknown_actions else "auxiliary",
-                            (),
+                        tool_uses[tool_id] = ("invalid", ())
+                        add(
+                            "invalid",
+                            f"unrecognized {action_context} action: {name!r}",
+                            event_index,
                         )
-                        if reject_unknown_actions:
-                            add(
-                                "invalid",
-                                f"unrecognized escalation action: {name!r}",
-                                event_index,
-                            )
                     continue
                 if block_type != "tool_result":
                     continue
@@ -1140,11 +1189,10 @@ def escalation_records(
         elif (
             event.get("type") == "item.started"
             and item_type not in {"agent_message", "reasoning"}
-            and reject_unknown_actions
         ):
             add(
                 "invalid",
-                f"unrecognized escalation action: {item_type!r}",
+                f"unrecognized {action_context} action: {item_type!r}",
                 event_index,
             )
     return records
@@ -1509,6 +1557,12 @@ def has_standard_approval_pause(text: str) -> bool:
         r"\b(?:can|could)\s+you\s+(?:please\s+)?(?:approve|confirm)\b[^?]*\?",
         r"\b(?:I|we)\s+(?:need|await)\s+your\s+(?:approval|confirmation)\b"
         r"[^.!?]*\bbefore\s+(?:I|we\s+)?(?:proceed|continue|implement)",
+        r"\b(?:is\s+(?:it|this|that)\s+)?okay\s+to\s+"
+        r"(?:proceed|continue|implement|make\s+(?:the\s+)?changes?)\s*\?",
+        r"\bready\s+for\s+(?:me|us)\s+to\s+"
+        r"(?:proceed|continue|implement|make\s+(?:the\s+)?changes?)\s*\?",
+        r"\bbefore\s+(?:I|we)\s+(?:proceed|continue|implement)\s*,\s*"
+        r"is\s+(?:this|that|it)\s+okay\s*\?",
     )
     return has_relevant_pause(text) or any(
         re.search(pattern, text, re.IGNORECASE) for pattern in approval_patterns
@@ -1524,6 +1578,20 @@ def has_standard_inline_design(text: str) -> bool:
         r"(?:add|build|calculate|change|compute|create|extend|implement|modify|"
         r"parse|read|refactor|return|update|wire|write)\w*"
     )
+    negated_action = re.search(
+        rf"\b(?:do\s+not|don't|will\s+not|won't|not\s+going\s+to|avoid)\s+"
+        rf"(?:\w+\s+){{0,3}}{concrete_action}\b",
+        text,
+        re.IGNORECASE,
+    )
+    negated_verification = re.search(
+        r"\b(?:do\s+not|don't|will\s+not|won't|not\s+going\s+to|avoid)\s+"
+        r"(?:\w+\s+){0,3}(?:run|check|assert|compare|exercise|invoke|test|verify)\w*\b",
+        text,
+        re.IGNORECASE,
+    )
+    if negated_action or negated_verification:
+        return False
     approach = re.search(
         rf"\b(?:approach|design|implementation(?:\s+outline|\s+plan)?)\b"
         rf"[^\n]{{0,100}}\b{concrete_action}\b|"
@@ -1553,7 +1621,16 @@ def has_standard_inline_design(text: str) -> bool:
         text,
         re.IGNORECASE,
     )
-    return bool(approach and affected and verification)
+    task_signal_families = (
+        r"\b(?:CLI|command[- ]line|subcommand|command)\b|\bsrc/cli\.[A-Za-z0-9]+\b",
+        r"\b(?:summar\w*|items?(?:\.json)?|count|total|prices?|aggregate\w*)\b",
+        r"\b(?:tests?|specs?|npm\s+test)\b|\btest/[A-Za-z0-9_./-]+",
+    )
+    relevant_families = sum(
+        re.search(pattern, text, re.IGNORECASE) is not None
+        for pattern in task_signal_families
+    )
+    return bool(approach and affected and verification and relevant_families >= 2)
 
 
 def validate_standard_inline_design_order(
@@ -1570,7 +1647,7 @@ def validate_standard_inline_design_order(
         events,
         expected_plugin_root,
         expected_project_root,
-        reject_unknown_actions=False,
+        action_context="standard",
     ):
         if record.kind == "invalid":
             raise ValidationError(record.value)

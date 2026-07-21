@@ -418,6 +418,9 @@ class ValidatorTest(unittest.TestCase):
         (self.project / "src/billing.js").write_text(
             "export const response = payment => ({ amount: payment.amount });\n"
         )
+        (self.project / "src/cli.js").write_text(
+            "console.log('usage: cli summary');\n"
+        )
         (self.project / "items.json").write_text('[{"price":2},{"price":3}]\n')
         (self.project / "package.json").write_text('{"scripts":{"test":"node --test"}}\n')
 
@@ -607,6 +610,113 @@ class ValidatorTest(unittest.TestCase):
             with self.subTest(backend=backend):
                 result = self.run_validator(backend, "standard", events)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_rejects_opaque_negated_or_task_unrelated_outlines(self) -> None:
+        valid_outline = (
+            "Implementation outline:\n"
+            "- Approach: update the CLI summary calculation to total item prices.\n"
+            "- Affected files: src/cli.js and test/summary.test.js.\n"
+            "- Verification: run npm test and check the summary JSON count and total."
+        )
+        opaque_action = [
+            {
+                "type": "item.started",
+                "item": {
+                    "id": "opaque",
+                    "type": "mcp_tool_call",
+                    "server": "filesystem",
+                    "tool": "write_file",
+                },
+            },
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "opaque",
+                    "type": "mcp_tool_call",
+                    "server": "filesystem",
+                    "tool": "write_file",
+                },
+            },
+        ]
+        cases = (
+            (
+                "opaque action before outline",
+                [*opaque_action, codex_event(valid_outline, item_id="outline")],
+                "unrecognized standard action",
+            ),
+            (
+                "explicitly negated outline",
+                [
+                    codex_event(
+                        "Implementation outline:\n"
+                        "- Approach: do not update the CLI summary calculation.\n"
+                        "- Affected files: src/cli.js and test/summary.test.js.\n"
+                        "- Verification: do not run tests or check JSON output.",
+                        item_id="outline",
+                    )
+                ],
+                "standard inline design lacks concrete approach",
+            ),
+            (
+                "task-unrelated README outline",
+                [
+                    codex_event(
+                        "Implementation outline:\n"
+                        "- Approach: update the README introduction and examples.\n"
+                        "- Affected files: README.md and docs/guide.md.\n"
+                        "- Verification: run markdown tests and check rendered output.",
+                        item_id="outline",
+                    )
+                ],
+                "standard inline design lacks concrete approach",
+            ),
+        )
+        for label, between_inspection_and_mutation, error in cases:
+            with self.subTest(label=label):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded CLI behavior and coverage.",
+                        item_id="mode",
+                    ),
+                    *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+                    *between_inspection_and_mutation,
+                    *codex_command_lifecycle("printf implementation", "mutation"),
+                    codex_event("Tests passed.", item_id="result"),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "standard", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stderr)
+
+    def test_standard_rejects_natural_approval_pause_phrasings(self) -> None:
+        outline = (
+            "Implementation outline:\n"
+            "- Approach: update the CLI summary calculation to total item prices.\n"
+            "- Affected files: src/cli.js and test/summary.test.js.\n"
+            "- Verification: run npm test and check the summary JSON count and total."
+        )
+        for pause in (
+            "Okay to proceed?",
+            "Ready for me to implement?",
+            "Before I continue, is this okay?",
+        ):
+            with self.subTest(pause=pause):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded CLI behavior and coverage.",
+                        item_id="mode",
+                    ),
+                    *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+                    codex_event(f"{outline}\n{pause}", item_id="outline"),
+                    *codex_command_lifecycle("printf implementation", "mutation"),
+                    codex_event("Tests passed.", item_id="result"),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "standard", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("must not seek approval or pause", result.stderr)
 
     def test_lean_accepts_an_evidence_heading_as_verification_reporting(self) -> None:
         events = [
@@ -3701,6 +3811,9 @@ class ValidatorTest(unittest.TestCase):
             "Does the API exist?\n1. No API.\n2. No schema.",
             "What should the public API expose?\n1. API\n1. API",
             "Is the system okay?\n1. API\n2. schema",
+            "What should the public API expose?\n"
+            "1. Review API docs.\n"
+            "2. Inspect API schema.",
         )
         for discovery in reviewer_adversarials:
             with self.subTest(discovery=discovery):
@@ -3730,6 +3843,14 @@ class ValidatorTest(unittest.TestCase):
                 "What architecture should the public API use?\n"
                 "1. A versioned API exposes `amount_cents`.\n"
                 "2. No public API; use an internal migration runbook."
+            ),
+            (
+                "What should the public API expose?\n"
+                "1. `amount_cents` as an integer.\n"
+                "2. A versioned API introduces `amount_cents`.\n\n"
+                "Next steps:\n"
+                "1. Update the CLI implementation.\n"
+                "2. Run the regression tests."
             ),
         )
         for discovery in valid_post_question_cases:
