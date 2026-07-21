@@ -76,6 +76,8 @@ Never demote automatically. The human partner may change the mode at any time.
 ## Pre-first-mutation checkpoint
 
 If the task request itself contains a concrete strict trigger under an explicit `lean` or `standard` override, output the warning immediately after the `Mode:` line and before project inspection.
+In this branch, the warning is the very next assistant-visible content after the `Mode:` line.
+No project tool, discovery, skill announcement, or other prose may precede it.
 Keep the explicit mode active; do not emit the canonical promotion line.
 
 After any project inspection, re-evaluate the observed evidence against the
@@ -153,6 +155,8 @@ Do not name a file in the promotion line unless that exact path was read literal
 
 `Promoting to strict — inspection found <source> defines <field> consumed by <consumer> as part of <strict surface>; <change> would <consequence>.`
 
+Never output a second `Mode:` line after discovery. Once discovery establishes strict evidence, the next mode-routing content must be the canonical `Promoting to strict — ...` line and its approval pause.
+
 Then pause before the first mutation and ask the human partner whether to
 proceed in strict mode. Do not mutate until they answer. Do not output another `Mode:` line:
 the promotion line changes the active state. A second `Mode:` line is invalid,
@@ -160,8 +164,9 @@ including `Mode: strict — promoted from ...`.
 
 If the active mode remains `standard`, complete its inline design contract
 before mutation. In `standard`, after project inspection and before the first mutation, output a short inline design and execution outline in a visible inline message.
-State the intended approach, files or components involved, and verification
-strategy. Continue without an approval pause unless a missing decision would materially alter the result.
+Use exactly this one-line shape:
+`Approach: <...>. Files/components: <...>. Verification: <...>.`
+Replace the placeholders with the intended approach, affected files or components, and verification strategy. Continue without an approval pause unless a missing decision would materially alter the result.
 
 An explicitly requested process skill runs without silently promoting the
 rest of the task.

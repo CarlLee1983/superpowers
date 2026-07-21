@@ -989,6 +989,265 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("codex", "standard", events)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_standard_accepts_exact_component_outline_template(self) -> None:
+        outline = (
+            "Approach: calculate the summary totals and route the result through "
+            "the existing execution path. Files/components: CLI parser and test "
+            "suite. Verification: run npm test and check the summary JSON output."
+        )
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.",
+                item_id="mode",
+            ),
+            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            codex_event(outline, item_id="outline"),
+            *codex_command_lifecycle("printf implementation", "mutation"),
+            codex_event(
+                "Tests passed and summary output verified.", item_id="result"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "standard", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_rejects_make_no_changes_outline(self) -> None:
+        approaches = (
+            "make no changes to the summary command",
+            "make no code changes to the summary command",
+            "proceed without making changes to the summary command",
+        )
+        for index, approach in enumerate(approaches):
+            with self.subTest(approach=approach):
+                outline = (
+                    f"Approach: {approach}. Affected files: src/cli.js and "
+                    "test/summary.test.js. Verification: run npm test and check "
+                    "the summary JSON output."
+                )
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded CLI behavior and coverage.",
+                        item_id="mode",
+                    ),
+                    *codex_command_lifecycle(
+                        "cat src/cli.js items.json", "inspection"
+                    ),
+                    codex_event(outline, item_id=f"outline-{index}"),
+                    *codex_command_lifecycle(
+                        "printf implementation", "mutation"
+                    ),
+                    codex_event(
+                        "Tests passed and summary output verified.",
+                        item_id="result",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+
+                result = self.run_validator("codex", "standard", events)
+
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_standard_allows_no_unrelated_changes_constraint(self) -> None:
+        approaches = (
+            "update the summary command without making unrelated changes",
+            "update the summary calculation but make no behavioral changes "
+            "outside the CLI",
+            "update the summary calculation without any behavioral changes "
+            "to other commands",
+            "update the summary calculation but do not change other commands",
+            "update the summary calculation and avoid modifying unrelated files",
+            "avoid changes to other commands while updating the summary "
+            "calculation",
+            "avoid regressions by updating the summary calculation",
+        )
+        for index, approach in enumerate(approaches):
+            with self.subTest(approach=approach):
+                outline = (
+                    f"Approach: {approach}. Affected files: src/cli.js and "
+                    "test/summary.test.js. Verification: run npm test and check "
+                    "the summary JSON output."
+                )
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded CLI behavior and coverage.",
+                        item_id="mode",
+                    ),
+                    *codex_command_lifecycle(
+                        "cat src/cli.js items.json", "inspection"
+                    ),
+                    codex_event(outline, item_id=f"outline-{index}"),
+                    *codex_command_lifecycle(
+                        "printf implementation", "mutation"
+                    ),
+                    codex_event(
+                        "Tests passed and summary output verified.",
+                        item_id="result",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+
+                result = self.run_validator("codex", "standard", events)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_rejects_additional_no_op_outline_forms(self) -> None:
+        approaches = (
+            "make zero changes to the summary command",
+            "skip all code changes and update nothing",
+            "change nothing in the summary command",
+            "perform zero code changes to the summary command",
+            "leave the summary unchanged and write nothing",
+            "make no behavioral changes outside the summary CLI",
+            "proceed without any behavioral changes to other summary commands",
+            "never change the summary command",
+            "under no circumstances update the summary command",
+            "avoid any changes to the summary command",
+            "under no circumstances should we update the summary command",
+            "avoid any code changes to the summary command",
+            "avoid all changes to the summary command",
+            "under no circumstances should the implementation update the "
+            "summary command",
+        )
+        for index, approach in enumerate(approaches):
+            with self.subTest(approach=approach):
+                outline = (
+                    f"Approach: {approach}. Affected files: src/cli.js and "
+                    "test/summary.test.js. Verification: run npm test and check "
+                    "the summary JSON output."
+                )
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded CLI behavior and coverage.",
+                        item_id="mode",
+                    ),
+                    *codex_command_lifecycle(
+                        "cat src/cli.js items.json", "inspection"
+                    ),
+                    codex_event(outline, item_id=f"outline-{index}"),
+                    *codex_command_lifecycle(
+                        "printf implementation", "mutation"
+                    ),
+                    codex_event(
+                        "Tests passed and summary output verified.",
+                        item_id="result",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+
+                result = self.run_validator("codex", "standard", events)
+
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_standard_rejects_noun_only_approach_as_non_actionable(self) -> None:
+        approaches = (
+            "the summary CLI is ready on the computer and no implementation "
+            "is needed",
+            "implementation and creation for the summary CLI",
+        )
+        for index, approach in enumerate(approaches):
+            with self.subTest(approach=approach):
+                outline = (
+                    f"Approach: {approach}. Files/components: src/cli.js and "
+                    "the summary command. Verification: run npm test and check "
+                    "the summary JSON output."
+                )
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded CLI behavior and coverage.",
+                        item_id="mode",
+                    ),
+                    *codex_command_lifecycle(
+                        "cat src/cli.js items.json", "inspection"
+                    ),
+                    codex_event(outline, item_id=f"outline-{index}"),
+                    *codex_command_lifecycle(
+                        "printf implementation", "mutation"
+                    ),
+                    codex_event(
+                        "Tests passed and summary output verified.",
+                        item_id="result",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+
+                result = self.run_validator("codex", "standard", events)
+
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_standard_allows_verification_that_avoids_regressions(self) -> None:
+        verifications = (
+            "avoid regressions by running npm test and checking the summary "
+            "JSON output",
+            "avoid any test regressions by running npm test and checking the "
+            "summary JSON output",
+        )
+        for index, verification in enumerate(verifications):
+            with self.subTest(verification=verification):
+                outline = (
+                    "Approach: update the summary calculation. "
+                    "Files/components: src/cli.js and the summary command. "
+                    f"Verification: {verification}."
+                )
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded CLI behavior and coverage.",
+                        item_id="mode",
+                    ),
+                    *codex_command_lifecycle(
+                        "cat src/cli.js items.json", "inspection"
+                    ),
+                    codex_event(outline, item_id=f"outline-{index}"),
+                    *codex_command_lifecycle(
+                        "printf implementation", "mutation"
+                    ),
+                    codex_event(
+                        "Tests passed and summary output verified.",
+                        item_id="result",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+
+                result = self.run_validator("codex", "standard", events)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_accepts_preserved_live_make_outline(self) -> None:
+        outline = (
+            "The CLI currently has one script and no tests. I’ll make `summary` "
+            "read `items.json` from the working directory and emit one JSON object "
+            "shaped as `{\"count\":2,\"total\":5}`, summing numeric `price` "
+            "values. The affected files are `src/cli.js` and a new command-level "
+            "test under `test/`; verification will run the focused Node test, the "
+            "full `npm test` suite, and the real CLI against the repository’s "
+            "sample file."
+        )
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.",
+                item_id="mode",
+            ),
+            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            codex_event(outline, item_id="outline"),
+            *codex_command_lifecycle("printf implementation", "mutation"),
+            codex_event(
+                "Tests passed and summary output verified.", item_id="result"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "standard", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_standard_accepts_safe_rg_discovery_before_inline_outline(self) -> None:
         # Preserved from final-0e112a1 Codex standard, plus its closed-pipeline
         # equivalent. Discovery establishes project inspection, but is not literal
@@ -1033,6 +1292,70 @@ class ValidatorTest(unittest.TestCase):
                 ]
                 result = self.run_validator("codex", "standard", events)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_accepts_safe_git_status_before_inline_outline(self) -> None:
+        outline = (
+            "Approach: update the CLI summary calculation to total item prices. "
+            "Files/components: src/cli.js and test/summary.test.js. "
+            "Verification: run npm test and check the summary JSON count and total."
+        )
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.",
+                item_id="mode",
+            ),
+            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            *codex_command_lifecycle("git status --short", "git-status"),
+            codex_event(outline, item_id="outline"),
+            *codex_command_lifecycle("printf implementation", "mutation"),
+            codex_event(
+                "Tests passed and summary output verified.", item_id="result"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "standard", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_rejects_unbounded_git_log_discovery(self) -> None:
+        outline = (
+            "Approach: update the CLI summary calculation to total item prices. "
+            "Files/components: src/cli.js and test/summary.test.js. "
+            "Verification: run npm test and check the summary JSON count and total."
+        )
+        commands = (
+            "git log --oneline",
+            "git log --decorate",
+            "git log -999999999 --oneline",
+        )
+        for index, command in enumerate(commands):
+            with self.subTest(command=command):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded CLI behavior and coverage.",
+                        item_id="mode",
+                    ),
+                    *codex_command_lifecycle(
+                        "cat src/cli.js items.json", "inspection"
+                    ),
+                    *codex_command_lifecycle(command, f"git-log-{index}"),
+                    codex_event(outline, item_id="outline"),
+                    *codex_command_lifecycle(
+                        "printf implementation", "mutation"
+                    ),
+                    codex_event(
+                        "Tests passed and summary output verified.",
+                        item_id="result",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+
+                result = self.run_validator("codex", "standard", events)
+
+                self.assertNotEqual(result.returncode, 0)
 
     def test_standard_accepts_validated_auxiliary_workflow_lifecycles(self) -> None:
         outline = (
@@ -1109,6 +1432,140 @@ class ValidatorTest(unittest.TestCase):
             with self.subTest(backend=backend):
                 result = self.run_validator(backend, "standard", events)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_accepts_exact_codex_process_skill_reads(self) -> None:
+        plugin_root = "/expected/checkout"
+        outline = (
+            "Approach: update the CLI summary calculation to total item prices. "
+            "Files/components: src/cli.js and test/summary.test.js. "
+            "Verification: run npm test and check the summary JSON count and total."
+        )
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.",
+                item_id="mode",
+            ),
+            *codex_command_lifecycle(
+                f"sed -n '1,220p' "
+                f"{plugin_root}/skills/test-driven-development/SKILL.md",
+                "tdd-skill",
+            ),
+            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            codex_event(outline, item_id="outline"),
+            codex_event(
+                "src/cli.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event(
+                "src/cli.js", item_type="file_change", item_id="mutation"
+            ),
+            *codex_command_lifecycle(
+                f"sed -n '1,240p' "
+                f"{plugin_root}/skills/verification-before-completion/SKILL.md",
+                "verification-skill",
+            ),
+            codex_event(
+                "Tests passed and summary output verified.", item_id="result"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator(
+            "codex",
+            "standard",
+            events,
+            expected_plugin_root=plugin_root,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_process_skill_reads_use_a_closed_allowlist(self) -> None:
+        plugin_root = "/expected/checkout"
+        outline = (
+            "Approach: update the CLI summary calculation to total item prices. "
+            "Files/components: src/cli.js and test/summary.test.js. "
+            "Verification: run npm test and check the summary JSON count and total."
+        )
+        commands = (
+            f"cat {plugin_root}/skills/systematic-debugging/SKILL.md",
+            f"cat {plugin_root}/skills/test-driven-development/SKILL.md "
+            f"{plugin_root}/skills/verification-before-completion/SKILL.md",
+            f"sed -i '1d' "
+            f"{plugin_root}/skills/test-driven-development/SKILL.md",
+            f"cat {plugin_root}/skills/test-driven-development/SKILL.md && "
+            "printf changed",
+        )
+        for index, command in enumerate(commands):
+            with self.subTest(command=command):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded CLI behavior and coverage.",
+                        item_id="mode",
+                    ),
+                    *codex_command_lifecycle(command, f"skill-{index}"),
+                    *codex_command_lifecycle(
+                        "cat src/cli.js items.json", "inspection"
+                    ),
+                    codex_event(outline, item_id="outline"),
+                    *codex_command_lifecycle(
+                        "printf implementation", "mutation"
+                    ),
+                    codex_event(
+                        "Tests passed and summary output verified.",
+                        item_id="result",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+
+                result = self.run_validator(
+                    "codex",
+                    "standard",
+                    events,
+                    expected_plugin_root=plugin_root,
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_standard_process_skill_read_rejects_outside_symlink_alias(self) -> None:
+        plugin_root = self.root / "plugin"
+        skill = plugin_root / "skills/test-driven-development/SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("# TDD\n")
+        alias = self.root / "outside-skill.md"
+        alias.symlink_to(skill)
+        outline = (
+            "Approach: update the CLI summary calculation to total item prices. "
+            "Files/components: src/cli.js and test/summary.test.js. "
+            "Verification: run npm test and check the summary JSON count and total."
+        )
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.",
+                item_id="mode",
+            ),
+            *codex_command_lifecycle(f"cat {alias}", "aliased-skill"),
+            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            codex_event(outline, item_id="outline"),
+            *codex_command_lifecycle("printf implementation", "mutation"),
+            codex_event(
+                "Tests passed and summary output verified.", item_id="result"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator(
+            "codex",
+            "standard",
+            events,
+            expected_plugin_root=str(plugin_root),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
 
     def test_standard_accepts_preserved_real_codex_todo_lifecycle(self) -> None:
         task_texts = (
@@ -5615,6 +6072,324 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("claude", "strict", events)
                 self.assertNotEqual(result.returncode, 0)
 
+    def test_strict_accepts_exact_codex_brainstorming_skill_read(self) -> None:
+        plugin_root = "/expected/checkout"
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — production payment migration and public API risk.",
+                item_id="mode",
+            ),
+            *codex_command_lifecycle(
+                f"sed -n '1,240p' "
+                f"{plugin_root}/skills/brainstorming/SKILL.md",
+                "brainstorming-skill",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                "Which rollback requirement applies to this migration?",
+                item_id="pause",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator(
+            "codex",
+            "strict",
+            events,
+            expected_plugin_root=plugin_root,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_closed_claude_read_only_composition(self) -> None:
+        command = (
+            f"ls -la {self.project} && "
+            f"git -C {self.project} log --oneline -10"
+        )
+        events = [
+            claude_init(),
+            claude_event(
+                "Mode: strict — production payment migration and public API risk."
+            ),
+            claude_tool_event(
+                "Bash",
+                {"command": command},
+                tool_id="read-only-discovery",
+            ),
+            claude_tool_result(
+                "read-only-discovery",
+                content="README.md\nabc123 fixture",
+            ),
+            claude_event("Which rollback requirement applies to this migration?"),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        result = self.run_validator("claude", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_read_only_composition_rejects_open_shell_grammar(self) -> None:
+        commands = (
+            f"ls -la {self.project}; git -C {self.project} log --oneline -10",
+            f"ls -la {self.project} || git -C {self.project} status --short",
+            f"ls -la {self.project} && git -C {self.project} log --oneline -10 "
+            f"&& git -C {self.project} status --short",
+            f"ls -la {self.project} && printf changed",
+            f"ls -la {self.project} && git -C {self.root} log --oneline -10",
+            f"ls -la {self.project} && git -C {self.project} show HEAD",
+            f"ls -la {self.project} && git log --oneline -10",
+            f"git -C {self.project} status --short && "
+            f"git -C {self.project} log --oneline -10",
+        )
+        for index, command in enumerate(commands):
+            with self.subTest(command=command):
+                events = [
+                    claude_init(),
+                    claude_event(
+                        "Mode: strict — production payment migration and public "
+                        "API risk."
+                    ),
+                    claude_tool_event(
+                        "Bash",
+                        {"command": command},
+                        tool_id=f"shell-{index}",
+                    ),
+                    claude_tool_result(f"shell-{index}"),
+                    claude_event(
+                        "Which rollback requirement applies to this migration?"
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+
+                result = self.run_validator("claude", "strict", events)
+
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_strict_rejects_empty_bold_heading_design_options(self) -> None:
+        option_blocks = (
+            "**A.**\n**B.**\nPayment schema and public API rollback.",
+            "**A. Use placeholder placeholder placeholder.**\n"
+            "**B. Keep placeholder placeholder placeholder.**\n"
+            "Payment schema and public API rollback.",
+        )
+        for option_block in option_blocks:
+            with self.subTest(option_block=option_block):
+                design = (
+                    "Mode: strict — production payment migration and public API "
+                    "risk.\n## Approaches considered\n"
+                    f"{option_block}\n"
+                    "## Recommended design\n"
+                    "Use a reversible migration.\n"
+                    "Waiting on your approval before proceeding."
+                )
+                events = [
+                    claude_init(),
+                    claude_event(design),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+
+                result = self.run_validator("claude", "strict", events)
+
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_strict_accepts_multiline_bold_heading_design_options(self) -> None:
+        design = (
+            "Mode: strict — production payment migration and public API risk.\n"
+            "## Approaches considered\n"
+            "**A. Big-bang cutover.**\n"
+            "Rewrite payment rows in place with rollback risk.\n"
+            "**B. Expand and migrate.**\n"
+            "Add an amount_cents schema column and backfill while preserving "
+            "API compatibility.\n"
+            "## Recommended design\n"
+            "Use B with reversible migration gates and a versioned public API.\n"
+            "Waiting on your approval before proceeding."
+        )
+        events = [
+            claude_init(),
+            claude_event(design),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        result = self.run_validator("claude", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_natural_replace_and_retain_design_options(self) -> None:
+        design = (
+            "Mode: strict — production payment migration and public API risk.\n"
+            "## Approaches considered\n"
+            "**A. Immediate replacement.** Replace dollar amounts in the public "
+            "API at a coordinated cutoff.\n"
+            "**B. Compatibility alias.** Retain the dollar field while exposing "
+            "amount_cents to API clients.\n"
+            "## Recommended design\n"
+            "Use B with a reversible rollout and an explicit removal gate.\n"
+            "Waiting on your approval before proceeding."
+        )
+        events = [
+            claude_init(),
+            claude_event(design),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        result = self.run_validator("claude", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_concise_temporal_design_options(self) -> None:
+        design = (
+            "Mode: strict — production payment migration and public API risk.\n"
+            "## Approaches considered\n"
+            "**A. Immediate replacement.** Replace dollar payment API amounts "
+            "immediately.\n"
+            "**B. Compatibility alias.** Retain dollar payment API compatibility "
+            "indefinitely.\n"
+            "## Recommended design\n"
+            "Use B with a reversible migration and a reviewed removal gate.\n"
+            "Waiting on your approval before proceeding."
+        )
+        events = [
+            claude_init(),
+            claude_event(design),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        result = self.run_validator("claude", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_keep_switch_and_maintain_design_options(self) -> None:
+        option_blocks = (
+            (
+                "**A. Compatibility window.** Keep dollar payments in API v1 "
+                "during schema migration.\n"
+                "**B. Coordinated cutoff.** Replace dollar payment API amounts "
+                "at a coordinated cutoff."
+            ),
+            (
+                "**A. Storage cutover.** Switch payment storage from dollars to "
+                "cents while maintaining API compatibility.\n"
+                "**B. Compatibility window.** Maintain the dollar payment API "
+                "during the schema transition."
+            ),
+        )
+        for option_block in option_blocks:
+            with self.subTest(option_block=option_block):
+                design = (
+                    "Mode: strict — production payment migration and public API "
+                    "risk.\n## Approaches considered\n"
+                    f"{option_block}\n"
+                    "## Recommended design\n"
+                    "Use the reversible option with explicit rollout gates.\n"
+                    "Waiting on your approval before proceeding."
+                )
+                events = [
+                    claude_init(),
+                    claude_event(design),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+
+                result = self.run_validator("claude", "strict", events)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_bold_recommendation_after_design_options(self) -> None:
+        design = (
+            "Mode: strict — production payment migration and public API risk.\n"
+            "## Approaches considered\n"
+            "**A. Big-bang cutover.** Rewrite payment rows in place with rollback "
+            "risk.\n"
+            "**B. Expand and migrate.** Add an amount_cents schema column and "
+            "backfill while preserving API compatibility.\n"
+            "**Recommendation: B**, paired with a versioned API transition.\n"
+            "## Proposed design\n"
+            "Use reversible migration gates and retain the old API during rollout.\n"
+            "Waiting on your approval before proceeding."
+        )
+        events = [
+            claude_init(),
+            claude_event(design),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        result = self.run_validator("claude", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_rejects_keyword_salad_design_options(self) -> None:
+        option_blocks = (
+            (
+                "**A. Deferred path.** Use payment schema API migration words.\n"
+                "**B. Alternate path.** Keep billing database clients rollout "
+                "labels."
+            ),
+            (
+                "**A. Deferred path.** Use payment schema with API migration.\n"
+                "**B. Alternate path.** Keep billing database clients with rollout."
+            ),
+            (
+                "**A. Deferred path.** Replace payment schema with API migration.\n"
+                "**B. Alternate path.** Retain billing database API rollout."
+            ),
+            (
+                "**A. Deferred path.** Replace and retain payment schema API.\n"
+                "**B. Alternate path.** Switch and maintain billing database "
+                "clients."
+            ),
+            (
+                "**A. Deferred path.** Replace payment schema but API migration.\n"
+                "**B. Alternate path.** Retain billing database because client "
+                "rollout."
+            ),
+            (
+                "**A. Deferred path.** Replace payment schema API boundary.\n"
+                "**B. Alternate path.** Retain billing database clients cutoff."
+            ),
+        )
+        for option_block in option_blocks:
+            with self.subTest(option_block=option_block):
+                design = (
+                    "Mode: strict — production payment migration and public API "
+                    "risk.\n## Approaches considered\n"
+                    f"{option_block}\n"
+                    "## Recommended design\n"
+                    "Use a reversible migration.\n"
+                    "Waiting on your approval before proceeding."
+                )
+                events = [
+                    claude_init(),
+                    claude_event(design),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+
+                result = self.run_validator("claude", "strict", events)
+
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_strict_rejects_duplicate_labels_within_one_design_group(self) -> None:
+        design = (
+            "Mode: strict — production payment migration and public API risk.\n"
+            "## Approaches considered\n"
+            "**A. Big-bang cutover.** Rewrite payment rows in place with rollback "
+            "risk.\n"
+            "**A. Expand and migrate.** Add an amount_cents schema column and "
+            "backfill while preserving API compatibility.\n"
+            "## Recommended design\n"
+            "Use the expandable design with reversible migration gates.\n"
+            "Waiting on your approval before proceeding."
+        )
+        events = [
+            claude_init(),
+            claude_event(design),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        result = self.run_validator("claude", "strict", events)
+
+        self.assertNotEqual(result.returncode, 0)
+
     def test_strict_validates_read_probe_result_for_missing_project_path(self) -> None:
         events = [
             claude_init(),
@@ -5845,6 +6620,50 @@ class ValidatorTest(unittest.TestCase):
             {"type": "result", "subtype": "success", "result": "done"},
         ]
         result = self.run_validator("claude", "strict", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_preserved_api_transition_options(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — production payment migration and public API risk.\n"
+                "What public API transition should the design target?\n\n"
+                "- **Versioned rollout (recommended):** Keep the dollar-based "
+                "endpoint temporarily and introduce a cents-based v2 API.\n"
+                "- **Same-version transition:** Change the existing field in "
+                "place, with a deprecation window and compatibility handling.\n"
+                "- **Immediate breaking change:** Replace dollar amounts with "
+                "integer cents at a coordinated cutoff."
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_bold_heading_design_options(self) -> None:
+        design = (
+            "Mode: strict — production payment migration and public API risk.\n"
+            "## Approaches considered\n"
+            "**A. Big-bang cutover.** Rewrite payment rows in place; rollback is "
+            "irreversible and unsafe.\n"
+            "**B. Expand and migrate.** Add an amount_cents schema column and "
+            "backfill while preserving API compatibility.\n"
+            "**C. Boundary conversion.** Keep dollars in storage and version the "
+            "public API response.\n"
+            "## Recommended design\n"
+            "Use B with reversible migration gates and a versioned public API.\n"
+            "Waiting on your approval before proceeding."
+        )
+        events = [
+            claude_init(),
+            claude_event(design),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        result = self.run_validator("claude", "strict", events)
+
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_strict_accepts_final_matrix_concrete_discovery_pauses(self) -> None:

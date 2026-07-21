@@ -216,6 +216,24 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash "$HOOK_UNDER_TEST"
 
+assert_command_output \
+    "Claude Code injects the closed override warning sequence" \
+    "nested" \
+    "the warning must be the very next assistant-visible content after the Mode line; no project tool, discovery, skill announcement, or other prose may precede it" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects standard and promotion sequences" \
+    "nested" \
+    "For standard, use exactly: Approach: <...>. Files/components: <...>. Verification: <...>. After discovery, never output a second Mode line" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
 wrapper_home="$(make_home run-hook-wrapper)"
 assert_command_output \
     "run-hook.cmd wrapper dispatches to the named session-start script" \

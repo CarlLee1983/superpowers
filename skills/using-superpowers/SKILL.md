@@ -22,7 +22,8 @@ For every new user task:
    Codex uses the standalone read sequence below instead of native invocation.
 2. Declare the selected mode exactly once.
 3. If the request itself reveals strict risk under an explicit non-strict
-   override, issue the checkpoint warning immediately.
+   override, issue the checkpoint warning immediately. In this branch, the warning is the very next assistant-visible content after the `Mode:` line.
+   No project tool, discovery, skill announcement, or other prose may precede it.
 4. Discover domain skills and mode-permitted process skills.
 5. Announce each skill when it causes an action or pause.
 
@@ -49,6 +50,8 @@ other tool. Do not read platform references until the mode is active.
 
 Complete this checkpoint visibly after the `Mode:` line and before changing
 files or external state. If the request itself exposes a concrete strict trigger under an explicit `lean` or `standard` override, warn immediately after the `Mode:` line and before project inspection.
+In this request-triggered branch, the warning is the very next assistant-visible content after the `Mode:` line.
+No project tool, discovery, skill announcement, or other prose may precede it.
 Keep the requested mode active.
 
 After any project inspection, complete risk routing before mutation:
@@ -68,10 +71,13 @@ After any project inspection, complete risk routing before mutation:
 - Automatic `lean` or `standard` plus strict evidence: output the selector's
   canonical promotion line, then pause for approval without mutating.
   A second `Mode:` line is invalid; promotion changes the existing active state.
+  Never output a second `Mode:` line after discovery. Once discovery establishes strict evidence, the next mode-routing content must be the canonical `Promoting to strict — ...` line and its approval pause.
 - Active `strict`: follow the strict skills and their approval gates without
   emitting a duplicate promotion.
 
 Risk routing does not replace active-mode readiness. If `standard` remains active after routing, including an explicit `standard` override with strict evidence, output a short visible inline outline covering approach, affected files or components, and verification.
+After inspection and before the first mutation, use this exact one-line shape:
+`Approach: <...>. Files/components: <...>. Verification: <...>.`
 If `lean` remains active, proceed directly after any required warning. If
 `strict` is active, follow its approval gates. Do not make the first mutation
 until both applicable obligations are complete.
