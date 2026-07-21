@@ -1388,7 +1388,7 @@ def validate_escalation_order(
         )
 
 
-def claude_invoked_brainstorming_skill(events: list[dict[str, Any]]) -> bool:
+def claude_brainstorming_skill_status(events: list[dict[str, Any]]) -> str:
     invocations: dict[str, str] = {}
     for event in events:
         message = event.get("message")
@@ -1428,20 +1428,31 @@ def claude_invoked_brainstorming_skill(events: list[dict[str, Any]]) -> bool:
                 and message.get("role") == "user"
             )
             is_error = block.get("is_error", False)
-            tool_use_result = event.get("tool_use_result")
-            explicitly_failed = (
-                isinstance(tool_use_result, dict)
-                and tool_use_result.get("success") is False
-            )
+            metadata_valid = True
+            metadata_successful = True
+            if "tool_use_result" in event:
+                tool_use_result = event.get("tool_use_result")
+                metadata_valid = (
+                    isinstance(tool_use_result, dict)
+                    and type(tool_use_result.get("success")) is bool
+                )
+                metadata_successful = (
+                    metadata_valid and tool_use_result.get("success") is True
+                )
             invocations[tool_id] = (
                 "successful"
                 if successful_role
                 and type(is_error) is bool
                 and is_error is False
-                and not explicitly_failed
+                and metadata_valid
+                and metadata_successful
                 else "failed"
             )
-    return any(status == "successful" for status in invocations.values())
+    if not invocations:
+        return "absent"
+    if all(status == "successful" for status in invocations.values()):
+        return "successful"
+    return "failed"
 
 
 def explicit_shell_payload(command: str) -> str | None:
@@ -1640,8 +1651,12 @@ def validate_explicit_skill_actions(
 
 
 def require_affirmative_brainstorming(
-    text: str, *, structured_invocation: bool = False
+    text: str, *, structured_invocation_status: str = "absent"
 ) -> None:
+    if structured_invocation_status == "failed":
+        raise ValidationError(
+            "assistant-visible text lacks affirmative brainstorming skill use/invocation"
+        )
     clauses = re.split(r"[.;\n]+|\bbut\b", text, flags=re.IGNORECASE)
     affirmative_patterns = (
         r"\b(?:I|we)\s+(?:am|are|'m|'re|have|will|'ll)?\s*"
@@ -1675,7 +1690,7 @@ def require_affirmative_brainstorming(
         r"(?:using|invoking|running|use|invoke|run)\s+"
         r"(?:it|that\s+skill|the\s+skill)\b",
     )
-    affirmative_seen = structured_invocation
+    affirmative_seen = structured_invocation_status == "successful"
     negated_after_affirmative = False
     for clause in clauses:
         is_negative = any(
@@ -1776,7 +1791,7 @@ def require_affirmative_brainstorming(
 
 
 def validate_case(
-    case: str, text: str, *, structured_brainstorming_invocation: bool = False
+    case: str, text: str, *, structured_brainstorming_status: str = "absent"
 ) -> None:
     if case in {"lean", "standard"}:
         require_pattern(
@@ -1790,7 +1805,7 @@ def validate_case(
         require_pattern(text, r"\b(warn|risk|security|authentication)", "high-risk override warning")
     elif case == "explicit-skill":
         require_affirmative_brainstorming(
-            text, structured_invocation=structured_brainstorming_invocation
+            text, structured_invocation_status=structured_brainstorming_status
         )
 
 
@@ -1853,8 +1868,10 @@ def validate(
     validate_case(
         case,
         visible,
-        structured_brainstorming_invocation=(
-            backend == "claude" and claude_invoked_brainstorming_skill(events)
+        structured_brainstorming_status=(
+            claude_brainstorming_skill_status(events)
+            if backend == "claude"
+            else "absent"
         ),
     )
     return visible

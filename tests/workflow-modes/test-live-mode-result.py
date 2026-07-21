@@ -3648,6 +3648,51 @@ class ValidatorTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("affirmative brainstorming", result.stderr)
 
+    def test_claude_failed_skill_attempt_blocks_visible_prose_fallback(self) -> None:
+        visible = claude_event(
+            "Mode: lean — explicit read-only naming exploration.\n"
+            "I am using the brainstorming skill.\n"
+            "Option 1: `greet`\nOption 2: `greeting`"
+        )
+        invocation = claude_tool_event(
+            "Skill",
+            {"skill": "superpowers:brainstorming"},
+            tool_id="brainstorming",
+        )
+        malformed_success = claude_tool_result("brainstorming")
+        malformed_success["tool_use_result"] = {"success": "false"}
+        failures = (
+            ("missing result", []),
+            ("error result", [claude_tool_result("brainstorming", is_error=True)]),
+            ("malformed success metadata", [malformed_success]),
+        )
+        for label, result_events in failures:
+            with self.subTest(label=label):
+                events = [
+                    claude_init(),
+                    visible,
+                    invocation,
+                    *result_events,
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator("claude", "explicit-skill", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("affirmative brainstorming", result.stderr)
+
+        codex_visible_fallback = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit read-only naming exploration.\n"
+                "I am using the brainstorming skill.\n"
+                "Option 1: `greet`\nOption 2: `greeting`"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator(
+            "codex", "explicit-skill", codex_visible_fallback
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_explicit_skill_rejects_mutation_and_unknown_actions(self) -> None:
         declaration = claude_event(
             "Mode: lean — explicit read-only naming exploration.\n"
