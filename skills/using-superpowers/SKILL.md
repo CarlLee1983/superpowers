@@ -80,6 +80,8 @@ After inspection and before the first mutation, use this exact one-line shape:
 `Approach: <...>. Files/components: <...>. Verification: <...>.`
 This is a hard tool boundary: output the completed line immediately before the first `Write`, `Edit`, or mutating shell/tool call.
 A mutation before this line is invalid.
+When the host provides dedicated `Read`, `Glob`, or `Grep` tools, use them instead of shell listing for this standard inspection.
+Once inspection is complete, the next assistant-visible content must be the completed outline line; do not call the first mutation directly from an inspection result.
 If `lean` remains active, proceed directly after any required warning. If
 `strict` is active, follow its approval gates. Do not make the first mutation
 until both applicable obligations are complete.

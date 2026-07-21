@@ -67,6 +67,7 @@ if [[ -f "$SELECTOR" ]]; then
   assert_contains "$SELECTOR" 'the next mode-routing content must be the canonical `Promoting to strict — ...` line' "selector makes discovered-risk promotion canonical"
   assert_contains "$SELECTOR" '`Approach: <...>. Files/components: <...>. Verification: <...>.`' "selector defines the standard inline outline template"
   assert_contains "$SELECTOR" 'A mutation before this line is invalid.' "selector makes the standard outline a hard mutation gate"
+  assert_contains "$SELECTOR" 'do not call the first mutation directly from an inspection result' "selector closes the standard inspection-to-mutation transition"
   assert_not_matches "$SELECTOR" '\b(gpt|claude|gemini|opus|sonnet|fable)\b' "selector has no model allowlist"
 fi
 
@@ -109,6 +110,7 @@ assert_contains "$BOOTSTRAP" 'Risk routing does not replace active-mode readines
 assert_contains "$BOOTSTRAP" 'If `standard` remains active after routing, including an explicit `standard` override with strict evidence, output a short visible inline outline covering approach, affected files or components, and verification.' "bootstrap requires standard outline after override warning"
 assert_contains "$BOOTSTRAP" '`Approach: <...>. Files/components: <...>. Verification: <...>.`' "bootstrap defines the standard inline outline template"
 assert_contains "$BOOTSTRAP" 'A mutation before this line is invalid.' "bootstrap makes the standard outline a hard mutation gate"
+assert_contains "$BOOTSTRAP" 'do not call the first mutation directly from an inspection result' "bootstrap closes the standard inspection-to-mutation transition"
 assert_contains "$BOOTSTRAP" 'Never output a second `Mode:` line after discovery.' "bootstrap forbids duplicate mode declarations after discovery"
 assert_contains "$BOOTSTRAP" 'the next mode-routing content must be the canonical `Promoting to strict — ...` line' "bootstrap makes discovered-risk promotion canonical"
 assert_contains "$BOOTSTRAP" '`strict` is active, invoke every relevant skill before any further response or action.' "bootstrap restores strict before-action skill invocation"

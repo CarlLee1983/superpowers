@@ -228,7 +228,7 @@ assert_command_output \
 assert_command_output \
     "Claude Code injects standard and promotion sequences" \
     "nested" \
-    "STANDARD HARD GATE: immediately before the first Write, Edit, or mutating shell/tool call, output exactly: Approach: <...>. Files/components: <...>. Verification: <...>. A mutation before this line is invalid. After discovery, never output a second Mode line" \
+    "STANDARD SEQUENCE: on hosts with dedicated Read, Glob, or Grep, inspect with those tools instead of shell listing" \
     "" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
@@ -238,6 +238,15 @@ assert_command_output \
     "Claude Code injects the standard hard mutation gate" \
     "nested" \
     "A mutation before this line is invalid" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the closed standard inspection sequence" \
+    "nested" \
+    "do not call the first mutation directly from an inspection result" \
     "" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
