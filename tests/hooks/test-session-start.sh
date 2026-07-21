@@ -228,7 +228,16 @@ assert_command_output \
 assert_command_output \
     "Claude Code injects standard and promotion sequences" \
     "nested" \
-    "For standard, use exactly: Approach: <...>. Files/components: <...>. Verification: <...>. After discovery, never output a second Mode line" \
+    "STANDARD HARD GATE: immediately before the first Write, Edit, or mutating shell/tool call, output exactly: Approach: <...>. Files/components: <...>. Verification: <...>. A mutation before this line is invalid. After discovery, never output a second Mode line" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the standard hard mutation gate" \
+    "nested" \
+    "A mutation before this line is invalid" \
     "" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \

@@ -166,7 +166,9 @@ If the active mode remains `standard`, complete its inline design contract
 before mutation. In `standard`, after project inspection and before the first mutation, output a short inline design and execution outline in a visible inline message.
 Use exactly this one-line shape:
 `Approach: <...>. Files/components: <...>. Verification: <...>.`
-Replace the placeholders with the intended approach, affected files or components, and verification strategy. Continue without an approval pause unless a missing decision would materially alter the result.
+Replace the placeholders with the intended approach, affected files or components, and verification strategy.
+This is a hard tool boundary: output the completed line immediately before the first `Write`, `Edit`, or mutating shell/tool call.
+A mutation before this line is invalid. Continue without an approval pause unless a missing decision would materially alter the result.
 
 An explicitly requested process skill runs without silently promoting the
 rest of the task.
