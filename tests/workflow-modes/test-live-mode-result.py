@@ -3447,6 +3447,92 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("claude", "strict", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_strict_accepts_final_matrix_concrete_discovery_pauses(self) -> None:
+        # Exact visible output from /tmp/superpowers-mode-evals/task1-final-full-a409482/
+        # claude/claude-fable-5/strict/20260721T082433Z-79066-424/assistant.txt
+        claude_output = (
+            "Mode: strict — Payments data migration in production with a breaking "
+            "public API change hits multiple strict triggers (payments/finance, "
+            "production data migration, breaking compatibility).\n\n"
+            "Per the strict workflow, I'll start with the brainstorming skill to "
+            "explore the design before writing a plan.\n\n"
+            "The brainstorming skill is active. First step is exploring the project "
+            "context (read-only), then I'll refine the design through questions "
+            "before any changes.\n\n"
+            "The repo is essentially empty — just a README marking it as a "
+            "\"payment migration fixture,\" with no application code, schema, or "
+            "API definitions to inspect. So the design will be built from your "
+            "requirements rather than from existing code, and I need to pin down "
+            "the context before proposing approaches.\n\n"
+            "One question at a time, starting with the most load-bearing:\n\n"
+            "**Where does the system being migrated live, and what's the stack?** "
+            "Since this repo has no code, which of these matches your situation?\n\n"
+            "- **A)** An existing production system elsewhere (e.g., Postgres/MySQL "
+            "+ a REST API service) — this repo is where the migration scripts, API "
+            "changes, and design docs should be authored. If so, what's the database "
+            "and API framework?\n"
+            "- **B)** This repo should contain a representative reference "
+            "implementation — schema, migration scripts, and API — that demonstrates "
+            "the full migration design end to end.\n"
+            "- **C)** You want a design document / runbook only (no code), covering "
+            "the migration strategy, API versioning, and rollout plan.\n\n"
+            "If A, please also share: the database engine, the current amount column "
+            "type (e.g., `DECIMAL(10,2)`, `FLOAT`), approximate row count, and whether "
+            "zero-downtime is required."
+        )
+        claude_events = [
+            claude_init(),
+            claude_event(claude_output),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        # Exact visible output from /tmp/superpowers-mode-evals/task1-final-full-a409482/
+        # codex/gpt-5.6-sol/strict/20260721T082943Z-90346-6117/assistant.txt
+        codex_outputs = (
+            "I’m using the workflow-selection skill first because this is a high-risk "
+            "production schema and public API change. I’ll determine the required "
+            "safeguards before inspecting or changing the project.",
+            "Mode: strict — this changes payments, production data, and a public "
+            "compatibility surface.",
+            "I’m using the brainstorming skill to turn the migration into a safe "
+            "rollout design before implementation; its decisions will govern "
+            "compatibility, backfill, and rollback.",
+            "I’ll now map the existing storage model, API contract, tests, and recent "
+            "changes. I’ll keep the repository read-only until you approve a concrete "
+            "migration design.",
+            "The repository is an empty fixture, so there’s no existing schema or API "
+            "contract to infer.\n\n"
+            "What should the new public API expose?\n\n"
+            "1. `amount_cents` as an integer, replacing `amount` — recommended.\n"
+            "2. `amount` remains the field name but changes from dollars to integer "
+            "cents.\n"
+            "3. A versioned API (`v2`) introduces `amount_cents`, while `v1` remains "
+            "temporarily compatible.",
+        )
+        codex_events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            *(codex_event(output, item_id=f"message-{index}") for index, output in enumerate(codex_outputs)),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        for backend, events in (("claude", claude_events), ("codex", codex_events)):
+            with self.subTest(backend=backend):
+                result = self.run_validator(backend, "strict", events)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+        incomplete_discovery = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — payments production migration and public API risk.\n"
+                "What should the API expose?\n"
+                "1. `amount_cents` as an integer."
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "strict", incomplete_discovery)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("relevant clarification/approval pause", result.stderr)
+
     def test_escalation_requires_a_relevant_question_or_approval_request(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},
