@@ -6630,6 +6630,26 @@ class ValidatorTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_strict_accepts_short_production_stack_options(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — this changes payments, production data, and a "
+                "public compatibility surface.\n\n"
+                "The repository is an empty fixture—only a README exists—so the "
+                "core technology is unspecified.\n\n"
+                "Which production stack should the design target?\n\n"
+                "- PostgreSQL with a REST API\n"
+                "- MySQL with a REST API\n"
+                "- Another stack you’ll specify"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_strict_accepts_concrete_unlabelled_discovery_options(self) -> None:
         events = [
             claude_init(),

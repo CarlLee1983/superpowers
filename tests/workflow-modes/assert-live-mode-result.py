@@ -1250,7 +1250,7 @@ def has_concrete_discovery_pause(text: str) -> bool:
         r"(?:\*\*)?\s+(.+)|[-*]\s+(.+))$"
     )
     concrete_signal = re.compile(
-        r"`[A-Za-z_][^`]*`|\b(?:Postgres|MySQL|REST|database|framework|"
+        r"`[A-Za-z_][^`]*`|\b(?:Postgres|MySQL|REST|database|framework|stack|"
         r"schema|migration\s+scripts?|API|runbook|design\s+document|integer|"
         r"dollars?|cents?|versioned|v\d+|field|transition|deprecation|"
         r"compatibility|breaking|cutoff|in[- ]place|repository|repo|branch|"
@@ -1356,7 +1356,7 @@ def has_concrete_discovery_pause(text: str) -> bool:
         )
     else:
         responsive_signal = re.compile(
-            r"\b(?:system|repo|repository|branch|files?|Postgres|MySQL|REST|"
+            r"\b(?:system|stack|repo|repository|branch|files?|Postgres|MySQL|REST|"
             r"database|framework|implementation|schema|migration|API|runbook|"
             r"document)\b",
             re.IGNORECASE,
