@@ -1404,7 +1404,11 @@ class ValidatorTest(unittest.TestCase):
     def test_escalation_promotion_rejects_opposing_and_quoted_claims(self) -> None:
         claimed_relation = CANONICAL_PROMOTION_REASON.removesuffix(".")
         relation_after_inspection = claimed_relation.removeprefix("inspection found ")
+        evidence, consequence = relation_after_inspection.split("; ", maxsplit=1)
         invalid_reasons = (
+            CANONICAL_PROMOTION_REASON.replace(
+                "defines the amount field", "doesn't define the amount field"
+            ),
             CANONICAL_PROMOTION_REASON.replace(
                 "defines the amount field", "never defines the amount field"
             ),
@@ -1415,7 +1419,13 @@ class ValidatorTest(unittest.TestCase):
                 "amount field consumed by", "amount field isn't consumed by"
             ),
             CANONICAL_PROMOTION_REASON.replace(
+                "consumed by", "cannot be consumed by"
+            ),
+            CANONICAL_PROMOTION_REASON.replace(
                 "would break compatibility.", "would never break compatibility."
+            ),
+            CANONICAL_PROMOTION_REASON.replace(
+                "would break compatibility.", "would fail to break compatibility."
             ),
             CANONICAL_PROMOTION_REASON.replace(
                 "would break compatibility.",
@@ -1425,6 +1435,7 @@ class ValidatorTest(unittest.TestCase):
             f"inspection found the note '{relation_after_inspection}'.",
             f"inspection found the note ‘{relation_after_inspection}’.",
             f"inspection found the note «{relation_after_inspection}».",
+            f"inspection found the note '{evidence}'; {consequence}.",
         )
         for reason in invalid_reasons:
             with self.subTest(reason=reason):
@@ -1447,6 +1458,33 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("codex", "escalation", events)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("structured promotion relation", result.stderr)
+
+    def test_escalation_promotion_accepts_separate_benign_quoted_modifiers(
+        self,
+    ) -> None:
+        reason = CANONICAL_PROMOTION_REASON.replace(
+            "inspection found", "inspection found 'direct evidence'"
+        ).replace(
+            "break compatibility.", "break compatibility 'confirmed'."
+        )
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle(
+                "cat src/schema.js src/billing.js", "inspection"
+            ),
+            codex_event(
+                f"Promoting to strict — {reason}\n"
+                "Should we retain the compatibility alias during migration?",
+                item_id="promotion",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_escalation_promotion_rejects_question_and_malformed_transition(
         self,
