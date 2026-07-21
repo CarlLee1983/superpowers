@@ -327,6 +327,33 @@ def safe_claude_read_probe(tool_input: object, expected_project_root: Path) -> b
     ) is not None
 
 
+def safe_project_glob_paths(
+    pattern: str, expected_project_root: Path
+) -> tuple[str, ...] | None:
+    lexical = Path(pattern)
+    if (
+        lexical.is_absolute()
+        or ".." in lexical.parts
+        or pattern.count("*") != 1
+        or re.fullmatch(r"[A-Za-z0-9._/-]*\*[A-Za-z0-9._/-]*", pattern) is None
+    ):
+        return None
+    root = expected_project_root.resolve(strict=True)
+    try:
+        matches = sorted(
+            expected_project_root.glob(pattern), key=lambda path: path.as_posix()
+        )
+    except (OSError, ValueError):
+        return None
+    paths: list[str] = []
+    for match in matches:
+        resolved = project_path(str(match), expected_project_root, require_file=True)
+        if resolved is None:
+            return None
+        paths.append(resolved.relative_to(root).as_posix())
+    return tuple(paths)
+
+
 def project_operand_paths(
     arguments: list[str],
     expected_project_root: Path,
@@ -338,6 +365,16 @@ def project_operand_paths(
     root = expected_project_root.resolve(strict=True)
     paths: list[str] = []
     for argument in arguments:
+        if re.search(r"[?\[\]{}~$]", argument):
+            return None
+        if "*" in argument:
+            expanded = safe_project_glob_paths(argument, expected_project_root)
+            if expanded is None:
+                return None
+            if not expanded:
+                return ()
+            paths.extend(expanded)
+            continue
         resolved = project_path(
             argument,
             expected_project_root,
@@ -911,7 +948,7 @@ def escalation_records(
                 completed_paths = inspection_command_paths(
                     command, expected_plugin_root, expected_project_root
                 )
-                if exit_code == 0 and completed_paths is not None:
+                if exit_code == 0 and completed_paths:
                     for path in completed_paths:
                         add("inspection", path, event_index)
                 elif exit_code is None:
@@ -968,7 +1005,8 @@ def has_structured_promotion_relation(reason: str) -> bool:
         r"(?:\s+to\s+amountcents)?"
     )
     breaking_object = (
-        r"(?:compatibility|(?:the\s+)?(?:public\s+|external\s+)?"
+        r"(?:compatibility|(?:the\s+)?response\s+shape\s+for\s+external\s+"
+        r"billing\s+api\s+clients?|(?:the\s+)?(?:public\s+|external\s+)?"
         r"(?:(?:billing|payments?)\s+)?api(?:'s)?\s+"
         r"(?:change|response(?:\s+shape)?|compatibility(?:\s+change)?|contract)"
         r"(?:\s+for\s+(?:external|existing)\s+(?:clients?|consumers?))?)"

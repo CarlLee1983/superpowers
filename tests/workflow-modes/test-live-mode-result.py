@@ -29,6 +29,12 @@ REAL_CODEX_PROMOTION_REASON = (
     "in a public billing API response; renaming it would create a breaking payments "
     "API change."
 )
+REAL_CLAUDE_POSSESSIVE_PROMOTION = (
+    "Promoting to strict — inspection found src/schema.js defines `amount` consumed "
+    "by src/billing.js's `publicPaymentResponse` as part of the public billing API "
+    "payment response; renaming `amount` to `amountCents` would break the response "
+    "shape for external billing API clients."
+)
 
 
 def claude_event(text: str, *, block_type: str = "text") -> dict:
@@ -966,6 +972,96 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "escalation", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_escalation_codex_accepts_wrapped_project_glob_inspection(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle(
+                "/bin/zsh -lc \"sed -n '1,240p' src/*\"",
+                "glob-inspection",
+            ),
+            codex_event(
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+                "Should we retain the compatibility alias during migration?",
+                item_id="promotion",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_codex_project_glob_is_closed_and_no_match_is_neutral(
+        self,
+    ) -> None:
+        declaration = codex_event(
+            "Mode: standard — bounded rename pending repository inspection.",
+            item_id="declaration",
+        )
+        promotion = codex_event(
+            f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+            "Should we retain the compatibility alias during migration?",
+            item_id="promotion",
+        )
+        missing = codex_command_lifecycle(
+            "/bin/zsh -lc \"sed -n '1,20p' src/no-match-*\"",
+            "missing-glob",
+            exit_code=1,
+        )
+        no_match_only = [
+            {"type": "thread.started", "thread_id": "thread"},
+            declaration,
+            *missing,
+            promotion,
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", no_match_only)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("schema.js and src/billing.js", result.stderr)
+
+        missing_then_exact_reads = [
+            {"type": "thread.started", "thread_id": "thread"},
+            declaration,
+            *missing,
+            *codex_command_lifecycle("cat src/schema.js", "schema"),
+            *codex_command_lifecycle("cat src/billing.js", "billing"),
+            promotion,
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator(
+            "codex", "escalation", missing_then_exact_reads
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        (self.project / "src/schema-link.js").symlink_to(
+            self.project / "src/schema.js"
+        )
+        (self.project / "src/nested").mkdir()
+        unsafe_patterns = (
+            "/bin/zsh -lc \"sed -n '1,20p' src/../*\"",
+            "/bin/zsh -lc \"sed -n '1,20p' /tmp/*\"",
+            "/bin/zsh -lc \"sed -n '1,20p' src/*-link.js\"",
+            "/bin/zsh -lc \"sed -n '1,20p' src/nest*\"",
+            "/bin/zsh -lc \"sed -n '1,20p' src/**\"",
+            "/bin/zsh -lc \"sed -n '1,20p' src/{schema,billing}.js\"",
+            "/bin/zsh -lc \"sed -n '1,20p' src/?.js\"",
+        )
+        for index, command in enumerate(unsafe_patterns):
+            with self.subTest(command=command):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    declaration,
+                    *codex_command_lifecycle(command, f"unsafe-glob-{index}"),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "mutation before strict promotion/approval pause", result.stderr
+                )
+
     def test_escalation_codex_rejects_unsafe_wrapped_project_commands(self) -> None:
         (self.project / "src/billing.js").write_text("export const billing = {};\n")
         commands = (
@@ -1158,6 +1254,25 @@ class ValidatorTest(unittest.TestCase):
                 ]
                 result = self.run_validator("codex", "escalation", events)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_accepts_exact_claude_possessive_consumer_promotion(
+        self,
+    ) -> None:
+        events = [
+            claude_init(),
+            claude_event(
+                "Mode: standard — bounded rename pending repository inspection."
+            ),
+            *claude_read_lifecycle(self.project, "src/schema.js", "schema"),
+            *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
+            claude_event(
+                REAL_CLAUDE_POSSESSIVE_PROMOTION
+                + "\nShould we retain the compatibility alias during migration?"
+            ),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_escalation_structured_promotion_rejects_missing_or_safe_relations(
         self,
