@@ -3759,6 +3759,12 @@ class ValidatorTest(unittest.TestCase):
                 read_only_claude = [
                     claude_init(),
                     declaration,
+                    claude_tool_event(
+                        "Skill",
+                        {"skill": "superpowers:brainstorming"},
+                        tool_id="brainstorming",
+                    ),
+                    claude_tool_result("brainstorming"),
                     *inspection,
                     {"type": "result", "subtype": "success", "result": "done"},
                 ]
