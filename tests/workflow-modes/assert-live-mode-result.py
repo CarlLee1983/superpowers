@@ -221,6 +221,35 @@ def split_read_command(command: str) -> list[str] | None:
     return arguments
 
 
+def has_unsafe_shell_expansion(payload: str) -> bool:
+    """Reject shell expansion syntax while preserving quoted rg patterns/globs."""
+    quote: str | None = None
+    escaped = False
+    for character in payload:
+        if escaped:
+            escaped = False
+            continue
+        if quote == "'":
+            if character == "'":
+                quote = None
+            continue
+        if character == "\\":
+            escaped = True
+            continue
+        if quote == '"':
+            if character == '"':
+                quote = None
+            elif character == "$":
+                return True
+            continue
+        if character in {"'", '"'}:
+            quote = character
+            continue
+        if character in "$~{}*?[":
+            return True
+    return False
+
+
 def shell_pipeline_arguments(command: str) -> list[list[str]] | None:
     """Parse a closed shell pipeline without evaluating shell syntax."""
     try:
@@ -235,7 +264,13 @@ def shell_pipeline_arguments(command: str) -> list[list[str]] | None:
         payload = outer[2]
     else:
         payload = command
-    if "\n" in payload or "`" in payload or "$(" in payload or "\x00" in payload:
+    if (
+        "\n" in payload
+        or "`" in payload
+        or "$(" in payload
+        or "\x00" in payload
+        or has_unsafe_shell_expansion(payload)
+    ):
         return None
     try:
         lexer = shlex.shlex(payload, posix=True, punctuation_chars="|;&<>")
@@ -294,6 +329,42 @@ def is_codex_bootstrap(command: str, expected_root: Path | None) -> bool:
     else:
         return False
     return all(exact_bootstrap_path(operand, expected_root) for operand in operands)
+
+
+def codex_bootstrap_path(
+    command: str, expected_root: Path | None
+) -> str | None:
+    if expected_root is None:
+        return None
+    arguments = split_read_command(command)
+    if not arguments:
+        return None
+    executable = arguments[0]
+    if executable in {"cat", "/bin/cat", "/usr/bin/cat"}:
+        operands = arguments[1:]
+        if operands[:1] == ["--"]:
+            operands = operands[1:]
+        if len(operands) != 1 or operands[0].startswith("-"):
+            return None
+    elif executable in {"sed", "/bin/sed", "/usr/bin/sed"}:
+        if (
+            len(arguments) != 4
+            or arguments[1] != "-n"
+            or re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", arguments[2])
+            is None
+        ):
+            return None
+        operands = arguments[3:]
+    else:
+        return None
+    candidate = Path(operands[0])
+    if not candidate.is_absolute():
+        return None
+    resolved = candidate.resolve()
+    for relative in BOOTSTRAP_PATHS:
+        if resolved == (expected_root / relative).resolve():
+            return relative
+    return None
 
 
 def project_path(
@@ -592,6 +663,8 @@ def validate_declaration_order(
     declared = False
     active_items: dict[str, tuple[str, str | None]] = {}
     completed_items: set[str] = set()
+    bootstrap_index = 0
+    active_bootstrap_items: dict[str, str] = {}
     for event in events:
         if backend == "claude":
             if event.get("type") != "assistant":
@@ -658,16 +731,53 @@ def validate_declaration_order(
             if item_type == "agent_message":
                 text = item.get("text")
                 if isinstance(text, str) and DECLARATION.search(text):
+                    if (
+                        expected_plugin_root is not None
+                        and bootstrap_index != len(BOOTSTRAP_PATHS)
+                    ):
+                        raise ValidationError(
+                            "Codex mode declaration requires three successful "
+                            "standalone bootstrap reads in exact order"
+                        )
                     declared = True
                 continue
             if declared:
                 continue
             if item_type == "command_execution":
                 command = item.get("command")
-                if isinstance(command, str) and is_codex_bootstrap(
-                    command, expected_plugin_root
-                ):
+                bootstrap_path = (
+                    codex_bootstrap_path(command, expected_plugin_root)
+                    if isinstance(command, str)
+                    else None
+                )
+                expected_path = (
+                    BOOTSTRAP_PATHS[bootstrap_index]
+                    if bootstrap_index < len(BOOTSTRAP_PATHS)
+                    else None
+                )
+                if expected_path is not None and bootstrap_path == expected_path:
+                    if event_type == "item.started":
+                        if active_bootstrap_items:
+                            raise ValidationError(
+                                "Codex bootstrap reads must be standalone and sequential"
+                            )
+                        active_bootstrap_items[item_id] = bootstrap_path
+                    elif event_type == "item.completed":
+                        if active_bootstrap_items.get(item_id) != bootstrap_path:
+                            raise ValidationError(
+                                "Codex bootstrap completion lacks its matching start"
+                            )
+                        if item.get("exit_code") != 0:
+                            raise ValidationError(
+                                "Codex bootstrap read did not complete successfully"
+                            )
+                        del active_bootstrap_items[item_id]
+                        bootstrap_index += 1
                     continue
+                if bootstrap_path is not None:
+                    raise ValidationError(
+                        "Codex bootstrap reads are missing, duplicated, or out of order"
+                    )
             raise ValidationError(
                 "task-specific action before mode declaration: "
                 f"Codex item {item_type!r}"
@@ -1018,6 +1128,9 @@ def has_strict_design_approval_pause(text: str) -> bool:
     )
     if pause is None:
         return False
+    pause_prefix = text[max(0, pause.start() - 40) : pause.start()]
+    if re.search(r"\b(?:not|never|no\s+longer)\s*$", pause_prefix, re.IGNORECASE):
+        return False
     if re.search(
         r"\bapproaches?\s+considered\b|\bdesign\s+options?\b",
         text,
@@ -1059,6 +1172,27 @@ def is_strict_read_only_shell_command(
     if pipeline is None or len(pipeline) not in {1, 2}:
         return False
     arguments = pipeline[0]
+    if len(pipeline) == 1:
+        if arguments == ["git", "status", "--short"]:
+            return True
+        if (
+            len(arguments) == 4
+            and arguments[:2] == ["git", "log"]
+            and re.fullmatch(r"-[1-9]\d*", arguments[2]) is not None
+            and arguments[3] in {"--oneline", "--decorate"}
+        ):
+            return True
+        if (
+            len(arguments) == 5
+            and arguments[:2] == ["git", "log"]
+            and re.fullmatch(r"-[1-9]\d*", arguments[2]) is not None
+            and set(arguments[3:]) == {"--oneline", "--decorate"}
+        ):
+            return True
+        if arguments[:3] in (["rg", "-n", "-i"], ["rg", "--line-number", "-i"]):
+            normalized_rg = arguments[:2] + arguments[3:]
+            if valid_rg_discovery_arguments(normalized_rg, expected_project_root):
+                return True
     if len(arguments) != 7 or arguments[0] != "find":
         return False
     root = project_path(
@@ -2045,6 +2179,123 @@ def validate_standard_inline_design_order(
         )
 
 
+def has_override_warning(text: str) -> bool:
+    signal_sets = (
+        r"\b(?:auth(?:entication|orization)?|credentials?|session|security)\b",
+        r"\b(?:strict|risk|security[- ]sensitive|high[- ]risk)\b",
+        r"\b(?:remain|keep|continue|honou?r|authoritative|as\s+requested|"
+        r"override|explicit\s+lean)\b",
+    )
+    return all(
+        re.search(pattern, text, re.IGNORECASE) is not None
+        for pattern in signal_sets
+    )
+
+
+def has_positive_verification(text: str) -> bool:
+    status = False
+    for clause in re.split(r"[\n.;]+", text):
+        normalized = re.sub(
+            r"\b0\s+(?:tests?\s+)?fail(?:ed|ures?)\b",
+            "",
+            clause,
+            flags=re.IGNORECASE,
+        )
+        if re.search(
+            r"\b(?:verif\w*|tests?|npm\s+test)\b",
+            normalized,
+            re.IGNORECASE,
+        ) is None:
+            continue
+        if re.search(
+            r"\b(?:fail(?:ed|ing|ure|ures)?|error(?:s|ed)?|"
+            r"not\s+(?:verified|passing)|unverified)\b",
+            normalized,
+            re.IGNORECASE,
+        ) is not None:
+            status = False
+            continue
+        if re.search(
+            r"\bverified\b|\bverification\s*(?::|-)?\s*"
+            r"(?:complete|successful|passed|tests?\s+passes?)|"
+            r"\btests?\s+(?:all\s+)?pass(?:es|ed|ing)?\b|"
+            r"\bnpm\s+test\b.*\b(?:pass(?:es|ed|ing)?|successful)\b",
+            normalized,
+            re.IGNORECASE,
+        ) is not None:
+            status = True
+    return status
+
+
+def validate_override_order(
+    backend: str,
+    events: list[dict[str, Any]],
+    expected_plugin_root: Path | None,
+    expected_project_root: Path,
+) -> None:
+    warning_seen = False
+    mode_seen = False
+    mutation_seen = False
+    verification_seen = False
+    for record in escalation_records(
+        backend,
+        events,
+        expected_plugin_root,
+        expected_project_root,
+        action_context="standard",
+    ):
+        if record.kind == "invalid":
+            raise ValidationError(record.value)
+        if record.kind == "text":
+            declaration = DECLARATION.search(record.value)
+            if not mode_seen:
+                if declaration is None:
+                    continue
+                mode_seen = True
+            if re.search(
+                r"(?im)^\s*Promoting\s+to\s+strict\s+—",
+                record.value,
+            ) is not None:
+                raise ValidationError(
+                    "explicit non-strict override must not promote to strict"
+                )
+            warning_text = re.sub(
+                r"(?im)^\s*Mode:\s*lean\b[^\n]*(?:\n|$)",
+                "",
+                record.value,
+                count=1,
+            )
+            if not warning_seen and has_override_warning(warning_text):
+                warning_seen = True
+            elif not warning_seen and warning_text.strip():
+                raise ValidationError(
+                    "high-risk override warning must be the first assistant "
+                    "content after the Mode line"
+                )
+            if mutation_seen and has_positive_verification(record.value):
+                verification_seen = True
+            continue
+        if record.kind in {"inspection", "discovery", "mutation"}:
+            if not warning_seen:
+                raise ValidationError(
+                    "high-risk override warning must appear immediately after "
+                    "the Mode line and before project action"
+                )
+            if record.kind == "mutation":
+                mutation_seen = True
+
+    if not warning_seen:
+        raise ValidationError(
+            "assistant-visible text lacks an immediate high-risk override warning"
+        )
+    if not mutation_seen:
+        raise ValidationError("override case requires a validated project mutation")
+    if not verification_seen:
+        raise ValidationError(
+            "override case requires verification evidence after mutation"
+        )
+
+
 def claude_brainstorming_skill_status(events: list[dict[str, Any]]) -> str:
     invocations: dict[str, str] = {}
     for event in events:
@@ -2406,6 +2657,12 @@ def require_affirmative_brainstorming(
         r"\b(?:not|no\s+longer)\s+(?:actually\s+)?"
         r"(?:using|invoking|running|applying|use|invoke|run|apply)\s+"
         r"(?:it|that\s+skill|the\s+skill)\b",
+        r"\b(?:I|we)\s+(?:(?:am|are|was|were)\s+)?no\s+longer\s+"
+        r"(?:using|invoking|running|applying|use|invoke|run|apply)\s+"
+        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
+        r"\b(?:I|we)\s+(?:have\s+)?stopped\s+"
+        r"(?:using|invoking|running|applying)\s+"
+        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
     )
     affirmative_seen = structured_invocation_status == "successful"
     negated_after_affirmative = False
@@ -2587,6 +2844,13 @@ def validate(
             expected_plugin_root,
             transcript.parent / "project",
         )
+    elif case == "override":
+        validate_override_order(
+            backend,
+            events,
+            expected_plugin_root,
+            transcript.parent / "project",
+        )
     elif case == "explicit-skill":
         validate_explicit_skill_actions(
             backend,
@@ -2594,14 +2858,10 @@ def validate(
             expected_plugin_root,
             transcript.parent / "project",
         )
-    if (
-        case == "strict"
-        and has_strict_design_approval_pause(visible)
-        and strict_transcript_has_mutation(
-            events, transcript.parent / "project", expected_plugin_root
-        )
+    if case == "strict" and strict_transcript_has_mutation(
+        events, transcript.parent / "project", expected_plugin_root
     ):
-        raise ValidationError("strict declarative approval pause followed project mutation")
+        raise ValidationError("strict approval pause followed project mutation")
     validate_case(
         case,
         visible,

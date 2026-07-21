@@ -382,6 +382,25 @@ def codex_command_lifecycle(
     ]
 
 
+def codex_bootstrap_lifecycles(
+    root: str = "/expected/checkout",
+) -> list[dict]:
+    paths = (
+        "skills/using-superpowers/SKILL.md",
+        "skills/selecting-workflow-mode/SKILL.md",
+        "skills/selecting-workflow-mode/references/risk-matrix.md",
+    )
+    events: list[dict] = []
+    for index, relative in enumerate(paths, start=1):
+        events.extend(
+            codex_command_lifecycle(
+                f"sed -n '1,260p' {root}/{relative}",
+                f"__bootstrap_{index}",
+            )
+        )
+    return events
+
+
 def codex_todo_event(
     event_type: str, item_id: str, items: list[dict[str, object]]
 ) -> dict:
@@ -450,7 +469,22 @@ class ValidatorTest(unittest.TestCase):
         expected_model: str = "test-model",
         plugin_identity: bool = False,
         expected_plugin_root: str = "/expected/checkout",
+        inject_codex_bootstrap: bool = True,
     ) -> subprocess.CompletedProcess[str]:
+        if backend == "codex" and inject_codex_bootstrap:
+            events = list(events)
+            thread_index = next(
+                (
+                    index
+                    for index, event in enumerate(events)
+                    if event.get("type") == "thread.started"
+                ),
+                None,
+            )
+            if thread_index is not None:
+                events[thread_index + 1 : thread_index + 1] = (
+                    codex_bootstrap_lifecycles(expected_plugin_root)
+                )
         log = self.write_jsonl(f"{backend}-{case}.jsonl", events)
         command = [
                 sys.executable,
@@ -879,10 +913,12 @@ class ValidatorTest(unittest.TestCase):
         )
         commands = (
             "/bin/zsh -lc \"rg --files -g '!node_modules' -g '!vendor'\"",
+            "/bin/zsh -lc \"rg --files -g '*.js'\"",
             "/bin/zsh -lc \"rg --files . -g '!node_modules'\"",
             "/bin/zsh -lc \"rg --files | sed -n '1,160p'\"",
             "/bin/zsh -lc \"rg -n --hidden --glob '!vendor/**' "
             "'amount|payment' .\"",
+            "/bin/zsh -lc \"rg -n 'item[0-9]*$' .\"",
         )
         for index, command in enumerate(commands):
             with self.subTest(command=command):
@@ -2023,6 +2059,16 @@ class ValidatorTest(unittest.TestCase):
             "rg -n --hostname-bin 'touch owned' amount .",
             "rg --files ../outside",
             "rg --files /tmp",
+            "rg -n $EVIL .",
+            "rg -n ${EVIL} .",
+            "rg -n foo$EVIL .",
+            "rg -n {--pre=touch,amount} .",
+            "rg --files $EVIL",
+            "rg --files ~",
+            "rg --files {.,..}",
+            "rg --files {.,/tmp}",
+            "rg --files *",
+            "rg --files -g *",
             "rg --files | sed -n '0,10p'",
             "rg --files | sed -n '-1,10p'",
             "rg --files | sed -n 'one,10p'",
@@ -3572,8 +3618,17 @@ class ValidatorTest(unittest.TestCase):
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
                 "Mode: lean — explicit override.\n"
-                "Warning: authentication is security-sensitive; I will remain lean as requested."
+                "Warning: authentication is security-sensitive; I will remain lean as requested.",
+                item_id="mode-warning",
             ),
+            codex_event(
+                "src/auth.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/auth.js", item_type="file_change", item_id="mutation"),
+            codex_event("Verification: authentication tests pass.", item_id="verify"),
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "override", events)
@@ -3585,8 +3640,17 @@ class ValidatorTest(unittest.TestCase):
             codex_event(
                 "Mode: lean — The user explicitly requested lean mode.\n"
                 "Authentication is normally a strict-risk area, but your explicit "
-                "lean override is authoritative here; I’ll keep the change tightly scoped."
+                "lean override is authoritative here; I’ll keep the change tightly scoped.",
+                item_id="mode-warning",
             ),
+            codex_event(
+                "src/auth.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/auth.js", item_type="file_change", item_id="mutation"),
+            codex_event("Verified: authentication tests pass.", item_id="verify"),
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "override", events)
@@ -3597,13 +3661,115 @@ class ValidatorTest(unittest.TestCase):
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
                 "Mode: lean — the user explicitly requested lean mode for this localized "
-                "authentication fix, despite authentication normally being a strict-risk trigger.\n"
-                "Verification: npm test passes."
+                "authentication fix.\n"
+                "Warning: authentication is normally strict-risk work; I’ll honor the "
+                "explicit lean override and keep it tightly scoped.",
+                item_id="mode-warning",
             ),
+            codex_event(
+                "src/auth.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/auth.js", item_type="file_change", item_id="mutation"),
+            codex_event("Verification: npm test passes.", item_id="verify"),
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "override", events)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_override_rejects_late_warning_promotion_or_incomplete_execution(self) -> None:
+        declaration = codex_event(
+            "Mode: lean — explicit authentication override.", item_id="mode"
+        )
+        warning = codex_event(
+            "Warning: authentication is strict security-risk work; I’ll honor the "
+            "explicit lean override.",
+            item_id="warning",
+        )
+        mutation = [
+            codex_event(
+                "src/auth.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/auth.js", item_type="file_change", item_id="mutation"),
+        ]
+        cases = (
+            (
+                "warning after inspection",
+                [
+                    declaration,
+                    *codex_command_lifecycle("cat src/auth.js", "inspection"),
+                    warning,
+                    *mutation,
+                    codex_event("Verification: authentication tests pass.", item_id="verify"),
+                ],
+            ),
+            (
+                "warning after mutation",
+                [
+                    declaration,
+                    *mutation,
+                    warning,
+                    codex_event("Verification: authentication tests pass.", item_id="verify"),
+                ],
+            ),
+            (
+                "unrelated prose before warning",
+                [
+                    declaration,
+                    codex_event(
+                        "I’ll inspect the authentication code first.",
+                        item_id="early-prose",
+                    ),
+                    warning,
+                    *mutation,
+                    codex_event(
+                        "Verification: authentication tests pass.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
+            (
+                "promotion despite override",
+                [
+                    declaration,
+                    warning,
+                    codex_event(
+                        "Promoting to strict — authentication is a security risk.",
+                        item_id="promotion",
+                    ),
+                    *mutation,
+                    codex_event("Verification: authentication tests pass.", item_id="verify"),
+                ],
+            ),
+            ("no mutation", [declaration, warning, codex_event("Verification: tests pass.", item_id="verify")]),
+            ("no verification", [declaration, warning, *mutation]),
+            (
+                "failed verification",
+                [
+                    declaration,
+                    warning,
+                    *mutation,
+                    codex_event(
+                        "Verification failed: authentication tests are failing.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
+        )
+        for label, body in cases:
+            with self.subTest(label=label):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    *body,
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "override", events)
+                self.assertNotEqual(result.returncode, 0)
 
     def test_explicit_skill_requires_assistant_visible_brainstorming_signal(self) -> None:
         passing = [
@@ -3799,11 +3965,7 @@ class ValidatorTest(unittest.TestCase):
     def test_codex_allows_selector_bootstrap_before_mode_declaration(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},
-            *codex_command_lifecycle(
-                "sed -n '1,200p' "
-                "/expected/checkout/skills/selecting-workflow-mode/SKILL.md",
-                "item_1",
-            ),
+            *codex_bootstrap_lifecycles(),
             codex_event(
                 "Mode: standard — bounded CLI change.\nTests passed.",
                 item_id="message",
@@ -3811,22 +3973,19 @@ class ValidatorTest(unittest.TestCase):
             *codex_standard_contract_events(),
             {"type": "turn.completed", "usage": {}},
         ]
-        result = self.run_validator("codex", "standard", events)
+        result = self.run_validator(
+            "codex", "standard", events, inject_codex_bootstrap=False
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_codex_does_not_trust_reused_item_ids_before_declaration(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},
-            *codex_command_lifecycle(
-                "sed -n '1,200p' "
-                "/expected/checkout/skills/selecting-workflow-mode/SKILL.md",
-                "item_1",
-            ),
             codex_event(
                 "git status --short",
                 item_type="command_execution",
                 event_type="item.started",
-                item_id="item_1",
+                item_id="__bootstrap_1",
             ),
             codex_event("Mode: standard — bounded CLI change.\nTests passed."),
             {"type": "turn.completed", "usage": {}},
@@ -3879,20 +4038,76 @@ class ValidatorTest(unittest.TestCase):
                 self.assertIn("task-specific action before mode declaration", result.stderr)
 
     def test_codex_bootstrap_parser_accepts_exact_read_only_argv(self) -> None:
+        using = "/expected/checkout/skills/using-superpowers/SKILL.md"
         selector = "/expected/checkout/skills/selecting-workflow-mode/SKILL.md"
         matrix = (
             "/expected/checkout/skills/selecting-workflow-mode/"
             "references/risk-matrix.md"
         )
-        for command in (
-            f"cat {selector} {matrix}",
-            f"sed -n '1,260p' {selector} {matrix}",
-            f"/bin/zsh -lc \"sed -n '1,260p' {matrix}\"",
-        ):
-            with self.subTest(command=command):
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            *codex_command_lifecycle(f"cat {using}", "using"),
+            *codex_command_lifecycle(
+                f"/bin/zsh -lc \"sed -n '1,260p' {selector}\"", "selector"
+            ),
+            *codex_command_lifecycle(f"cat {matrix}", "matrix"),
+            codex_event(
+                "Mode: standard — bounded change.\nTests passed.",
+                item_id="message",
+            ),
+            *codex_standard_contract_events(),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator(
+            "codex", "standard", events, inject_codex_bootstrap=False
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_codex_bootstrap_requires_exact_successful_standalone_sequence(self) -> None:
+        using = "/expected/checkout/skills/using-superpowers/SKILL.md"
+        selector = "/expected/checkout/skills/selecting-workflow-mode/SKILL.md"
+        matrix = (
+            "/expected/checkout/skills/selecting-workflow-mode/"
+            "references/risk-matrix.md"
+        )
+        cases = (
+            (
+                "combined reads",
+                [
+                    *codex_command_lifecycle(f"cat {using}", "using"),
+                    *codex_command_lifecycle(
+                        f"cat {selector} {matrix}", "combined"
+                    ),
+                ],
+            ),
+            (
+                "wrong order",
+                [*codex_command_lifecycle(f"cat {selector}", "selector")],
+            ),
+            (
+                "missing matrix",
+                [
+                    *codex_command_lifecycle(f"cat {using}", "using"),
+                    *codex_command_lifecycle(f"cat {selector}", "selector"),
+                ],
+            ),
+            (
+                "duplicate",
+                [
+                    *codex_command_lifecycle(f"cat {using}", "using"),
+                    *codex_command_lifecycle(f"cat {using}", "duplicate"),
+                ],
+            ),
+            (
+                "failed read",
+                [*codex_command_lifecycle(f"cat {using}", "using", exit_code=1)],
+            ),
+        )
+        for label, bootstrap in cases:
+            with self.subTest(label=label):
                 events = [
                     {"type": "thread.started", "thread_id": "thread"},
-                    *codex_command_lifecycle(command, "bootstrap"),
+                    *bootstrap,
                     codex_event(
                         "Mode: standard — bounded change.\nTests passed.",
                         item_id="message",
@@ -3900,12 +4115,17 @@ class ValidatorTest(unittest.TestCase):
                     *codex_standard_contract_events(),
                     {"type": "turn.completed", "usage": {}},
                 ]
-                result = self.run_validator("codex", "standard", events)
-                self.assertEqual(result.returncode, 0, result.stderr)
+                result = self.run_validator(
+                    "codex",
+                    "standard",
+                    events,
+                    inject_codex_bootstrap=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
 
     def test_codex_rejects_invalid_item_lifecycle(self) -> None:
-        selector = "/expected/checkout/skills/selecting-workflow-mode/SKILL.md"
-        bootstrap = f"cat {selector}"
+        using = "/expected/checkout/skills/using-superpowers/SKILL.md"
+        bootstrap = f"cat {using}"
         mutations = (
             [codex_event(bootstrap, item_type="command_execution", item_id="a")],
             [
@@ -3936,7 +4156,7 @@ class ValidatorTest(unittest.TestCase):
                     bootstrap,
                     item_type="command_execution",
                     event_type="item.started",
-                    item_id="b",
+                    item_id="a",
                 ),
             ],
         )
@@ -3944,11 +4164,11 @@ class ValidatorTest(unittest.TestCase):
             with self.subTest(lifecycle=lifecycle):
                 events = [
                     {"type": "thread.started", "thread_id": "thread"},
-                    *lifecycle,
                     codex_event(
                         "Mode: standard — bounded change.\nTests passed.",
                         item_id="message",
                     ),
+                    *lifecycle,
                     {"type": "turn.completed", "usage": {}},
                 ]
                 result = self.run_validator("codex", "standard", events)
@@ -3963,6 +4183,10 @@ class ValidatorTest(unittest.TestCase):
                 events = [
                     {"type": "thread.started", "thread_id": "thread"},
                     codex_event(
+                        "Mode: standard — bounded change.\nTests passed.",
+                        item_id="message",
+                    ),
+                    codex_event(
                         bootstrap,
                         item_type="command_execution",
                         event_type="item.started",
@@ -3974,10 +4198,6 @@ class ValidatorTest(unittest.TestCase):
                         event_type=event_type,
                         item_id="a",
                     ),
-                    codex_event(
-                        "Mode: standard — bounded change.\nTests passed.",
-                        item_id="message",
-                    ),
                     {"type": "turn.completed", "usage": {}},
                 ]
                 result = self.run_validator("codex", "standard", events)
@@ -3985,8 +4205,13 @@ class ValidatorTest(unittest.TestCase):
                 self.assertIn("item lifecycle changed immutable payload", result.stderr)
 
     def test_codex_accepts_consistent_updated_item_lifecycle(self) -> None:
+        using = "/expected/checkout/skills/using-superpowers/SKILL.md"
         selector = "/expected/checkout/skills/selecting-workflow-mode/SKILL.md"
-        bootstrap = f"cat {selector}"
+        matrix = (
+            "/expected/checkout/skills/selecting-workflow-mode/"
+            "references/risk-matrix.md"
+        )
+        bootstrap = f"cat {using}"
         events = [
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
@@ -4005,7 +4230,10 @@ class ValidatorTest(unittest.TestCase):
                 bootstrap,
                 item_type="command_execution",
                 item_id="a",
+                exit_code=0,
             ),
+            *codex_command_lifecycle(f"cat {selector}", "selector"),
+            *codex_command_lifecycle(f"cat {matrix}", "matrix"),
             codex_event(
                 "Mode: standard — bounded change.\nTests passed.",
                 item_id="message",
@@ -4013,7 +4241,9 @@ class ValidatorTest(unittest.TestCase):
             *codex_standard_contract_events(),
             {"type": "turn.completed", "usage": {}},
         ]
-        result = self.run_validator("codex", "standard", events)
+        result = self.run_validator(
+            "codex", "standard", events, inject_codex_bootstrap=False
+        )
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_codex_accepts_full_matrix_parallel_item_lifecycles(self) -> None:
@@ -4363,6 +4593,46 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("claude", "strict", unknown_tool)
         self.assertNotEqual(result.returncode, 0)
 
+        negated_pause = [
+            claude_init(),
+            claude_event(
+                "Mode: strict — production payment migration and public API risk.\n"
+                "Approaches considered:\n"
+                "- A. Expand and backfill the amount_cents schema safely.\n"
+                "- B. Rewrite payment rows in place with rollback risk.\n"
+                "Recommended design: choose A with a versioned public API.\n"
+                "I am not waiting for your approval before proceeding."
+            ),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "strict", negated_pause)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_strict_rejects_mutation_before_any_pause_route(self) -> None:
+        for pause in (
+            "Should I proceed with the payment migration approach?",
+            "I need your approval on the API contract change before proceeding.",
+        ):
+            with self.subTest(pause=pause):
+                events = [
+                    claude_init(),
+                    claude_event(
+                        "Mode: strict — production payment migration and public API risk."
+                    ),
+                    claude_tool_event(
+                        "Write",
+                        {
+                            "file_path": str(self.project / "src/schema.js"),
+                            "content": "changed",
+                        },
+                        tool_id="mutation",
+                    ),
+                    claude_event(pause),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator("claude", "strict", events)
+                self.assertNotEqual(result.returncode, 0)
+
     def test_strict_declarative_pause_allows_nonmutating_approval_tool(self) -> None:
         events = [
             claude_init(),
@@ -4706,6 +4976,8 @@ class ValidatorTest(unittest.TestCase):
             "I’m not applying the requested brainstorming skill.",
             "I never applied the brainstorming skill.",
             "I applied the brainstorming skill, but I’m not applying it after all.",
+            "I applied the brainstorming skill. I am no longer applying the brainstorming skill.",
+            "I applied the brainstorming skill. I stopped applying the brainstorming skill.",
         )
         for detail in details:
             with self.subTest(detail=detail):
