@@ -3435,6 +3435,92 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "explicit-skill", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_claude_accepts_full_matrix_explicit_skill_invocation(self) -> None:
+        events = [
+            claude_init(),
+            claude_event(
+                "Mode: lean — User explicitly forced lean; naming exploration is "
+                "read-only with no file changes.\n\n"
+                "You explicitly requested the brainstorming skill, so it runs "
+                "without changing the active mode."
+            ),
+            claude_tool_event(
+                "Skill",
+                {
+                    "skill": "superpowers:brainstorming",
+                    "args": "Explore two possible names for the greeting function; "
+                    "do not change files",
+                },
+                tool_id="brainstorming",
+            ),
+            claude_tool_result(
+                "brainstorming",
+                content="Launching skill: superpowers:brainstorming",
+            ),
+            claude_event(
+                "The brainstorming skill is active. First step is exploring the "
+                "project context to see what the greeting function currently looks like."
+            ),
+            claude_event(
+                "Context explored: the project is a single file, "
+                "`src/greeting.js:1`, containing the `greet` function. No callers, "
+                "docs, or tests exist yet, so a rename has zero blast radius.\n\n"
+                "Here are two candidate names, per your request:\n\n"
+                "**Option 1: `greet` (keep the current name)**\n"
+                "A verb, which matches what the function does.\n\n"
+                "**Option 2: `greeting` (noun form, matching the filename)**\n"
+                "A noun describing what the function returns.\n\n"
+                "No files were changed. Let me know which name you'd like."
+            ),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "explicit-skill", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_claude_exact_skill_tool_use_is_affirmative_evidence(self) -> None:
+        options = claude_event(
+            "Mode: lean — explicit read-only naming exploration.\n"
+            "Option 1: `greet` — keep the action-oriented name.\n"
+            "Option 2: `greeting` — emphasize the returned value."
+        )
+        exact = [
+            claude_init(),
+            options,
+            claude_tool_event(
+                "Skill",
+                {"skill": "superpowers:brainstorming"},
+                tool_id="brainstorming",
+            ),
+            claude_tool_result("brainstorming"),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "explicit-skill", exact)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        for skill in ("brainstorming", "superpowers:brainstorming-extra"):
+            with self.subTest(skill=skill):
+                malformed = [
+                    claude_init(),
+                    options,
+                    claude_tool_event(
+                        "Skill", {"skill": skill}, tool_id="brainstorming"
+                    ),
+                    claude_tool_result("brainstorming"),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator("claude", "explicit-skill", malformed)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("affirmative brainstorming", result.stderr)
+
+        negated = [
+            *exact[:-1],
+            claude_event("I am not using the brainstorming skill after all."),
+            exact[-1],
+        ]
+        result = self.run_validator("claude", "explicit-skill", negated)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("affirmative brainstorming", result.stderr)
+
     def test_explicit_skill_uses_final_invocation_polarity(self) -> None:
         negations = (
             "I am not using the brainstorming skill after all.",

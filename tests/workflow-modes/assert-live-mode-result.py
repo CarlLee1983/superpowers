@@ -1364,13 +1364,37 @@ def validate_escalation_order(
         )
 
 
-def require_affirmative_brainstorming(text: str) -> None:
+def claude_invoked_brainstorming_skill(events: list[dict[str, Any]]) -> bool:
+    for event in events:
+        if event.get("type") != "assistant":
+            continue
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            tool_input = block.get("input")
+            if (
+                block.get("name") == "Skill"
+                and isinstance(tool_input, dict)
+                and tool_input.get("skill") == "superpowers:brainstorming"
+            ):
+                return True
+    return False
+
+
+def require_affirmative_brainstorming(
+    text: str, *, structured_invocation: bool = False
+) -> None:
     clauses = re.split(r"[.;\n]+|\bbut\b", text, flags=re.IGNORECASE)
     affirmative_patterns = (
         r"\b(?:I|we)\s+(?:am|are|'m|'re|have|will|'ll)?\s*"
         r"(?:using|invoking|running|used|invoked|ran|use|invoke|run)\s+"
         r"(?:the\s+)?brainstorming(?:\s+skill)?\b",
-        r"\bbrainstorming\s+skill\s+(?:is|was)\s+(?:loaded|invoked|running|used)\b",
+        r"\bbrainstorming\s+skill\s+(?:is|was)\s+"
+        r"(?:active|loaded|invoked|running|used)\b",
         r"\bbrainstorming\b.{0,100}\b(?:I|we)(?:'ll|\s+will)\s+"
         r"(?:invoke|run|use)\s+(?:that|the)\s+skill\b",
     )
@@ -1396,7 +1420,7 @@ def require_affirmative_brainstorming(text: str) -> None:
         r"(?:using|invoking|running|use|invoke|run)\s+"
         r"(?:it|that\s+skill|the\s+skill)\b",
     )
-    affirmative_seen = False
+    affirmative_seen = structured_invocation
     negated_after_affirmative = False
     for clause in clauses:
         is_negative = any(
@@ -1490,7 +1514,9 @@ def require_affirmative_brainstorming(text: str) -> None:
         )
 
 
-def validate_case(case: str, text: str) -> None:
+def validate_case(
+    case: str, text: str, *, structured_brainstorming_invocation: bool = False
+) -> None:
     if case in {"lean", "standard"}:
         require_pattern(
             text,
@@ -1502,7 +1528,9 @@ def validate_case(case: str, text: str) -> None:
     elif case == "override":
         require_pattern(text, r"\b(warn|risk|security|authentication)", "high-risk override warning")
     elif case == "explicit-skill":
-        require_affirmative_brainstorming(text)
+        require_affirmative_brainstorming(
+            text, structured_invocation=structured_brainstorming_invocation
+        )
 
 
 def validate(
@@ -1554,7 +1582,13 @@ def validate(
             expected_plugin_root,
             transcript.parent / "project",
         )
-    validate_case(case, visible)
+    validate_case(
+        case,
+        visible,
+        structured_brainstorming_invocation=(
+            backend == "claude" and claude_invoked_brainstorming_skill(events)
+        ),
+    )
     return visible
 
 
