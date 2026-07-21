@@ -23,28 +23,10 @@ DECLARATION = re.compile(r"(?im)^\s*Mode:\s*(lean|standard|strict)\b")
 PROMOTION = re.compile(
     r"(?im)^\s*Promoting\s+to\s+(lean|standard|strict)\s+[—-]\s*([^\n]+)"
 )
-DISCOVERED_RISK = re.compile(
-    r"\b(?:finds?|found|discover(?:s|ed)?|reveal(?:s|ed)?|identif(?:y|ies|ied)|"
-    r"expos(?:e|es|ed)|show(?:s|ed)?|confirm(?:s|ed)?)\b",
-    re.IGNORECASE,
-)
-NEGATED_RISK = re.compile(
-    r"\b(?:no|not|without|never|none|harmless|safe|doesn't|doesn’t|isn't|isn’t)\b",
-    re.IGNORECASE,
-)
-INSPECTED_EVIDENCE = re.compile(
-    r"\b(?:source\s+)?(?:code|schema(?:\s+field)?|consumer(?:\s+code)?|"
-    r"client(?:\s+code)?|field)\b",
-    re.IGNORECASE,
-)
-CONCRETE_RISK_CONSEQUENCE = re.compile(
-    r"(?:\b(?:schema\s+)?field\b.{0,80}\b(?:is|forms?|serves?)\b.{0,30}"
-    r"\b(?:part\s+of|used\s+by)\b.{0,80}\bpublic\s+payment\s+API\b|"
-    r"\b(?:renam|remov|chang)\w*\b.{0,100}\b(?:would|will|can)\b"
-    r".{0,40}\bbreak\w*\b.{0,50}\bcompatib\w*\b|"
-    r"\b(?:renam|remov|chang)\w*\b.{0,100}\brequires?\b.{0,40}"
-    r"\b(?:payment|data)\s+migration\b)",
-    re.IGNORECASE,
+CANONICAL_PROMOTION_REASON = (
+    "inspection found src/schema.js defines the amount field consumed by "
+    "src/billing.js as part of the public payment API; renaming it would break "
+    "compatibility."
 )
 WORKFLOW_TRANSITION = re.compile(
     r"\b(?P<verb>promot(?:e|es|ed|ing)|escalat(?:e|es|ed|ing)|"
@@ -52,7 +34,8 @@ WORKFLOW_TRANSITION = re.compile(
     r"demot(?:e|es|ed|ing)|lower(?:s|ed|ing)?|"
     r"downgrad(?:e|es|ed|ing)|switch(?:es|ed|ing)|"
     r"mov(?:e|es|ed|ing)|transition(?:s|ed|ing)?)"
-    r"(?:\s+(?:the\s+)?(?:workflow|mode))?\s+"
+    r"(?:\s+(?:(?:the|our|my|your|their)\s+)?"
+    r"(?:(?:active|current)\s+)?(?:workflows?|modes?))?\s+"
     r"(?:(?:from\s+(?:lean|standard|strict)\s+)?(?:back\s+)?(?:to|into))\s+"
     r"(?P<mode>lean|standard|strict)\b",
     re.IGNORECASE,
@@ -688,9 +671,19 @@ def escalation_records(
                     continue
                 completed_tool_uses.add(tool_id)
                 if tool_uses[tool_id] == "inspection":
-                    if block.get("is_error") is True:
+                    if "is_error" in block and type(block["is_error"]) is not bool:
                         records.append(
-                            ("invalid", f"inspection tool result reported error for {tool_id!r}")
+                            (
+                                "invalid",
+                                "inspection tool result is_error must be a JSON boolean",
+                            )
+                        )
+                    elif block.get("is_error") is True:
+                        records.append(
+                            (
+                                "invalid",
+                                f"inspection tool result is_error=true for {tool_id!r}",
+                            )
                         )
                     else:
                         records.append(("inspection", tool_id))
@@ -757,17 +750,8 @@ def escalation_records(
     return records
 
 
-def affirmative_promotion_reason(reason: str) -> bool:
-    discovery = DISCOVERED_RISK.search(reason)
-    evidence = INSPECTED_EVIDENCE.search(reason)
-    consequence = CONCRETE_RISK_CONSEQUENCE.search(reason)
-    return bool(
-        discovery
-        and evidence
-        and consequence
-        and discovery.start() < evidence.start() < consequence.end()
-        and not NEGATED_RISK.search(reason)
-    )
+def has_canonical_promotion_reason(reason: str) -> bool:
+    return reason == CANONICAL_PROMOTION_REASON
 
 
 def validate_escalation_order(
@@ -816,9 +800,9 @@ def validate_escalation_order(
                     )
                 if match.group(1).lower() != "strict":
                     raise ValidationError("escalation requires promotion to strict")
-                if not affirmative_promotion_reason(match.group(2)):
+                if not has_canonical_promotion_reason(match.group(2)):
                     raise ValidationError(
-                        "strict promotion lacks a concrete inspected risk consequence"
+                        "strict promotion lacks canonical fixture evidence reason"
                     )
                 if not inspection_seen:
                     raise ValidationError(

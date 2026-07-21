@@ -13,6 +13,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 VALIDATOR = HERE / "assert-live-mode-result.py"
+CANONICAL_PROMOTION_REASON = (
+    "inspection found src/schema.js defines the amount field consumed by "
+    "src/billing.js as part of the public payment API; renaming it would break "
+    "compatibility."
+)
 
 
 def claude_event(text: str, *, block_type: str = "text") -> dict:
@@ -47,7 +52,7 @@ def claude_tool_event(
 
 
 def claude_tool_result(
-    tool_id: str, *, is_error: bool = False, content: str = "ok"
+    tool_id: str, *, is_error: object = False, content: str = "ok"
 ) -> dict:
     return {
         "type": "user",
@@ -326,9 +331,7 @@ class ValidatorTest(unittest.TestCase):
             ),
             *codex_command_lifecycle("cat src/schema.js", "inspection"),
             codex_event(
-                "Promoting to strict — repository inspection found the schema field "
-                "is part of the public payment API, so renaming it would break "
-                "compatibility.\n"
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                 "Should we retain the compatibility alias during migration?",
                 item_id="promotion",
             ),
@@ -350,8 +353,7 @@ class ValidatorTest(unittest.TestCase):
             ),
             claude_tool_result("inspect"),
             claude_event(
-                "Promoting to strict — inspection found the schema field is part "
-                "of the public payment API, so renaming it would break compatibility.\n"
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                 "Should we retain the compatibility alias during migration?"
             ),
             {"type": "result", "subtype": "success", "result": "done"},
@@ -373,8 +375,7 @@ class ValidatorTest(unittest.TestCase):
                     claude_tool_event(name, tool_input, tool_id="inspect"),
                     claude_tool_result("inspect"),
                     claude_event(
-                        "Promoting to strict — inspection found the schema field is part "
-                        "of the public payment API, so renaming it would break compatibility.\n"
+                        f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                         "Should we retain the compatibility alias during migration?"
                     ),
                     {"type": "result", "subtype": "success", "result": "done"},
@@ -403,8 +404,7 @@ class ValidatorTest(unittest.TestCase):
                     read,
                     *result_events,
                     claude_event(
-                        "Promoting to strict — inspection found the schema field is part "
-                        "of the public payment API, so renaming it would break compatibility.\n"
+                        f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                         "Should we retain the compatibility alias during migration?"
                     ),
                     {"type": "result", "subtype": "success", "result": "done"},
@@ -440,8 +440,7 @@ class ValidatorTest(unittest.TestCase):
             ),
             assistant_result,
             claude_event(
-                "Promoting to strict — inspection found the schema field is part "
-                "of the public payment API, so renaming it would break compatibility.\n"
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                 "Should we retain the compatibility alias during migration?"
             ),
             {"type": "result", "subtype": "success", "result": "done"},
@@ -449,6 +448,56 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("claude", "escalation", events)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("user-role tool result", result.stderr)
+
+    def test_escalation_claude_tool_result_is_error_has_closed_json_type(self) -> None:
+        absent = claude_tool_result("inspect")
+        del absent["message"]["content"][0]["is_error"]
+        valid_results = (
+            ("absent", absent),
+            ("false", claude_tool_result("inspect", is_error=False)),
+        )
+        invalid_results = (
+            ("true", claude_tool_result("inspect", is_error=True)),
+            ("string", claude_tool_result("inspect", is_error="false")),
+            ("zero", claude_tool_result("inspect", is_error=0)),
+            ("one", claude_tool_result("inspect", is_error=1)),
+            ("list", claude_tool_result("inspect", is_error=[])),
+            ("object", claude_tool_result("inspect", is_error={})),
+            ("null", claude_tool_result("inspect", is_error=None)),
+        )
+
+        def events_for(result_event: dict) -> list[dict]:
+            return [
+                claude_init(),
+                claude_event(
+                    "Mode: standard — bounded rename pending repository inspection."
+                ),
+                claude_tool_event(
+                    "Read",
+                    {"file_path": str(self.project / "src/schema.js")},
+                    tool_id="inspect",
+                ),
+                result_event,
+                claude_event(
+                    f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+                    "Should we retain the compatibility alias during migration?"
+                ),
+                {"type": "result", "subtype": "success", "result": "done"},
+            ]
+
+        for label, result_event in valid_results:
+            with self.subTest(label=label):
+                result = self.run_validator(
+                    "claude", "escalation", events_for(result_event)
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+        for label, result_event in invalid_results:
+            with self.subTest(label=label):
+                result = self.run_validator(
+                    "claude", "escalation", events_for(result_event)
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("is_error", result.stderr)
 
     def test_escalation_claude_rejects_invalid_project_inspection_inputs(self) -> None:
         invalid_tools = (
@@ -469,8 +518,7 @@ class ValidatorTest(unittest.TestCase):
                     claude_tool_event(name, tool_input, tool_id="inspect"),
                     claude_tool_result("inspect"),
                     claude_event(
-                        "Promoting to strict — inspection found the schema field is part "
-                        "of the public payment API, so renaming it would break compatibility.\n"
+                        f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                         "Should we retain the compatibility alias during migration?"
                     ),
                     {"type": "result", "subtype": "success", "result": "done"},
@@ -492,8 +540,7 @@ class ValidatorTest(unittest.TestCase):
             claude_tool_result("inspect"),
         ]
         promotion = claude_event(
-            "Promoting to strict — inspection found the schema field is part of the "
-            "public payment API, so renaming it would break compatibility.\n"
+            f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
             "Should we retain the compatibility alias during migration?"
         )
         unknowns = ("Task", "mcp__example__read")
@@ -564,8 +611,7 @@ class ValidatorTest(unittest.TestCase):
                     ),
                     *lifecycle,
                     codex_event(
-                        "Promoting to strict — inspection found the schema field is part "
-                        "of the public payment API, so renaming it would break compatibility.\n"
+                        f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                         "Should we retain the compatibility alias during migration?",
                         item_id="promotion",
                     ),
@@ -592,9 +638,8 @@ class ValidatorTest(unittest.TestCase):
                     ),
                     *codex_command_lifecycle(command, "inspection", exit_code=0),
                     codex_event(
-                        "Promoting to strict — inspection found the schema field is "
-                        "part of the public payment API, so renaming it would break "
-                        "compatibility.\nShould we retain the compatibility alias "
+                        f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+                        "Should we retain the compatibility alias "
                         "during migration?",
                         item_id="promotion",
                     ),
@@ -613,8 +658,7 @@ class ValidatorTest(unittest.TestCase):
             ),
             *codex_command_lifecycle("sed -n '1,20p' src/schema.js", "inspection"),
             codex_event(
-                "Promoting to strict — inspection found the schema field is part "
-                "of the public payment API, so renaming it would break compatibility.\n"
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                 "Should we retain the compatibility alias during migration?",
                 item_id="promotion",
             ),
@@ -641,8 +685,7 @@ class ValidatorTest(unittest.TestCase):
         promotion = [
             *codex_command_lifecycle("cat src/schema.js", "inspection"),
             codex_event(
-                "Promoting to strict — inspection found the schema field is part "
-                "of the public payment API, so renaming it would break compatibility.\n"
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                 "Should we retain the compatibility alias during migration?",
                 item_id="promotion",
             ),
@@ -695,7 +738,7 @@ class ValidatorTest(unittest.TestCase):
                 ]
                 result = self.run_validator("codex", "escalation", events)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("concrete inspected risk", result.stderr)
+                self.assertIn("canonical fixture evidence", result.stderr)
 
     def test_escalation_rejects_unrelated_words_as_promotion_evidence(self) -> None:
         reasons = (
@@ -721,7 +764,39 @@ class ValidatorTest(unittest.TestCase):
                 ]
                 result = self.run_validator("codex", "escalation", events)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("concrete inspected risk", result.stderr)
+                self.assertIn("canonical fixture evidence", result.stderr)
+
+    def test_escalation_promotion_reason_is_one_closed_fixture_sentence(self) -> None:
+        invalid_reasons = (
+            "documentation quotes: " + CANONICAL_PROMOTION_REASON,
+            "the documentation says " + CANONICAL_PROMOTION_REASON,
+            "inspection found src/schema.js contains a quotation that the amount "
+            "field consumed by src/billing.js is part of the public payment API; "
+            "renaming it would break compatibility.",
+            CANONICAL_PROMOTION_REASON + " This is only an unrelated docs note.",
+            CANONICAL_PROMOTION_REASON.replace(
+                "would break compatibility", "would not break compatibility"
+            ),
+        )
+        for reason in invalid_reasons:
+            with self.subTest(reason=reason):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    codex_event(
+                        f"Promoting to strict — {reason}\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("canonical fixture evidence", result.stderr)
 
     def test_escalation_rejects_semantic_duplicate_promotions(self) -> None:
         duplicates = (
@@ -742,8 +817,7 @@ class ValidatorTest(unittest.TestCase):
                     ),
                     *codex_command_lifecycle("cat src/schema.js", "inspection"),
                     codex_event(
-                        "Promoting to strict — inspection found the schema field is part "
-                        "of the public payment API, so renaming it would break compatibility.",
+                        f"Promoting to strict — {CANONICAL_PROMOTION_REASON}",
                         item_id="promotion",
                     ),
                     codex_event(
@@ -794,8 +868,7 @@ class ValidatorTest(unittest.TestCase):
                     ),
                     *codex_command_lifecycle("cat src/schema.js", "inspection"),
                     codex_event(
-                        "Promoting to strict — inspection found the schema field is part "
-                        "of the public payment API, so renaming it would break compatibility.\n"
+                        f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                         "Should we retain the compatibility alias during migration?",
                         item_id="promotion",
                     ),
@@ -821,9 +894,8 @@ class ValidatorTest(unittest.TestCase):
                     ),
                     *codex_command_lifecycle("cat src/schema.js", "inspection"),
                     codex_event(
-                        "Promoting to strict — inspection found the schema field is "
-                        "part of the public payment API, so renaming it would break "
-                        "compatibility.\nShould we retain the compatibility alias "
+                        f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+                        "Should we retain the compatibility alias "
                         "during migration?",
                         item_id="promotion",
                     ),
@@ -832,6 +904,55 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("codex", "escalation", events)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("exactly one workflow transition", result.stderr)
+
+    def test_escalation_transition_detector_handles_modifiers_possessives_and_plurals(self) -> None:
+        variants = (
+            "Switching the active modes to strict because risk increased.",
+            "Moving our workflow to lean after the pause.",
+            "Downgrading current mode to standard before implementation.",
+        )
+        for variant in variants:
+            with self.subTest(variant=variant):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    codex_event(
+                        f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                    codex_event(variant, item_id="variant"),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("exactly one workflow transition", result.stderr)
+
+    def test_escalation_transition_detector_keeps_word_boundaries(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+                "Should we retain the compatibility alias during migration?",
+                item_id="promotion",
+            ),
+            codex_event(
+                "The model catalog discusses workflowish strictness and movement.",
+                item_id="boundary",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_escalation_rejects_invalid_transition_order(self) -> None:
         declaration = codex_event(
@@ -848,8 +969,7 @@ class ValidatorTest(unittest.TestCase):
             "mutation",
         )
         promotion = codex_event(
-            "Promoting to strict — inspection found the schema field is part of the "
-            "public payment API, so renaming it would break compatibility.\n"
+            f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
             "Should we retain the compatibility alias during migration?",
             item_id="promotion",
         )
@@ -1449,9 +1569,7 @@ class ValidatorTest(unittest.TestCase):
             ),
             *codex_command_lifecycle("cat src/schema.js", "inspection"),
             codex_event(
-                "Promoting to strict — inspection found the schema field is part "
-                "of the public payment API, so renaming it would break "
-                "compatibility. Done.",
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\nDone.",
                 item_id="promotion",
             ),
             {"type": "turn.completed", "usage": {}},
