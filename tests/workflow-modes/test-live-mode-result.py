@@ -3119,6 +3119,155 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "standard", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_codex_accepts_full_matrix_parallel_item_lifecycles(self) -> None:
+        standard_events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — this is a bounded, reversible CLI behavior "
+                "change requiring a small design choice and regression coverage.",
+                item_id="item_4",
+            ),
+            codex_event(
+                "/bin/zsh -lc \"sed -n '1,240p' items.json\"",
+                item_type="command_execution",
+                event_type="item.started",
+                item_id="item_9",
+            ),
+            codex_event(
+                "/bin/zsh -lc \"sed -n '1,240p' package.json\"",
+                item_type="command_execution",
+                event_type="item.started",
+                item_id="item_10",
+            ),
+            codex_event(
+                "/bin/zsh -lc \"sed -n '1,240p' items.json\"",
+                item_type="command_execution",
+                item_id="item_9",
+            ),
+            codex_event(
+                "/bin/zsh -lc \"sed -n '1,240p' package.json\"",
+                item_type="command_execution",
+                item_id="item_10",
+            ),
+            codex_event(
+                "Implemented the `summary` command.\n\nVerified:\n\n- `npm test` — "
+                "1 test passed",
+                item_id="item_26",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        strict_events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — this request combines a production payment-data "
+                "migration with a breaking public API change.",
+                item_id="item_4",
+            ),
+            {"type": "item.started", "item": {"id": "item_7", "type": "todo_list"}},
+            codex_event(
+                "I’ll inspect the repository structure, existing payment model/API, "
+                "tests, and recent history.",
+                item_id="item_8",
+            ),
+            codex_event(
+                "/bin/zsh -lc \"rg -n -i payment .\"",
+                item_type="command_execution",
+                event_type="item.started",
+                item_id="item_9",
+            ),
+            codex_event(
+                "/bin/zsh -lc \"rg --files | sed -n '1,240p'\"",
+                item_type="command_execution",
+                event_type="item.started",
+                item_id="item_10",
+            ),
+            codex_event(
+                "/bin/zsh -lc \"rg -n -i payment .\"",
+                item_type="command_execution",
+                item_id="item_9",
+            ),
+            codex_event(
+                "/bin/zsh -lc \"rg --files | sed -n '1,240p'\"",
+                item_type="command_execution",
+                item_id="item_10",
+            ),
+            codex_event(
+                "/bin/zsh -lc 'git log -5 --oneline --decorate'",
+                item_type="command_execution",
+                event_type="item.started",
+                item_id="item_11",
+            ),
+            codex_event(
+                "/bin/zsh -lc 'git status --short'",
+                item_type="command_execution",
+                event_type="item.started",
+                item_id="item_12",
+            ),
+            codex_event(
+                "/bin/zsh -lc 'git status --short'",
+                item_type="command_execution",
+                item_id="item_12",
+            ),
+            codex_event(
+                "/bin/zsh -lc 'git log -5 --oneline --decorate'",
+                item_type="command_execution",
+                item_id="item_11",
+            ),
+            codex_event(
+                "Which API breaking change do you want?\n\n"
+                "1. **Versioned API:** keep the dollar-based endpoint temporarily.\n"
+                "2. **New field:** add `amount_cents` and deprecate the dollar field.",
+                item_id="item_14",
+            ),
+            {"type": "item.completed", "item": {"id": "item_7", "type": "todo_list"}},
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        explicit_events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — the user explicitly selected lean for a read-only, "
+                "localized naming exploration.",
+                item_id="item_4",
+            ),
+            codex_event(
+                "The mode is active. The brainstorming skill is running for a "
+                "small design comparison only; it will not result in edits.",
+                item_id="item_5",
+            ),
+            {"type": "item.started", "item": {"id": "item_7", "type": "todo_list"}},
+            codex_event(
+                "/bin/zsh -lc \"rg --files | sed -n '1,160p'\"",
+                item_type="command_execution",
+                event_type="item.started",
+                item_id="item_8",
+            ),
+            codex_event(
+                "/bin/zsh -lc \"rg --files | sed -n '1,160p'\"",
+                item_type="command_execution",
+                item_id="item_8",
+            ),
+            codex_event(
+                "The current function is `greet(name) => \"Hello <name>\"`.\n\n"
+                "Option 1: `greet` — emphasize the action of greeting.\n"
+                "Option 2: `formatGreeting` — emphasize the returned string.\n\n"
+                "Which option do you prefer?",
+                item_id="item_11",
+            ),
+            {"type": "item.completed", "item": {"id": "item_7", "type": "todo_list"}},
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        for case, events in (
+            ("standard", standard_events),
+            ("strict", strict_events),
+            ("explicit-skill", explicit_events),
+        ):
+            with self.subTest(case=case):
+                result = self.run_validator("codex", case, events)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_strict_requires_a_relevant_question_or_approval_request(self) -> None:
         for text in (
             "Mode: strict — migration design is complete. Done.",

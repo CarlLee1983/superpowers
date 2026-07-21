@@ -497,10 +497,6 @@ def validate_declaration_order(
             if event_type == "item.started":
                 if item_id in active_items or item_id in completed_items:
                     raise ValidationError(f"Codex item lifecycle reused id {item_id!r}")
-                if active_items:
-                    raise ValidationError(
-                        "Codex item lifecycle started a later item before the active item completed"
-                    )
                 active_items[item_id] = signature
             elif item_type == "agent_message" and event_type == "item.completed":
                 if item_id in completed_items:
@@ -511,10 +507,6 @@ def validate_declaration_order(
                             f"Codex item lifecycle changed immutable payload for {item_id!r}"
                         )
                     del active_items[item_id]
-                elif active_items:
-                    raise ValidationError(
-                        "Codex item lifecycle completed an out-of-order later item"
-                    )
                 completed_items.add(item_id)
             else:
                 if item_id not in active_items:
