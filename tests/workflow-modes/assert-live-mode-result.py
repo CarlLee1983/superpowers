@@ -1617,12 +1617,26 @@ def validate_escalation_order(
 
 
 def has_standard_approval_pause(text: str) -> bool:
-    return "?" in text or re.search(
+    before_action = (
+        r"before\s+(?:(?:I|we)\s+)?(?:continue|proceed|begin|start|implement|"
+        r"make|change|edit|write)\w*"
+    )
+    declarative_patterns = (
         r"\blet\s+me\s+know\s+if\s+you(?:['’]d|\s+would)\s+like\s+"
         r"(?:any\s+)?changes?\s+before\s+I\s+(?:begin|start|implement)",
-        text,
-        re.IGNORECASE,
-    ) is not None
+        rf"\bplease\s+(?:review\s+(?:and|then)\s+)?approve\b"
+        rf"[^.!?\n]{{0,120}}\b{before_action}",
+        rf"\b(?:I|we)\s*(?:['’]ll|will)?\s*wait\s+for\s+"
+        rf"(?:your\s+)?(?:approval|confirmation|go-ahead)\b"
+        rf"[^.!?\n]{{0,120}}\b{before_action}",
+        rf"\b(?:I|we)\s+(?:need|require|await)\s+(?:your\s+)?"
+        rf"(?:approval|confirmation|go-ahead)\b"
+        rf"[^.!?\n]{{0,120}}\b{before_action}",
+    )
+    return "?" in text or any(
+        re.search(pattern, text, re.IGNORECASE) is not None
+        for pattern in declarative_patterns
+    )
 
 
 def has_standard_inline_design(text: str) -> bool:
@@ -1741,6 +1755,10 @@ def validate_standard_inline_design_order(
     )
     if has_standard_approval_pause(assistant_text):
         raise ValidationError("standard inline design must not seek approval or pause")
+    if not mutation_seen:
+        raise ValidationError(
+            "standard inline design requires a validated project mutation after outline"
+        )
 
 
 def claude_brainstorming_skill_status(events: list[dict[str, Any]]) -> str:

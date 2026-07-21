@@ -798,6 +798,51 @@ class ValidatorTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("must not seek approval or pause", result.stderr)
 
+        for pause in (
+            "Please approve this plan before I continue.",
+            "I’ll wait for your approval before implementing.",
+            "I need your go-ahead before I make these changes.",
+        ):
+            with self.subTest(declarative_pause=pause):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded CLI behavior and coverage.",
+                        item_id="mode",
+                    ),
+                    *codex_command_lifecycle(
+                        "cat src/cli.js items.json", "inspection"
+                    ),
+                    codex_event(f"{outline}\n{pause}", item_id="outline"),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "standard", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("must not seek approval or pause", result.stderr)
+
+    def test_standard_requires_a_validated_mutation_after_the_outline(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.", item_id="mode"
+            ),
+            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            codex_event(
+                "Implementation outline:\n"
+                "- Approach: update the CLI summary calculation to total item prices.\n"
+                "- Affected files: src/cli.js and test/summary.test.js.\n"
+                "- Verification: run npm test and check the summary JSON count and total.",
+                item_id="outline",
+            ),
+            codex_event("Tests passed.", item_id="result"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "standard", events)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("requires a validated project mutation", result.stderr)
+
     def test_standard_accepts_natural_inline_outline_wording(self) -> None:
         outlines = (
             "I'll implement the summary command in src/cli.js and add coverage in "
@@ -3864,6 +3909,15 @@ class ValidatorTest(unittest.TestCase):
                 "- Verification: run npm test and invoke the CLI, checking its "
                 "JSON output for count and total.",
                 item_id="item_14",
+            ),
+            codex_event(
+                "src/cli.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="item_20",
+            ),
+            codex_event(
+                "src/cli.js", item_type="file_change", item_id="item_20"
             ),
             codex_event(
                 "Implemented the `summary` command.\n\nVerified:\n\n- `npm test` — "
