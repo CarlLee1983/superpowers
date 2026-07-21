@@ -21,8 +21,10 @@ For every new user task:
    A platform bootstrap may mark both sources already loaded; do not reload them in that case.
    Codex uses the standalone read sequence below instead of native invocation.
 2. Declare the selected mode exactly once.
-3. Discover domain skills and mode-permitted process skills.
-4. Announce each skill when it causes an action or pause.
+3. If the request itself reveals strict risk under an explicit non-strict
+   override, issue the checkpoint warning immediately.
+4. Discover domain skills and mode-permitted process skills.
+5. Announce each skill when it causes an action or pause.
 
 After the selector returns, the next assistant output is its exact `Mode:`
 declaration line. Task entry is incomplete until that line is output.
@@ -30,9 +32,31 @@ declaration line. Task entry is incomplete until that line is output.
 Do not invoke a general process skill before a mode is active.
 
 On Codex, read this skill alone, then read `selecting-workflow-mode` alone, then read its risk matrix alone.
+The exact second and third paths are `skills/selecting-workflow-mode/SKILL.md`
+and `skills/selecting-workflow-mode/references/risk-matrix.md`.
 Use one standalone read-only command for each file. Do not combine those reads with each other or with project inspection.
 After the matrix read, output the declaration before any project command or
 other tool. Do not read platform references until the mode is active.
+
+## Before the first mutation
+
+Complete this checkpoint visibly after the `Mode:` line and before changing
+files or external state. If the request itself exposes a concrete strict trigger under an explicit `lean` or `standard` override, warn immediately after the `Mode:` line and before project inspection.
+Keep the requested mode active.
+
+After any project inspection, complete the matching branch before mutation:
+
+- Explicit `lean` or `standard` plus strict evidence: visibly warn about the
+  concrete risk and retain the override. If the immediate warning already
+  covered that evidence, do not repeat it.
+- Automatic `lean` or `standard` plus strict evidence: output the selector's
+  canonical promotion line, then pause for approval without mutating.
+- Remaining `standard`: output a short visible inline outline covering approach, affected files or components, and verification.
+- Remaining `lean`: proceed directly to change and verification.
+- Active `strict`: follow the strict skills and their approval gates without
+  emitting a duplicate promotion.
+
+Do not make the first mutation until the applicable branch is complete.
 
 ## Skill selection
 

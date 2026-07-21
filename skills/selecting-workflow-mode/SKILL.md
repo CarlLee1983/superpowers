@@ -71,8 +71,23 @@ same-task follow-ups may re-enter the selector without a new declaration.
 When new risk emerges, announce the reason before promoting the mode.
 Never demote automatically. The human partner may change the mode at any time.
 
-After any project inspection and before the first mutation, re-evaluate the
-observed evidence against the strict triggers.
+## Pre-first-mutation checkpoint
+
+If the task request itself contains a concrete strict trigger under an explicit `lean` or `standard` override, output the warning immediately after the `Mode:` line and before project inspection.
+Keep the explicit mode active; do not emit the canonical promotion line.
+
+After any project inspection, re-evaluate the observed evidence against the
+strict triggers. Before the first mutation, visibly complete exactly one checkpoint branch:
+
+- Explicit `lean` or `standard` plus strict evidence: warn about the concrete
+  risk and retain the override. An immediate request-text warning fulfills this
+  branch unless inspection finds a materially different strict risk.
+- Automatic `lean` or `standard` plus strict evidence: emit the canonical
+  promotion below and pause for approval.
+- Remaining `standard`: emit the inline design and execution outline below.
+- Remaining `lean`: proceed directly to mutation and verification.
+- Active `strict`: follow its strict skills and approval gates without a
+  duplicate promotion.
 
 If `User override` is `lean` or `standard`, warn without promoting and keep that explicitly chosen mode active.
 Continue under that mode unless host safety or permission controls require a pause.
@@ -81,10 +96,14 @@ Canonical promotion requires both `User override: none` and an active mode of `l
 In that case, output exactly this evidence-backed line, replacing every placeholder:
 
 Keep pre-promotion inspection independently auditable and read-only.
-When dedicated Read, Glob, or Grep tools are available, use only those; do not use a
-shell command. On platforms where inspection is shell-based, use only one
-standalone `cat` or `sed -n` file read per command. Do not use shell chaining, pipelines, redirections, command substitution,
-or mix inspection with mutation.
+When dedicated Read, Glob, or Grep tools are available, use only those; do not
+use a shell command. On platforms where inspection is shell-based, safe closed
+read-only discovery may precede literal file reads. A safe discovery command may be standalone `rg --files` or standalone `rg -n`
+with read-only selection flags, literal patterns, and path operands. The only permitted discovery pipeline is one `rg --files` or `rg -n` command followed by one output-limiting `sed -n` command.
+Do not use shell chaining, pipelines, redirections, command substitution,
+command separators, or mix inspection with mutation outside that single closed
+exception. Discovery never counts as strict-promotion proof.
+For strict-promotion proof, read each exact source and consumer path with its own standalone `cat` or `sed -n` command.
 
 The host has already supplied applicable repository instructions. Do not probe optional instruction files
 during this checkpoint. Inspect the user-named source first. For a source and
@@ -94,6 +113,7 @@ consumer module directly. Do not treat a source comment as proof of a consumer;
 the promotion line must cite consumer evidence from a file actually read.
 Promotion evidence for each named source and consumer must come from that file's own literal exact-path read.
 A wildcard or glob read may discover candidate paths, but it cannot establish consumer identity or count as source or consumer proof.
+Safe `rg` discovery has the same limitation.
 Do not name a file in the promotion line unless that exact path was read literally and successfully.
 
 `Promoting to strict — inspection found <source> defines <field> consumed by <consumer> as part of <strict surface>; <change> would <consequence>.`

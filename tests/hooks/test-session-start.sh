@@ -189,6 +189,24 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash "$HOOK_UNDER_TEST"
 
+assert_command_output \
+    "Claude Code injects the pre-first-mutation checkpoint at top level" \
+    "nested" \
+    "Before the first mutation, visibly complete one checkpoint branch: explicit lean/standard plus strict evidence means warn and retain the override; automatic lean/standard plus strict evidence means canonical promotion and approval pause; remaining standard means a visible inline outline" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code orders request-triggered override warnings before inspection" \
+    "nested" \
+    "If the request itself exposes strict risk under explicit lean/standard, warn immediately after the Mode line and before project inspection" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
 wrapper_home="$(make_home run-hook-wrapper)"
 assert_command_output \
     "run-hook.cmd wrapper dispatches to the named session-start script" \
