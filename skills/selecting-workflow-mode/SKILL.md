@@ -77,17 +77,27 @@ If the task request itself contains a concrete strict trigger under an explicit 
 Keep the explicit mode active; do not emit the canonical promotion line.
 
 After any project inspection, re-evaluate the observed evidence against the
-strict triggers. Before the first mutation, visibly complete exactly one checkpoint branch:
+strict triggers. Risk routing and active-mode readiness are separate obligations, not mutually exclusive branches.
+
+First complete risk routing:
 
 - Explicit `lean` or `standard` plus strict evidence: warn about the concrete
   risk and retain the override. An immediate request-text warning fulfills this
   branch unless inspection finds a materially different strict risk.
 - Automatic `lean` or `standard` plus strict evidence: emit the canonical
   promotion below and pause for approval.
-- Remaining `standard`: emit the inline design and execution outline below.
-- Remaining `lean`: proceed directly to mutation and verification.
 - Active `strict`: follow its strict skills and approval gates without a
   duplicate promotion.
+- No strict evidence: retain the active mode.
+
+Then complete readiness for the active mode before mutation:
+
+- Explicit `standard` plus strict evidence: warn, retain `standard`, then complete the standard inline outline before mutation.
+- Any other active `standard`: complete the standard inline outline.
+- Active `lean`: proceed directly to mutation and verification after any
+  required override warning.
+- Active `strict`: follow its strict skills and approval gates. A newly
+  promoted strict mode remains paused until approval.
 
 If `User override` is `lean` or `standard`, warn without promoting and keep that explicitly chosen mode active.
 Continue under that mode unless host safety or permission controls require a pause.
@@ -108,6 +118,8 @@ or `rg --line-number` under this closed grammar:
   The output limiter must be exactly `sed -n '<positive-start>[,<positive-end>]p'`; no other `sed` flags, scripts, or operands are allowed.
 
 All other `rg` flags are forbidden here, including command-bearing `--pre` and `--pre-glob`.
+Shell parameter expansion (`$name` or `${...}`), backticks, and unquoted brace, tilde, or glob expansion are forbidden.
+Regex or glob metacharacters in an `rg` search pattern or `-g`/`--glob` argument must be inside one single-quoted token.
 Do not use shell chaining, pipelines, redirections, command substitution,
 command separators, or mix inspection with mutation outside that single closed
 exception. Discovery never counts as strict-promotion proof.

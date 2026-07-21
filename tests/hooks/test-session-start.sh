@@ -192,7 +192,16 @@ assert_command_output \
 assert_command_output \
     "Claude Code injects the pre-first-mutation checkpoint at top level" \
     "nested" \
-    "Before the first mutation, visibly complete one checkpoint branch: explicit lean/standard plus strict evidence means warn and retain the override; automatic lean/standard plus strict evidence means canonical promotion and approval pause; remaining standard means a visible inline outline" \
+    "Before the first mutation, complete risk routing, then active-mode readiness" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code preserves standard readiness after an override warning" \
+    "nested" \
+    "explicit standard plus strict evidence means warn, retain standard, then output the standard inline outline before mutation" \
     "" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \

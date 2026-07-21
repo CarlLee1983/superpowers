@@ -44,19 +44,20 @@ Complete this checkpoint visibly after the `Mode:` line and before changing
 files or external state. If the request itself exposes a concrete strict trigger under an explicit `lean` or `standard` override, warn immediately after the `Mode:` line and before project inspection.
 Keep the requested mode active.
 
-After any project inspection, complete the matching branch before mutation:
+After any project inspection, complete risk routing before mutation:
 
 - Explicit `lean` or `standard` plus strict evidence: visibly warn about the
   concrete risk and retain the override. If the immediate warning already
   covered that evidence, do not repeat it.
 - Automatic `lean` or `standard` plus strict evidence: output the selector's
   canonical promotion line, then pause for approval without mutating.
-- Remaining `standard`: output a short visible inline outline covering approach, affected files or components, and verification.
-- Remaining `lean`: proceed directly to change and verification.
 - Active `strict`: follow the strict skills and their approval gates without
   emitting a duplicate promotion.
 
-Do not make the first mutation until the applicable branch is complete.
+Risk routing does not replace active-mode readiness. If `standard` remains active after routing, including an explicit `standard` override with strict evidence, output a short visible inline outline covering approach, affected files or components, and verification.
+If `lean` remains active, proceed directly after any required warning. If
+`strict` is active, follow its approval gates. Do not make the first mutation
+until both applicable obligations are complete.
 
 ## Skill selection
 
