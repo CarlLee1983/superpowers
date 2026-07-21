@@ -6152,6 +6152,76 @@ class ValidatorTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_strict_accepts_preserved_claude_read_only_discovery_commands(self) -> None:
+        # Preserved from /tmp/superpowers-mode-evals/affected-upfront-outline-claude-strict/
+        # claude/claude-fable-5/strict/20260721T181552Z-60937-18320/transcript.jsonl
+        project = str(self.project)
+        events = [
+            claude_init(),
+            claude_event(
+                "Mode: strict — production payment migration and public API risk."
+            ),
+            claude_tool_event(
+                "Bash",
+                {
+                    "command": (
+                        f"find {project} -type f -not -path '*/.git/*' | "
+                        "head -100"
+                    )
+                },
+                tool_id="find-files",
+            ),
+            claude_tool_result("find-files", content=f"{project}/README.md"),
+            claude_tool_event(
+                "Bash",
+                {
+                    "command": (
+                        f"git -C {project} log --oneline -10 && "
+                        f"git -C {project} status --short"
+                    )
+                },
+                tool_id="git-context",
+            ),
+            claude_tool_result("git-context", content="abc123 fixture"),
+            claude_event("Which rollback requirement applies to this migration?"),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        result = self.run_validator("claude", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_read_only_discovery_keeps_bounded_closed_grammar(self) -> None:
+        project = str(self.project)
+        commands = (
+            f"find {project} -type f -not -path '*/.git/*' | head -1001",
+            f"find {project} -type f -not -path '*/.git/*' | tail -100",
+            f"git -C {project} log --oneline -10 && git -C {project} show HEAD",
+        )
+        for index, command in enumerate(commands):
+            with self.subTest(command=command):
+                events = [
+                    claude_init(),
+                    claude_event(
+                        "Mode: strict — production payment migration and public "
+                        "API risk."
+                    ),
+                    claude_tool_event(
+                        "Bash",
+                        {"command": command},
+                        tool_id=f"unsafe-discovery-{index}",
+                    ),
+                    claude_tool_result(f"unsafe-discovery-{index}"),
+                    claude_event(
+                        "Which rollback requirement applies to this migration?"
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+
+                result = self.run_validator("claude", "strict", events)
+
+                self.assertNotEqual(result.returncode, 0)
+
     def test_strict_read_only_composition_rejects_open_shell_grammar(self) -> None:
         commands = (
             f"ls -la {self.project}; git -C {self.project} log --oneline -10",
@@ -6249,6 +6319,37 @@ class ValidatorTest(unittest.TestCase):
             "amount_cents to API clients.\n"
             "## Recommended design\n"
             "Use B with a reversible rollout and an explicit removal gate.\n"
+            "Waiting on your approval before proceeding."
+        )
+        events = [
+            claude_init(),
+            claude_event(design),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        result = self.run_validator("claude", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_conversational_recommendation_after_option_headings(
+        self,
+    ) -> None:
+        design = (
+            "Mode: strict — production payment migration and public API risk.\n"
+            "**Approaches considered**\n"
+            "- **Option A — Expand and migrate.** Add an amount_cents schema "
+            "column, backfill during a compatibility window, and version the "
+            "public API before cutover.\n"
+            "- **Option B — In-place conversion.** Rewrite payment rows and switch "
+            "the public API immediately, with substantial rollback risk.\n"
+            "- **Option C — New table/service with change-data-capture sync.** "
+            "Stand up a cents-native store, sync via CDC, and cut traffic over. "
+            "Trade-off: cleanest end state, but heavy infrastructure for a "
+            "column-unit change.\n"
+            "I recommend Option A. Here is the design.\n"
+            "## Design\n"
+            "Use reversible schema, backfill, reconciliation, and API rollout "
+            "phases with conversion and contract tests.\n"
             "Waiting on your approval before proceeding."
         )
         events = [
@@ -6855,6 +6956,33 @@ class ValidatorTest(unittest.TestCase):
                 self.assertIn(
                     "relevant clarification/approval pause", result.stderr
                 )
+
+    def test_strict_accepts_first_decision_public_api_policy_question(self) -> None:
+        # Preserved from /tmp/superpowers-mode-evals/affected-upfront-outline-codex/
+        # codex/gpt-5.6-sol/strict/20260721T181313Z-60480-611/assistant.txt
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — this combines payments, a production data migration, "
+                "and a breaking public API change.\n\n"
+                "The repository is only a blank fixture, so there are no existing "
+                "schema, API, or deployment conventions to preserve.\n\n"
+                "First decision: what compatibility policy should the public API "
+                "use?\n\n"
+                "1. **Versioned transition (recommended):** add integer "
+                "`amount_cents`, temporarily accept/read the old dollar field, then "
+                "remove it after consumers migrate.\n"
+                "2. **Coordinated breaking release:** replace the dollar field with "
+                "`amount_cents` at a scheduled cutover.\n"
+                "3. **Immediate breaking change:** deploy the storage migration and "
+                "new API contract together with no compatibility window."
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
         valid_post_question_cases = (
             (

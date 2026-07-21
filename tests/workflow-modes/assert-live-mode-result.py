@@ -1218,7 +1218,9 @@ def require_relevant_pause(text: str) -> None:
 
 def has_concrete_discovery_pause(text: str) -> bool:
     question = re.search(
-        r"(?mi)^\s*(?:\*\*)?((?:(?:where|what|which|how)\b[^?\n]*"
+        r"(?mi)^\s*(?:\*\*)?(?:(?:first|next)\s+"
+        r"(?:decision|question)\s*:\s*)?"
+        r"((?:(?:where|what|which|how)\b[^?\n]*"
         r"(?:system|stack|migration|public\s+API|API)\b[^?\n]*|"
         r"what\s+should\s+(?:this|the)\s+design\s+target)\?)",
         text,
@@ -1398,7 +1400,7 @@ def has_strict_design_approval_pause(text: str) -> bool:
     ) is None:
         return False
     if re.search(
-        r"\brecommended\s+design\b|\brecommend(?:ed|ation)\b",
+        r"\brecommended\s+design\b|\brecommend(?:ed|ation)?\b",
         text,
         re.IGNORECASE,
     ) is None:
@@ -1410,7 +1412,8 @@ def has_strict_design_approval_pause(text: str) -> bool:
     )
     recommendation = re.search(
         r"(?im)^[ \t]*(?:(?:#{1,6}[ \t]+)?recommended\s+design\b|"
-        r"(?:#{1,6}[ \t]+)?recommendation\b|\*\*recommendation\b)",
+        r"(?:#{1,6}[ \t]+)?recommendation\b|\*\*recommendation\b|"
+        r"I\s+recommend\s+(?:option\s+)?(?:[A-Z]|\d+)\b)",
         text[approaches.end() :] if approaches is not None else "",
     )
     if approaches is None or recommendation is None:
@@ -1420,7 +1423,9 @@ def has_strict_design_approval_pause(text: str) -> bool:
     ]
     option_pattern = re.compile(
         r"^\s*(?:[-*]\s+)?(?:\*\*)?"
-        r"(?P<label>[A-Z]|\d+)[.)](?:\*\*)?\s*(?P<body>.*)$"
+        r"(?:option\s+)?(?P<label>[A-Z]|\d+)"
+        r"(?:[.)]|\s*[—–:-])(?:\*\*)?\s*(?P<body>.*)$",
+        re.IGNORECASE,
     )
     options: list[tuple[str, str, str]] = []
     current_label: str | None = None
@@ -1488,6 +1493,7 @@ def has_strict_design_approval_pause(text: str) -> bool:
         r"big[- ]bang|zero[- ]downtime)\b|"
         r"\b(?:boundary\s+conversion|at\s+the\s+boundary|"
         r"coordinated\s+cutoff)\b|"
+        r"\b(?:change[- ]data[- ]capture|CDC|cut\s+traffic\s+over)\b|"
         r"\b(?:expand|add)\w*\b[^.;\n]{0,80}\bbackfill\w*\b|"
         r"\b(?:keep|retain)\w*\b[^.;\n]{0,80}\b(?:version|expos)\w*\b|"
         r"\bswitch\w*\b[^.;\n]{0,80}\bmaintain\w*\b|"
@@ -1499,7 +1505,7 @@ def has_strict_design_approval_pause(text: str) -> bool:
         r"\b(?:payments?|billing|financial|amount(?:_cents)?|dollars?|cents?|"
         r"overcharge)\b",
         r"\b(?:production\s+data|data\s+migration|schema|columns?|rows?|"
-        r"storage|database|migration|backfill)\b",
+        r"storage|stores?|database|migration|backfill)\b",
         r"\b(?:public\s+API|API|endpoints?|compatibility|versioned|v\d+|"
         r"clients?|consumers?)\b",
         r"\b(?:irreversible|rollback|zero[- ]downtime|cutover|big[- ]bang|"
@@ -1565,7 +1571,20 @@ def is_strict_read_only_shell_command(
         return False
     if len(pipeline) == 1:
         return True
-    return pipeline[1] in (["head", "-50"], ["head", "-n", "50"])
+    head = pipeline[1]
+    if (
+        len(head) == 2
+        and head[0] == "head"
+        and re.fullmatch(r"-[1-9]\d*", head[1])
+    ):
+        return int(head[1][1:]) <= 1000
+    if (
+        len(head) == 3
+        and head[:2] == ["head", "-n"]
+        and re.fullmatch(r"[1-9]\d*", head[2])
+    ):
+        return int(head[2]) <= 1000
+    return False
 
 
 def is_safe_git_discovery_command(
@@ -1661,7 +1680,23 @@ def is_closed_strict_read_only_composition(
             require_explicit_root=True,
         )
     ]
-    return len(ls_segments) == 1 and len(git_segments) == 1
+    if len(ls_segments) == 1 and len(git_segments) == 1:
+        return True
+    if len(git_segments) != 2:
+        return False
+
+    def explicit_git_subcommand(segment: str) -> str | None:
+        pipeline = shell_pipeline_arguments(segment)
+        if pipeline is None or len(pipeline) != 1:
+            return None
+        arguments = pipeline[0]
+        if len(arguments) < 4 or arguments[:2] != ["git", "-C"]:
+            return None
+        return arguments[3]
+
+    return [
+        explicit_git_subcommand(segment) for segment in segments
+    ] == ["log", "status"]
 
 
 def strict_transcript_has_mutation(
