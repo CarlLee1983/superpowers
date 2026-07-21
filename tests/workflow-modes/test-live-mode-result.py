@@ -35,6 +35,44 @@ REAL_CLAUDE_POSSESSIVE_PROMOTION = (
     "payment response; renaming `amount` to `amountCents` would break the response "
     "shape for external billing API clients."
 )
+LATEST_CLAUDE_INITIAL_OUTPUT = (
+    "Mode: standard — A schema field rename with unknown blast radius starts in "
+    "standard until inspection establishes whether a strict compatibility surface "
+    "is present.\n\n"
+    "I'll inspect the named source file first, then its likely consumers."
+)
+LATEST_CLAUDE_FINAL_OUTPUT = (
+    "Promoting to strict — inspection found src/schema.js defines `amount` consumed "
+    "by src/billing.js's `publicPaymentResponse` as part of the public "
+    "billing/payments API surface; renaming it to `amountCents` would change the "
+    "public payment response shape and break external API consumers.\n\n"
+    "Here is what inspection showed: `src/schema.js:2` defines `payment.amount`, and "
+    "`src/billing.js:2` reads `payment.amount` and exposes it as the `amount` field "
+    "of `publicPaymentResponse`, which the code identifies as the public billing API "
+    "response. The rename is mechanically small (two files), but it alters an "
+    "externally visible payment field name — a breaking compatibility change on a "
+    "payments surface, which is a strict trigger.\n\n"
+    "Before making any change, I'm pausing as strict mode requires: do you want me "
+    "to proceed with the rename in strict mode (renaming the field in both "
+    "`src/schema.js` and the `publicPaymentResponse` output in `src/billing.js`), "
+    "knowing it changes the public API response shape? If you'd rather keep the "
+    "external contract stable, an alternative is renaming internally while keeping "
+    "`amount` (or emitting both fields) in the public response — let me know which "
+    "you prefer."
+)
+LATEST_CODEX_OUTPUTS = (
+    "I’m using the superpowers workflow guidance to inspect the repository first, "
+    "choose the appropriate change process, and then verify every `amount` consumer "
+    "before editing.",
+    "Mode: standard — this is a bounded schema-and-consumer rename whose "
+    "compatibility surface must be established by repository inspection.",
+    "Promoting to strict — inspection found `src/schema.js` defines `amount` "
+    "consumed by `src/billing.js` as part of the public billing API; renaming it "
+    "would create a breaking public API compatibility change.",
+    "The rename affects a public billing API response and is therefore potentially "
+    "breaking. Should I proceed in strict mode and update the public response from "
+    "`amount` to `amountCents` as requested?",
+)
 
 
 def claude_event(text: str, *, block_type: str = "text") -> dict:
@@ -1299,6 +1337,19 @@ class ValidatorTest(unittest.TestCase):
             CANONICAL_PROMOTION_REASON.replace(
                 "would break compatibility", "would not break compatibility"
             ),
+            CANONICAL_PROMOTION_REASON.replace(
+                "public payment API", "public payment API without a response surface"
+            ),
+            CANONICAL_PROMOTION_REASON.replace(
+                "would break compatibility",
+                "would break compatibility as a harmless example",
+            ),
+            CANONICAL_PROMOTION_REASON.replace(
+                "public payment API", "unrelated public payment API response surface"
+            ),
+            CANONICAL_PROMOTION_REASON.replace(
+                "public payment API", "public payment API banana response surface"
+            ),
         )
         for reason in invalid_reasons:
             with self.subTest(reason=reason):
@@ -1370,6 +1421,44 @@ class ValidatorTest(unittest.TestCase):
             {"type": "result", "subtype": "success", "result": "done"},
         ]
         result = self.run_validator("claude", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_accepts_latest_verbose_claude_output(self) -> None:
+        events = [
+            claude_init(),
+            claude_event(LATEST_CLAUDE_INITIAL_OUTPUT),
+            *claude_read_lifecycle(self.project, "src/schema.js", "schema"),
+            *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/api.js")},
+                tool_id="optional-api",
+            ),
+            claude_tool_result(
+                "optional-api", is_error=True, content="File does not exist."
+            ),
+            claude_event(LATEST_CLAUDE_FINAL_OUTPUT),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_accepts_latest_multimessage_codex_output(self) -> None:
+        preamble, declaration, promotion, explanation_and_pause = LATEST_CODEX_OUTPUTS
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(preamble, item_id="preamble"),
+            codex_event(declaration, item_id="declaration"),
+            *codex_command_lifecycle("sed -n '1,200p' src/schema.js", "schema"),
+            *codex_command_lifecycle(
+                "sed -n '1,200p' src/api.js", "optional-api", exit_code=2
+            ),
+            *codex_command_lifecycle("sed -n '1,200p' src/billing.js", "billing"),
+            codex_event(promotion, item_id="promotion"),
+            codex_event(explanation_and_pause, item_id="pause"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_escalation_structured_promotion_rejects_missing_or_safe_relations(
@@ -1463,7 +1552,6 @@ class ValidatorTest(unittest.TestCase):
             f"    {canonical}\n{pause}",
             f"Documentation example:\n{canonical}\n{pause}",
             f"Quote from a transcript:\n{canonical}\n{pause}",
-            f"{canonical}\n{pause}\nUnrelated documentation note.",
         )
         for block in invalid_blocks:
             with self.subTest(block=block):
@@ -1582,6 +1670,30 @@ class ValidatorTest(unittest.TestCase):
             *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
             codex_event(canonical, item_id="promotion"),
             codex_event(pause, item_id="pause"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_accepts_substantive_explanation_before_pause(self) -> None:
+        canonical = f"Promoting to strict — {CANONICAL_PROMOTION_REASON}"
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
+            codex_event(canonical, item_id="promotion"),
+            codex_event(
+                "Inspection confirms that the rename is mechanically small, but "
+                "the externally visible response field would change.",
+                item_id="explanation",
+            ),
+            codex_event(
+                "Should I proceed in strict mode with the public response rename?",
+                item_id="pause",
+            ),
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "escalation", events)
