@@ -990,10 +990,85 @@ def escalation_records(
     return records
 
 
-def has_structured_promotion_relation(reason: str) -> bool:
+def has_valid_promotion_punctuation(reason: str) -> bool:
     if not reason.endswith("."):
         return False
     if re.fullmatch(r"[A-Za-z `/_.'(){}:,;\-]+", reason) is None:
+        return False
+
+    code_atoms = {
+        "amount",
+        "amountCents",
+        "src/schema.js",
+        "src/billing.js",
+        "publicPaymentResponse",
+    }
+    object_atom = r"\{\s*amount\s*:\s*payment\s*\.\s*amount\s*\}"
+    backtick_parts = reason.split("`")
+    if len(backtick_parts) % 2 == 0:
+        return False
+
+    rebuilt_parts: list[str] = []
+    for index, part in enumerate(backtick_parts):
+        if index % 2 == 0:
+            rebuilt_parts.append(part)
+        elif part in code_atoms:
+            rebuilt_parts.append(part)
+        elif re.fullmatch(object_atom, part) is not None:
+            rebuilt_parts.append("{ amount: payment.amount }")
+        else:
+            return False
+
+    punctuation = "".join(rebuilt_parts)
+    punctuation = re.sub(
+        object_atom,
+        "{ amount: payment.amount }",
+        punctuation,
+    )
+
+    valid_parenthetical = True
+
+    def replace_parenthetical(match: re.Match[str]) -> str:
+        nonlocal valid_parenthetical
+        if re.fullmatch(
+            r"\(\s*publicPaymentResponse\s+returns\s+"
+            r"\{ amount: payment\.amount \}\s*\)",
+            match.group(0),
+        ) is None:
+            valid_parenthetical = False
+            return match.group(0)
+        return " observedAliasRelation "
+
+    punctuation = re.sub(r"\([^()]*\)", replace_parenthetical, punctuation)
+    if not valid_parenthetical or "(" in punctuation or ")" in punctuation:
+        return False
+
+    punctuation = punctuation.replace(
+        "src/billing.js's publicPaymentResponse", " billingPossessiveAlias "
+    )
+    punctuation = punctuation.replace("src/schema.js", " schemaPath ")
+    punctuation = punctuation.replace("src/billing.js", " billingPath ")
+    punctuation = punctuation.replace("billing/payments", " billingPayments ")
+    punctuation = punctuation.replace(
+        "{ amount: payment.amount }", " observedObjectAtom "
+    )
+    punctuation = re.sub(
+        r"\bamount,\s+(?=(?:is\s+)?(?:used|consumed)\s+by\b)",
+        "amount ",
+        punctuation,
+        flags=re.IGNORECASE,
+    )
+    if "," in punctuation or punctuation.count(";") != 1:
+        return False
+    punctuation = punctuation.replace(";", " ")
+    if punctuation.count(".") != 1 or not punctuation.endswith("."):
+        return False
+    punctuation = punctuation[:-1]
+    return re.fullmatch(r"[A-Za-z ]+", punctuation) is not None
+
+
+def has_structured_promotion_relation(reason: str) -> bool:
+    if not has_valid_promotion_punctuation(reason):
         return False
 
     normalized = re.sub(r"`+", "", reason)

@@ -1425,6 +1425,49 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "escalation", ascii_separator_events)
         self.assertNotEqual(result.returncode, 0)
 
+    def test_escalation_promotion_rejects_malformed_punctuation_structure(
+        self,
+    ) -> None:
+        invalid_reasons = (
+            CANONICAL_PROMOTION_REASON.removesuffix(".") + " ---- {} /_ ::: ``.",
+            CANONICAL_PROMOTION_REASON.replace("amount field", "`amount field"),
+            CANONICAL_PROMOTION_REASON.replace(
+                "public payment API", "public payment / API response surface"
+            ),
+            CANONICAL_PROMOTION_REASON.replace("API;", "API;;"),
+            CANONICAL_PROMOTION_REASON.replace(
+                "break compatibility.", "break compatibility,,."
+            ),
+            CANONICAL_PROMOTION_REASON + ".",
+            (
+                "inspection found src/schema.js defines amount consumed by "
+                "src/billing.js's unexpectedAlias as part of the public payment API "
+                "response surface; renaming amount to amountCents would break "
+                "compatibility."
+            ),
+        )
+        for reason in invalid_reasons:
+            with self.subTest(reason=reason):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *codex_command_lifecycle(
+                        "cat src/schema.js src/billing.js", "inspection"
+                    ),
+                    codex_event(
+                        f"Promoting to strict — {reason}\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("structured promotion relation", result.stderr)
+
     def test_escalation_accepts_structured_real_promotion_relations(self) -> None:
         reasons = (
             REAL_CLAUDE_PROMOTION_REASON,
