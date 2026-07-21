@@ -3503,6 +3503,42 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "explicit-skill", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_explicit_skill_does_not_parse_prose_first_words_as_names(self) -> None:
+        adversarial = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit read-only naming exploration.\n"
+                "I am using the brainstorming skill.\n"
+                "Option 1: action of greeting\n"
+                "Option 2: returned string"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "explicit-skill", adversarial)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("two distinct positive options", result.stderr)
+
+        positives = (
+            "Option 1: `greet` matches the action.\n"
+            "Option 2: `greeting` matches the value.",
+            "Option 1: greet\nOption 2: greeting",
+            "Option 1: greet — action-oriented\n"
+            "Option 2: greeting: value-oriented",
+        )
+        for candidate_text in positives:
+            with self.subTest(candidates=candidate_text):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: lean — explicit read-only naming exploration.\n"
+                        "I am using the brainstorming skill.\n"
+                        f"{candidate_text}"
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "explicit-skill", events)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_claude_accepts_full_matrix_explicit_skill_invocation(self) -> None:
         events = [
             claude_init(),

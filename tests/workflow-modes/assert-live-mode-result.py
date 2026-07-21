@@ -1704,8 +1704,9 @@ def require_affirmative_brainstorming(
     label = re.compile(
         r"^\s*(?:(?:[-*]|\d+[.)])\s+(?:\*\*)?"
         r"(?:option|candidate)(?:\s+\d+)?|(?:\*\*)?"
-        r"(?:option|candidate)\s+\d+)\s*:\s*(?:\*\*)?`?"
-        r"([A-Za-z_][A-Za-z0-9_-]*)",
+        r"(?:option|candidate)\s+\d+)\s*:\s*(?:\*\*)?"
+        r"(?:`([A-Za-z_][A-Za-z0-9_-]*)`|"
+        r"([A-Za-z_][A-Za-z0-9_-]*)(?=\s*(?:\*\*)?\s*(?:$|[:—–-])))",
         re.IGNORECASE,
     )
     group = re.compile(
@@ -1760,9 +1761,14 @@ def require_affirmative_brainstorming(
             if negative_candidate(unit):
                 continue
             label_match = label.search(unit)
-            if not label_match or negative_candidate(unit, label_match.group(1)):
+            identifier = (
+                label_match.group(1) or label_match.group(2)
+                if label_match
+                else None
+            )
+            if not identifier or negative_candidate(unit, identifier):
                 continue
-            candidates.add(label_match.group(1))
+            candidates.add(identifier)
     if len(candidates) < 2:
         raise ValidationError(
             "assistant-visible brainstorming lacks at least two distinct positive options"
