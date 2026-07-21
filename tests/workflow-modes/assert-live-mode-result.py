@@ -2511,7 +2511,8 @@ def has_structured_promotion_relation(reason: str) -> bool:
     rename = re.search(
         r"\brenaming\s+(?:"
         r"(?:the\s+)?amount(?:\s+field)?\s+to\s+amountcents|"
-        r"it(?:\s+to\s+amountcents)?)\b",
+        r"it(?:\s+to\s+amountcents)?|"
+        r"(?:the\s+)?(?:public\s+API\s+)?response\s+field)\b",
         normalized,
         re.IGNORECASE,
     )
@@ -3532,17 +3533,20 @@ def require_affirmative_brainstorming(
     affirmative_patterns = (
         r"\b(?:I[’']m|we[’']re)\s+(?:now\s+)?"
         r"(?:using|invoking|running|applying|used|invoked|ran|applied)\s+"
-        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
+        r"(?:the\s+)?(?:(?:explicitly\s+)?requested\s+)?"
+        r"brainstorming(?:\s+skill)?\b",
         r"\b(?:I[’']m|we[’']re)\s+"
         r"(?:now\s+)?(?:using|invoking|running|applying)\s+"
-        r"(?:the\s+)?(?:requested\s+)?"
+        r"(?:the\s+)?(?:(?:explicitly\s+)?requested\s+)?"
         r"`?superpowers:brainstorming`?\s+skill\b",
         r"\b(?:I|we)\s+(?:am|are|'m|'re|have|will|'ll)?\s*(?:now\s+)?"
         r"(?:using|invoking|running|applying|used|invoked|ran|applied|use|invoke|run|apply)\s+"
-        r"(?:the\s+)?(?:requested\s+)?`?superpowers:brainstorming`?\s+skill\b",
+        r"(?:the\s+)?(?:(?:explicitly\s+)?requested\s+)?"
+        r"`?superpowers:brainstorming`?\s+skill\b",
         r"\b(?:I|we)\s+(?:am|are|'m|'re|have|will|'ll)?\s*(?:now\s+)?"
         r"(?:using|invoking|running|applying|used|invoked|ran|applied|use|invoke|run|apply)\s+"
-        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
+        r"(?:the\s+)?(?:(?:explicitly\s+)?requested\s+)?"
+        r"brainstorming(?:\s+skill)?\b",
         r"\bbrainstorming\s+skill\s+(?:is|was)\s+"
         r"(?:active|loaded|invoked|running|used)\b",
         r"\bbrainstorming\s+skill\s+(?:now\s+)?guides\b",
@@ -3553,14 +3557,16 @@ def require_affirmative_brainstorming(
         r"\b(?:I|we)\s+(?:(?:am|are|was|were|have|has|had|do|does|did|"
         r"will|would|can|could|'m|'re|'ve|'ll)\s+)?(?:not|never)\s+"
         r"(?:actually\s+)?(?:using|invoking|running|applying|used|invoked|ran|"
-        r"applied|use|invoke|run|apply)\s+(?:the\s+)?(?:requested\s+)?"
+        r"applied|use|invoke|run|apply)\s+(?:the\s+)?"
+        r"(?:(?:explicitly\s+)?requested\s+)?"
         r"brainstorming(?:\s+skill)?\b",
         r"\b(?:I|we)\s+(?:won't|wouldn't|can't|couldn't|don't|doesn't|didn't)\s+"
         r"(?:actually\s+)?(?:use|invoke|run|apply)\s+(?:the\s+)?"
         r"brainstorming(?:\s+skill)?\b",
         r"\b(?:not|never)\s+(?:actually\s+)?(?:using|invoking|running|applying|"
         r"used|invoked|applied|run|apply)\s*,?\s*(?:the\s+)?"
-        r"(?:requested\s+)?brainstorming(?:\s+skill)?\b",
+        r"(?:(?:explicitly\s+)?requested\s+)?"
+        r"brainstorming(?:\s+skill)?\b",
         r"\bbrainstorming\s+skill\s+(?:is|was|will\s+be)\s+not\s+"
         r"(?:used|invoked|run|running|applied)\b",
         r"\b(?:I|we)\s+(?:(?:am|are|was|were)\s+)?(?:not|no\s+longer)\s+"
@@ -3569,7 +3575,8 @@ def require_affirmative_brainstorming(
         r"\b(?:I|we)\s+(?:isn['’]t|aren['’]t|wasn['’]t|weren['’]t)\s+"
         r"(?:currently\s+|actually\s+|now\s+)?"
         r"(?:using|invoking|running|applying)\s+"
-        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
+        r"(?:the\s+)?(?:(?:explicitly\s+)?requested\s+)?"
+        r"brainstorming(?:\s+skill)?\b",
         r"\b(?:I|we)\s+(?:won't|wouldn't|can't|couldn't|don't|doesn't|didn't)\s+"
         r"(?:actually\s+)?(?:use|invoke|run|apply)\s+"
         r"(?:it|that\s+skill|the\s+skill)\b",
@@ -3579,13 +3586,16 @@ def require_affirmative_brainstorming(
         r"\b(?:I|we)\s+(?:(?:am|are|was|were)\s+)?no\s+longer\s+"
         r"(?:currently\s+|actually\s+|now\s+)?"
         r"(?:using|invoking|running|applying|use|invoke|run|apply)\s+"
-        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
+        r"(?:the\s+)?(?:(?:explicitly\s+)?requested\s+)?"
+        r"brainstorming(?:\s+skill)?\b",
         r"\b(?:I|we)(?:\s+have|['’]ve)?\s+stopped\s+"
         r"(?:using|invoking|running|applying)\s+"
-        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
+        r"(?:the\s+)?(?:(?:explicitly\s+)?requested\s+)?"
+        r"brainstorming(?:\s+skill)?\b",
         r"\b(?:I|we)(?:\s+have|['’]ve)?\s+ceased\s+"
         r"(?:using|invoking|running|applying)\s+"
-        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
+        r"(?:the\s+)?(?:(?:explicitly\s+)?requested\s+)?"
+        r"brainstorming(?:\s+skill)?\b",
         r"\b(?:I|we)(?:\s+have|['’]ve)?\s+discontinued\s+"
         r"(?:using|invoking|running|applying)\s+"
         r"(?:it|that\s+skill|the\s+skill)\b",
@@ -3594,7 +3604,8 @@ def require_affirmative_brainstorming(
         r"(?:it|that\s+skill|the\s+skill)\b",
         r"\bwithout\s+(?:currently\s+|actually\s+|now\s+)?"
         r"(?:using|invoking|running|applying)\s+"
-        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
+        r"(?:the\s+)?(?:(?:explicitly\s+)?requested\s+)?"
+        r"brainstorming(?:\s+skill)?\b",
     )
     affirmative_seen = structured_invocation_status == "successful"
     negated_after_affirmative = False

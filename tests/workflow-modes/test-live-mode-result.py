@@ -3302,6 +3302,9 @@ class ValidatorTest(unittest.TestCase):
             "src/billing.js uses it in the public payment API response surface; "
             "renaming amount to amountCents would cause a breaking public API "
             "compatibility change.",
+            "inspection found src/schema.js defines amount consumed by "
+            "src/billing.js as part of a public payment API; renaming the "
+            "response field would create a breaking compatibility change.",
         )
         for reason in reasons:
             with self.subTest(reason=reason):
@@ -7127,6 +7130,24 @@ class ValidatorTest(unittest.TestCase):
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "explicit-skill", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_explicit_skill_accepts_explicitly_requested_invocation_wording(
+        self,
+    ) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit override.\n"
+                "I’m using the explicitly requested brainstorming skill.\n"
+                "1. Option: greet\n"
+                "2. Option: createGreeting"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "explicit-skill", events)
+
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_explicit_skill_accepts_applying_and_applied_with_final_polarity(self) -> None:

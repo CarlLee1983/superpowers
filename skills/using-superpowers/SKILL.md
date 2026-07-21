@@ -24,6 +24,9 @@ For every new user task:
 3. If the request itself reveals strict risk under an explicit non-strict
    override, issue the checkpoint warning immediately. In this branch, the warning is the very next assistant-visible content after the `Mode:` line.
    No project tool, discovery, skill announcement, or other prose may precede it.
+   Treat the `Mode:` line and warning as one atomic task-entry block.
+   Do not run `Read`, `Glob`, `Grep`, `rg`, or any other project tool between them.
+   Authentication, authorization, or secrets in the request remain concrete strict triggers even when described as a sample, demo, fixture, test, or local-only change.
 4. Discover domain skills and mode-permitted process skills.
 5. Announce each skill when it causes an action or pause.
 

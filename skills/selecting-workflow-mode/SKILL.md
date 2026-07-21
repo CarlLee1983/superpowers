@@ -78,6 +78,9 @@ Never demote automatically. The human partner may change the mode at any time.
 If the task request itself contains a concrete strict trigger under an explicit `lean` or `standard` override, output the warning immediately after the `Mode:` line and before project inspection.
 In this branch, the warning is the very next assistant-visible content after the `Mode:` line.
 No project tool, discovery, skill announcement, or other prose may precede it.
+Treat the `Mode:` line and warning as one atomic task-entry block.
+Do not run `Read`, `Glob`, `Grep`, `rg`, or any other project tool between them.
+Authentication, authorization, or secrets in the request remain concrete strict triggers even when described as a sample, demo, fixture, test, or local-only change.
 Keep the explicit mode active; do not emit the canonical promotion line.
 
 After any project inspection, re-evaluate the observed evidence against the
