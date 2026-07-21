@@ -40,7 +40,7 @@ elif "JSON summary command" in prompt:
         'const assert = require("node:assert");\n'
         'test("fixture", () => assert.equal(2 + 3, 5));\n'
     )
-    text = "Mode: standard — bounded CLI behavior and coverage.\nTests passed and output verified."
+    text = "Tests passed and output verified."
 elif "production data migration" in prompt:
     case = "strict"
     if os.environ.get("STUB_COMMIT_ARTIFACT") == "1":
@@ -89,7 +89,44 @@ events = [
     {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}},
     {"type": "result", "subtype": "success", "result": text},
 ]
-if case == "escalation":
+if case == "standard":
+    events[1:2] = [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{
+            "type": "text",
+            "text": "Mode: standard — bounded CLI behavior and coverage.",
+        }]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{
+            "type": "tool_use",
+            "id": "standard-inspection",
+            "name": "Read",
+            "input": {"file_path": str(project / "src/cli.js")},
+        }]}},
+        {"type": "user", "message": {"role": "user", "content": [{
+            "type": "tool_result",
+            "tool_use_id": "standard-inspection",
+            "is_error": False,
+            "content": "CLI inspected",
+        }]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{
+            "type": "text",
+            "text": (
+                "Implementation outline:\n"
+                "- Approach: update the CLI summary calculation to total item prices.\n"
+                "- Affected files: src/cli.js and test/summary.test.js.\n"
+                "- Verification: run npm test and check the summary JSON count and total."
+            ),
+        }]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{
+            "type": "tool_use",
+            "id": "standard-mutation",
+            "name": "Write",
+            "input": {"file_path": str(project / "src/cli.js"), "content": "implemented"},
+        }]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{
+            "type": "text", "text": text,
+        }]}},
+    ]
+elif case == "escalation":
     declaration = "Mode: standard — bounded rename pending repository inspection."
     events[1:2] = [
         {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": declaration}]}},

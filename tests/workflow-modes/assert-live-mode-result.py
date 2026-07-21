@@ -910,6 +910,8 @@ def escalation_records(
     events: list[dict[str, Any]],
     expected_plugin_root: Path | None,
     expected_project_root: Path,
+    *,
+    reject_unknown_actions: bool = True,
 ) -> list[EscalationRecord]:
     records: list[EscalationRecord] = []
     record_order = 0
@@ -998,12 +1000,16 @@ def escalation_records(
                         tool_uses[tool_id] = ("mutation", ())
                         add("mutation", str(name), event_index)
                     else:
-                        tool_uses[tool_id] = ("invalid", ())
-                        add(
-                            "invalid",
-                            f"unrecognized escalation action: {name!r}",
-                            event_index,
+                        tool_uses[tool_id] = (
+                            "invalid" if reject_unknown_actions else "auxiliary",
+                            (),
                         )
+                        if reject_unknown_actions:
+                            add(
+                                "invalid",
+                                f"unrecognized escalation action: {name!r}",
+                                event_index,
+                            )
                     continue
                 if block_type != "tool_result":
                     continue
@@ -1134,6 +1140,7 @@ def escalation_records(
         elif (
             event.get("type") == "item.started"
             and item_type not in {"agent_message", "reasoning"}
+            and reject_unknown_actions
         ):
             add(
                 "invalid",
@@ -1491,6 +1498,101 @@ def validate_escalation_order(
     if not pause_seen:
         raise ValidationError(
             "assistant-visible text lacks relevant clarification/approval pause"
+        )
+
+
+def has_standard_approval_pause(text: str) -> bool:
+    approval_patterns = (
+        r"\bshould\s+(?:I|we)\s+(?:proceed|continue|implement|make\s+(?:the\s+)?changes?)\b[^?]*\?",
+        r"\b(?:do\s+you\s+want|would\s+you\s+like)\s+(?:me|us)\s+to\s+"
+        r"(?:proceed|continue|implement|make\s+(?:the\s+)?changes?)\b[^?]*\?",
+        r"\b(?:can|could)\s+you\s+(?:please\s+)?(?:approve|confirm)\b[^?]*\?",
+        r"\b(?:I|we)\s+(?:need|await)\s+your\s+(?:approval|confirmation)\b"
+        r"[^.!?]*\bbefore\s+(?:I|we\s+)?(?:proceed|continue|implement)",
+    )
+    return has_relevant_pause(text) or any(
+        re.search(pattern, text, re.IGNORECASE) for pattern in approval_patterns
+    )
+
+
+def has_standard_inline_design(text: str) -> bool:
+    words = re.findall(r"[A-Za-z0-9_./`-]+", text)
+    if not 12 <= len(words) <= 180:
+        return False
+
+    concrete_action = (
+        r"(?:add|build|calculate|change|compute|create|extend|implement|modify|"
+        r"parse|read|refactor|return|update|wire|write)\w*"
+    )
+    approach = re.search(
+        rf"\b(?:approach|design|implementation(?:\s+outline|\s+plan)?)\b"
+        rf"[^\n]{{0,100}}\b{concrete_action}\b|"
+        rf"\b(?:I|we)\s*(?:['’]ll|will)\s+{concrete_action}\b",
+        text,
+        re.IGNORECASE,
+    )
+    named_file = r"(?:`?[^\s`,;:]+/[A-Za-z0-9_.-]+`?|`?[A-Za-z0-9_-]+\.(?:js|ts|py|json|md|sh)`?)"
+    named_component = (
+        r"(?:CLI|command|parser|serializer|handler|service|module|component|"
+        r"test\s+suite|tests?)"
+    )
+    affected = re.search(
+        rf"\baffected\s+(?:files?|components?|surface)\b[^\n]{{0,140}}"
+        rf"(?:{named_file}|\b{named_component}\b)|"
+        rf"\b(?:touch|change|modify|update)\w*\b[^\n]{{0,80}}{named_file}",
+        text,
+        re.IGNORECASE,
+    )
+    verification = re.search(
+        r"\b(?:verification|test\s+strategy)\b[^\n]{0,140}"
+        r"\b(?:run|check|assert|compare|exercise|invoke|verify)\w*\b"
+        r"[^\n]{0,100}\b(?:npm\s+test|tests?|JSON|output|fixture|command|CLI)\b|"
+        r"\b(?:I|we)\s*(?:['’]ll|will)\s+"
+        r"(?:run|check|assert|compare|exercise|invoke|verify)\w*\b"
+        r"[^\n]{0,100}\b(?:npm\s+test|tests?|JSON|output|fixture|command|CLI)\b",
+        text,
+        re.IGNORECASE,
+    )
+    return bool(approach and affected and verification)
+
+
+def validate_standard_inline_design_order(
+    backend: str,
+    events: list[dict[str, Any]],
+    expected_plugin_root: Path | None,
+    expected_project_root: Path,
+) -> None:
+    inspection_seen = False
+    pre_mutation_text: list[str] = []
+    mutation_seen = False
+    for record in escalation_records(
+        backend,
+        events,
+        expected_plugin_root,
+        expected_project_root,
+        reject_unknown_actions=False,
+    ):
+        if record.kind == "invalid":
+            raise ValidationError(record.value)
+        if record.kind in {"inspection", "discovery"}:
+            inspection_seen = True
+            continue
+        if record.kind == "mutation":
+            mutation_seen = True
+            break
+        if record.kind == "text":
+            if inspection_seen:
+                pre_mutation_text.append(record.value)
+
+    if not inspection_seen:
+        raise ValidationError(
+            "standard inline design requires successful project inspection"
+        )
+    if not any(has_standard_inline_design(value) for value in pre_mutation_text):
+        position = " before first mutation" if mutation_seen else " after inspection"
+        raise ValidationError(
+            "standard inline design lacks concrete approach, affected files/components, "
+            f"and verification strategy{position}"
         )
 
 
@@ -1964,6 +2066,10 @@ def validate_case(
             r"\b(evidence|verif\w*|tests?\s+pass)",
             "verification evidence",
         )
+        if case == "standard" and has_standard_approval_pause(text):
+            raise ValidationError(
+                "standard inline design must not seek approval or pause"
+            )
     elif case == "strict":
         require_strict_pause(text)
     elif case == "override":
@@ -2018,6 +2124,13 @@ def validate(
 
     if case == "escalation":
         validate_escalation_order(
+            backend,
+            events,
+            expected_plugin_root,
+            transcript.parent / "project",
+        )
+    elif case == "standard":
+        validate_standard_inline_design_order(
             backend,
             events,
             expected_plugin_root,

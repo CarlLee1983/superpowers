@@ -382,6 +382,30 @@ def codex_command_lifecycle(
     ]
 
 
+def codex_standard_contract_events() -> list[dict]:
+    return [
+        *codex_command_lifecycle("cat src/schema.js", "standard-inspection"),
+        codex_event(
+            "Implementation outline:\n"
+            "- Approach: update the CLI summary calculation to total item prices.\n"
+            "- Affected files: src/cli.js and test/summary.test.js.\n"
+            "- Verification: run npm test and check the summary JSON count and total.",
+            item_id="standard-outline",
+        ),
+        codex_event(
+            "src/cli.js",
+            item_type="file_change",
+            event_type="item.started",
+            item_id="standard-mutation",
+        ),
+        codex_event(
+            "src/cli.js",
+            item_type="file_change",
+            item_id="standard-mutation",
+        ),
+    ]
+
+
 class ValidatorTest(unittest.TestCase):
     maxDiff = None
 
@@ -394,6 +418,8 @@ class ValidatorTest(unittest.TestCase):
         (self.project / "src/billing.js").write_text(
             "export const response = payment => ({ amount: payment.amount });\n"
         )
+        (self.project / "items.json").write_text('[{"price":2},{"price":3}]\n')
+        (self.project / "package.json").write_text('{"scripts":{"test":"node --test"}}\n')
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -451,12 +477,136 @@ class ValidatorTest(unittest.TestCase):
     def test_codex_counts_only_agent_messages(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},
-            codex_event("Mode: standard — bounded CLI change.\nTests passed."),
-            *codex_command_lifecycle("printf 'Mode: strict'", "item_2"),
+            codex_event("Mode: standard — bounded CLI change.", item_id="mode"),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                "Outline:\n"
+                "- Approach: update the CLI summary calculation for item totals.\n"
+                "- Affected files: src/cli.js and test/summary.test.js.\n"
+                "- Verification: run npm test and check the JSON summary output.",
+                item_id="outline",
+            ),
+            *codex_command_lifecycle("printf 'Mode: strict'", "mutation"),
+            codex_event("Tests passed.", item_id="result"),
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "standard", events)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_requires_ordered_inline_design_before_mutation(self) -> None:
+        outline = (
+            "Outline:\n"
+            "- Approach: update the CLI summary calculation to total item prices.\n"
+            "- Affected files: src/cli.js and test/summary.test.js.\n"
+            "- Verification: run npm test and check the summary JSON count and total."
+        )
+        mutation = codex_command_lifecycle("printf implementation", "mutation")
+        cases = (
+            (
+                "no outline",
+                [
+                    codex_event("Mode: standard — bounded CLI change.", item_id="mode"),
+                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    *mutation,
+                    codex_event("Tests passed.", item_id="result"),
+                ],
+                "standard inline design lacks concrete approach",
+            ),
+            (
+                "outline after mutation",
+                [
+                    codex_event("Mode: standard — bounded CLI change.", item_id="mode"),
+                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    *mutation,
+                    codex_event(outline, item_id="outline"),
+                    codex_event("Tests passed.", item_id="result"),
+                ],
+                "standard inline design lacks concrete approach",
+            ),
+            (
+                "vague outline",
+                [
+                    codex_event("Mode: standard — bounded CLI change.", item_id="mode"),
+                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    codex_event("Plan: implement/test.", item_id="outline"),
+                    *mutation,
+                    codex_event("Tests passed.", item_id="result"),
+                ],
+                "standard inline design lacks concrete approach",
+            ),
+            (
+                "approval pause",
+                [
+                    codex_event("Mode: standard — bounded CLI change.", item_id="mode"),
+                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    codex_event(
+                        outline + "\nShould I proceed with this implementation?",
+                        item_id="outline",
+                    ),
+                    *mutation,
+                    codex_event("Tests passed.", item_id="result"),
+                ],
+                "must not seek approval or pause",
+            ),
+        )
+        for label, body, error in cases:
+            with self.subTest(label=label):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    *body,
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "standard", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(error, result.stderr)
+
+    def test_standard_accepts_claude_and_codex_structured_inline_designs(self) -> None:
+        outline = (
+            "Implementation outline:\n"
+            "- Approach: update the CLI summary calculation to total item prices.\n"
+            "- Affected files: src/cli.js and test/summary.test.js.\n"
+            "- Verification: run npm test and check the summary JSON count and total."
+        )
+        claude_events = [
+            claude_init(),
+            claude_event("Mode: standard — bounded CLI behavior and coverage."),
+            *claude_read_lifecycle(self.project, "src/schema.js", "inspection"),
+            claude_event(outline),
+            claude_tool_event(
+                "Write",
+                {"file_path": str(self.project / "src/cli.js"), "content": "code"},
+                tool_id="mutation",
+            ),
+            claude_event("Tests passed and summary output verified."),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        codex_events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.", item_id="mode"
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(outline, item_id="outline"),
+            codex_event(
+                "src/cli.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event(
+                "src/cli.js",
+                item_type="file_change",
+                item_id="mutation",
+            ),
+            codex_event(
+                "Tests passed and summary output verified.", item_id="result"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        for backend, events in (("claude", claude_events), ("codex", codex_events)):
+            with self.subTest(backend=backend):
+                result = self.run_validator(backend, "standard", events)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_lean_accepts_an_evidence_heading_as_verification_reporting(self) -> None:
         events = [
@@ -2973,6 +3123,7 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: standard — bounded CLI change.\nTests passed.",
                 item_id="message",
             ),
+            *codex_standard_contract_events(),
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "standard", events)
@@ -3061,6 +3212,7 @@ class ValidatorTest(unittest.TestCase):
                         "Mode: standard — bounded change.\nTests passed.",
                         item_id="message",
                     ),
+                    *codex_standard_contract_events(),
                     {"type": "turn.completed", "usage": {}},
                 ]
                 result = self.run_validator("codex", "standard", events)
@@ -3173,6 +3325,7 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: standard — bounded change.\nTests passed.",
                 item_id="message",
             ),
+            *codex_standard_contract_events(),
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "standard", events)
@@ -3202,11 +3355,22 @@ class ValidatorTest(unittest.TestCase):
                 "/bin/zsh -lc \"sed -n '1,240p' items.json\"",
                 item_type="command_execution",
                 item_id="item_9",
+                exit_code=0,
             ),
             codex_event(
                 "/bin/zsh -lc \"sed -n '1,240p' package.json\"",
                 item_type="command_execution",
                 item_id="item_10",
+                exit_code=0,
+            ),
+            codex_event(
+                "Implementation outline:\n\n"
+                "- Approach: add a summary command that reads items.json and "
+                "computes count and total.\n"
+                "- Affected files: src/cli.js and test/summary.test.js.\n"
+                "- Verification: run npm test and invoke the CLI, checking its "
+                "JSON output for count and total.",
+                item_id="item_14",
             ),
             codex_event(
                 "Implemented the `summary` command.\n\nVerified:\n\n- `npm test` — "
