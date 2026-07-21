@@ -2877,15 +2877,14 @@ def validate_standard_inline_design_order(
             mutation_seen = True
             break
         if record.kind == "text":
-            if inspection_seen:
-                pre_mutation_text.append(record.value)
+            pre_mutation_text.append(record.value)
 
     if not inspection_seen:
         raise ValidationError(
             "standard inline design requires successful project inspection"
         )
     if not any(has_standard_inline_design(value) for value in pre_mutation_text):
-        position = " before first mutation" if mutation_seen else " after inspection"
+        position = " before first mutation" if mutation_seen else ""
         raise ValidationError(
             "standard inline design lacks concrete approach, affected files/components, "
             f"and verification strategy{position}"

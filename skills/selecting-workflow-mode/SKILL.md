@@ -163,14 +163,16 @@ the promotion line changes the active state. A second `Mode:` line is invalid,
 including `Mode: strict — promoted from ...`.
 
 If the active mode remains `standard`, complete its inline design contract
-before mutation. In `standard`, after project inspection and before the first mutation, output a short inline design and execution outline in a visible inline message.
+before mutation. In `standard`, after the `Mode:` declaration and any required immediate override warning, output one short inline design and execution outline before the first mutation.
 Use exactly this one-line shape:
 `Approach: <...>. Files/components: <...>. Verification: <...>.`
 Replace the placeholders with the intended approach, affected files or components, and verification strategy.
-This is a hard tool boundary: output the completed line immediately before the first `Write`, `Edit`, or mutating shell/tool call.
+This is a hard tool boundary: the completed line must precede the first `Write`, `Edit`, or mutating shell/tool call.
 A mutation before this line is invalid.
-When the host provides dedicated `Read`, `Glob`, or `Grep` tools, use them instead of shell listing for this standard inspection.
-Once inspection is complete, the next assistant-visible content must be the completed outline line; do not call the first mutation directly from an inspection result.
+A host bootstrap may require the outline before project inspection; otherwise,
+read-only inspection may come before or after it. Output the outline once.
+Do not repeat the outline after inspection.
+When the host provides dedicated `Read`, `Glob`, or `Grep` tools, use them instead of shell listing for standard inspection.
 Continue without an approval pause unless a missing decision would materially alter the result.
 
 An explicitly requested process skill runs without silently promoting the

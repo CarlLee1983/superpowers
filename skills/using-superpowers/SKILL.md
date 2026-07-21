@@ -75,13 +75,15 @@ After any project inspection, complete risk routing before mutation:
 - Active `strict`: follow the strict skills and their approval gates without
   emitting a duplicate promotion.
 
-Risk routing does not replace active-mode readiness. If `standard` remains active after routing, including an explicit `standard` override with strict evidence, output a short visible inline outline covering approach, affected files or components, and verification.
-After inspection and before the first mutation, use this exact one-line shape:
+Risk routing does not replace active-mode readiness. If task-entry mode is `standard`, output the short visible inline outline after any required immediate override warning and before the first mutation.
+Use this exact one-line shape:
 `Approach: <...>. Files/components: <...>. Verification: <...>.`
-This is a hard tool boundary: output the completed line immediately before the first `Write`, `Edit`, or mutating shell/tool call.
+This is a hard tool boundary: the completed line must precede the first `Write`, `Edit`, or mutating shell/tool call.
 A mutation before this line is invalid.
-When the host provides dedicated `Read`, `Glob`, or `Grep` tools, use them instead of shell listing for this standard inspection.
-Once inspection is complete, the next assistant-visible content must be the completed outline line; do not call the first mutation directly from an inspection result.
+A host bootstrap may move this outline before project inspection. Otherwise,
+read-only inspection may come before or after it. Output the outline once.
+Do not repeat the outline after inspection.
+When the host provides dedicated `Read`, `Glob`, or `Grep` tools, use them instead of shell listing for standard inspection.
 If `lean` remains active, proceed directly after any required warning. If
 `strict` is active, follow its approval gates. Do not make the first mutation
 until both applicable obligations are complete.

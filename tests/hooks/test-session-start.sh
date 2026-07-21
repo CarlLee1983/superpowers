@@ -192,7 +192,7 @@ assert_command_output \
 assert_command_output \
     "Claude Code injects the pre-first-mutation checkpoint at top level" \
     "nested" \
-    "Before the first mutation, complete risk routing, then active-mode readiness" \
+    "Before the first mutation, complete risk routing" \
     "" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
@@ -201,7 +201,7 @@ assert_command_output \
 assert_command_output \
     "Claude Code preserves standard readiness after an override warning" \
     "nested" \
-    "explicit standard plus strict evidence means warn, retain standard, then output the standard inline outline before mutation" \
+    "CLAUDE STANDARD ENTRY: after the Mode line and any required immediate override warning" \
     "" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
@@ -228,7 +228,7 @@ assert_command_output \
 assert_command_output \
     "Claude Code injects standard and promotion sequences" \
     "nested" \
-    "STANDARD SEQUENCE: on hosts with dedicated Read, Glob, or Grep, inspect with those tools instead of shell listing" \
+    "CLAUDE STANDARD ENTRY: after the Mode line and any required immediate override warning, output exactly" \
     "" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
@@ -244,9 +244,9 @@ assert_command_output \
     bash "$HOOK_UNDER_TEST"
 
 assert_command_output \
-    "Claude Code injects the closed standard inspection sequence" \
+    "Claude Code injects the closed standard entry sequence" \
     "nested" \
-    "do not call the first mutation directly from an inspection result" \
+    "Do not inspect the project or call another tool before this outline. Do not repeat it after inspection" \
     "" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \

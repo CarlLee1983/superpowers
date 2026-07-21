@@ -667,6 +667,29 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator(backend, "standard", events)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_standard_accepts_outline_before_project_inspection(self) -> None:
+        outline = (
+            "Approach: inspect and update the CLI summary calculation to total "
+            "item prices. Files/components: src/cli.js and test/summary.test.js. "
+            "Verification: run npm test and check the summary JSON count and total."
+        )
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.",
+                item_id="mode",
+            ),
+            codex_event(outline, item_id="outline"),
+            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            *codex_command_lifecycle("printf implementation", "mutation"),
+            codex_event("Tests passed.", item_id="result"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "standard", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_standard_accepts_closed_claude_ls_discovery(self) -> None:
         events = [
             claude_init(),
