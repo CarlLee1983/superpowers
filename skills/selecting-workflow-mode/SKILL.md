@@ -20,10 +20,18 @@ permissions, and approvals remain authoritative outside this workflow.
 
 ## Entry routes
 
-If an active workflow mode is already present, this is re-entry, not task entry.
-Do not output a new `Mode:` declaration on re-entry. Apply the override and promotion rules below to the existing state.
-Skip task-entry selection and declaration; the already loaded matrix and active
-state remain authoritative for this task.
+First determine whether the request continues the same task or starts a new one
+under Continuity and change below. Re-entry applies only when the selector is invoked again within the same ongoing task, such as after new evidence appears
+or debugging reveals materially higher risk.
+
+If an active workflow mode is already present for that ongoing task, this is
+re-entry, not task entry. Do not output a new `Mode:` declaration on re-entry.
+Apply the override and promotion rules below to the existing state. Skip
+task-entry selection and declaration; the already loaded matrix and active state
+remain authoritative for this task.
+
+A prior active mode or user override does not make a materially different requested outcome a re-entry.
+At that new-task boundary, reset the prior active mode and user override for routing, load the risk matrix, classify the new task, and emit one fresh `Mode:` declaration before task-specific action.
 
 If no active workflow mode is present, follow task-entry selection.
 
@@ -56,7 +64,9 @@ Do not write mode state to disk.
 
 A materially different requested outcome starts a new task. Corrections,
 acceptance criteria, status questions, and implementation follow-ups retain
-the active mode unless they add risk.
+the active mode unless they add risk. Starting a new task resets the prior
+active mode and user override for routing and follows task-entry selection;
+same-task follow-ups may re-enter the selector without a new declaration.
 
 When new risk emerges, announce the reason before promoting the mode.
 Never demote automatically. The human partner may change the mode at any time.
