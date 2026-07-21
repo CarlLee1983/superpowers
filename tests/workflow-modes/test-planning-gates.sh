@@ -27,6 +27,12 @@ assert_contains "$brainstorming" '- `standard` or `lean`: return control without
 assert_contains "$brainstorming" "Standard's inline design is owned by the selector contract" "brainstorming does not hijack standard"
 assert_contains "$brainstorming" '- no active mode: invoke `selecting-workflow-mode` before continuing.' "brainstorming selects when mode is absent"
 assert_contains "$brainstorming" "Do not reclassify the task here." "brainstorming does not reclassify"
+assert_contains "$brainstorming" "Approval is only a new user reply sent after the design has been presented." "brainstorming requires post-design user approval"
+assert_contains "$brainstorming" 'An initial request to `begin work` or `start work` is not design approval.' "brainstorming rejects initial begin-work approval"
+assert_contains "$brainstorming" "Until that approval reply arrives, only read-only project inspection, visible questions, and visible design or options are allowed." "brainstorming limits pre-approval actions"
+assert_contains "$brainstorming" "Do not write or commit a spec or plan, create or enter a worktree, invoke a planning or implementation skill, or make project changes before approval." "brainstorming blocks pre-approval artifacts and skills"
+assert_contains "$brainstorming" "When the user explicitly asks to compare a specific number of options and the existing context is sufficient, present that many named options with trade-offs before asking a clarifying question." "brainstorming answers bounded option requests directly"
+assert_contains "$brainstorming" "Keep the project unchanged during that requested comparison." "brainstorming keeps explicit option comparison read-only"
 
 assert_contains "$writing_plans" "description: Use when strict mode has an approved design, standard mode needs a durable cross-session handoff, or the human partner explicitly requests a written implementation plan" "writing-plans has exact trigger description"
 assert_contains "$writing_plans" "Run this skill when explicitly requested." "writing-plans preserves explicit requests"

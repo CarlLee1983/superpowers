@@ -22,6 +22,12 @@ Start by understanding the current project context, then ask questions one at a 
 
 <HARD-GATE>
 Do NOT invoke any implementation skill, write any code, scaffold any project, or take any implementation action until you have presented a design and the user has approved it. This applies to EVERY project regardless of perceived simplicity.
+
+Approval is only a new user reply sent after the design has been presented.
+An initial request to `begin work` or `start work` is not design approval.
+Until that approval reply arrives, only read-only project inspection, visible questions, and visible design or options are allowed.
+Do not write or commit a spec or plan, create or enter a worktree, invoke a planning or implementation skill, or make project changes before approval.
+Do not create task or todo items during this pre-approval phase.
 </HARD-GATE>
 
 ## Anti-Pattern: "This Is Too Simple To Need A Design"
@@ -76,6 +82,7 @@ digraph brainstorming {
 **Understanding the idea:**
 
 - Check out the current project state first (files, docs, recent commits)
+- When the user explicitly asks to compare a specific number of options and the existing context is sufficient, present that many named options with trade-offs before asking a clarifying question. Keep the project unchanged during that requested comparison.
 - Before asking detailed questions, assess scope: if the request describes multiple independent subsystems (e.g., "build a platform with chat, file storage, billing, and analytics"), flag this immediately. Don't spend questions refining details of a project that needs to be decomposed first.
 - If the project is too large for a single spec, help the user decompose into sub-projects: what are the independent pieces, how do they relate, what order should they be built? Then brainstorm the first sub-project through the normal design flow. Each sub-project gets its own spec → plan → implementation cycle.
 - For appropriately-scoped projects, ask questions one at a time to refine the idea

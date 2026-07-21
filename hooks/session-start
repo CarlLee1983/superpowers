@@ -9,6 +9,8 @@ PLUGIN_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Read using-superpowers content
 using_superpowers_content=$(cat "${PLUGIN_ROOT}/skills/using-superpowers/SKILL.md" 2>&1 || echo "Error reading using-superpowers skill")
+selector_content=$(cat "${PLUGIN_ROOT}/skills/selecting-workflow-mode/SKILL.md" 2>&1 || echo "Error reading selecting-workflow-mode skill")
+risk_matrix_content=$(cat "${PLUGIN_ROOT}/skills/selecting-workflow-mode/references/risk-matrix.md" 2>&1 || echo "Error reading workflow risk matrix")
 
 # Escape string for JSON embedding using bash parameter substitution.
 # Each ${s//old/new} is a single C-level pass - orders of magnitude
@@ -24,7 +26,9 @@ escape_for_json() {
 }
 
 using_superpowers_escaped=$(escape_for_json "$using_superpowers_content")
-session_context="<EXTREMELY_IMPORTANT>\nYou have superpowers.\n\n**Below is the full content of your 'superpowers:using-superpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**\n\n${using_superpowers_escaped}\n</EXTREMELY_IMPORTANT>"
+selector_escaped=$(escape_for_json "$selector_content")
+risk_matrix_escaped=$(escape_for_json "$risk_matrix_content")
+session_context="<EXTREMELY_IMPORTANT>\nTask-entry sources are already loaded below. Before any Skill, Read, or task-specific tool, classify from these sources and output exactly one visible Mode: <lean|standard|strict> — <reason>. line. Do not invoke or reread the selector or matrix at task entry. After the declaration, use other relevant skills. For pre-promotion inspection, use Read only; never use ToolSearch, Agent, or Bash. Read named source files and likely adjacent consumer files directly.\n\n**using-superpowers source:**\n\n${using_superpowers_escaped}\n\n**selecting-workflow-mode source:**\n\n${selector_escaped}\n\n**workflow risk-matrix source:**\n\n${risk_matrix_escaped}\n</EXTREMELY_IMPORTANT>"
 
 # Output context injection as JSON.
 # Cursor hooks expect additional_context (snake_case).

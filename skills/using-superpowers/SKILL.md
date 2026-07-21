@@ -1,6 +1,6 @@
 ---
 name: using-superpowers
-description: Use when starting any conversation - establishes how to find and use skills, requiring skill invocation before ANY response including clarifying questions
+description: Use at every task entry. Codex must read this skill alone, then selecting-workflow-mode alone, then its risk matrix alone in standalone read-only commands; output exactly one Mode line before any project command or other tool.
 ---
 
 <SUBAGENT-STOP>
@@ -16,8 +16,9 @@ skills, and skills take precedence over default behavior.
 
 For every new user task:
 
-1. Invoke `selecting-workflow-mode`.
-2. Declare the selected mode once.
+1. Ensure `selecting-workflow-mode` and its risk matrix are loaded. A platform
+   bootstrap may mark them already loaded; do not reload them in that case.
+2. Declare the selected mode exactly once.
 3. Discover domain skills and mode-permitted process skills.
 4. Announce each skill when it causes an action or pause.
 
@@ -25,6 +26,11 @@ After the selector returns, the next assistant output is its exact `Mode:`
 declaration line. Task entry is incomplete until that line is output.
 
 Do not invoke a general process skill before a mode is active.
+
+On Codex, read this skill alone, then read `selecting-workflow-mode` alone, then read its risk matrix alone.
+Use one standalone read-only command for each file. Do not combine those reads with each other or with project inspection.
+After the matrix read, output the declaration before any project command or
+other tool. Do not read platform references until the mode is active.
 
 ## Skill selection
 

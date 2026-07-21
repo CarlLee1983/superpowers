@@ -20,6 +20,8 @@ The result must remain reversible and testable, with no strict trigger.
 
 Default to `standard` when evidence does not clearly distinguish lean from
 standard. Do not choose strict merely because the task is unfamiliar.
+A schema or consumer rename with unknown blast radius starts in `standard`
+until inspection establishes whether a strict compatibility surface is present.
 
 ## Strict
 

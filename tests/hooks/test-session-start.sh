@@ -153,6 +153,42 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash "$HOOK_UNDER_TEST"
 
+assert_command_output \
+    "Claude Code marks task-entry sources already loaded and declaration-first" \
+    "nested" \
+    "Task-entry sources are already loaded below. Before any Skill, Read, or task-specific tool" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the selector source" \
+    "nested" \
+    "# Selecting Workflow Mode" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the risk-matrix source" \
+    "nested" \
+    "# Workflow Risk Matrix" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code requires structural inspection before promotion" \
+    "nested" \
+    "For pre-promotion inspection, use Read only; never use ToolSearch, Agent, or Bash" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
 wrapper_home="$(make_home run-hook-wrapper)"
 assert_command_output \
     "run-hook.cmd wrapper dispatches to the named session-start script" \
