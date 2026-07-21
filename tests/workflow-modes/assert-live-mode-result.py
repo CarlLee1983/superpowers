@@ -597,6 +597,7 @@ def has_relevant_pause(text: str) -> bool:
         r"(?:requirements?|scope|rollback\s+requirements?|"
         r"migration\s+(?:approach|plan|strategy|options?)|"
         r"rollout(?:\s+(?:approach|plan|strategy|options?))?|"
+        r"public\s+API\s+transition|"
         r"API\s+(?:compatibility|contract(?:\s+change)?|changes?|versions?|"
         r"breaking\s+change)|compatibility(?:\s+(?:requirements?|plan|"
         r"aliases?))?|breaking\s+(?:API\s+)?(?:change|release)|"
@@ -1418,6 +1419,7 @@ def require_affirmative_brainstorming(
         r"(?:the\s+)?brainstorming(?:\s+skill)?\b",
         r"\bbrainstorming\s+skill\s+(?:is|was)\s+"
         r"(?:active|loaded|invoked|running|used)\b",
+        r"\bbrainstorming\s+skill\s+(?:now\s+)?guides\b",
         r"\bbrainstorming\b.{0,100}\b(?:I|we)(?:'ll|\s+will)\s+"
         r"(?:invoke|run|use)\s+(?:that|the)\s+skill\b",
     )

@@ -3226,7 +3226,8 @@ class ValidatorTest(unittest.TestCase):
             {"type": "item.started", "item": {"id": "item_7", "type": "todo_list"}},
             codex_event(
                 "I’ll inspect the repository structure, existing payment model/API, "
-                "tests, and recent history.",
+                "tests, and recent history. I’m only gathering context at this stage; "
+                "the strict workflow blocks code changes until the design is approved.",
                 item_id="item_8",
             ),
             codex_event(
@@ -3274,9 +3275,15 @@ class ValidatorTest(unittest.TestCase):
                 item_id="item_11",
             ),
             codex_event(
-                "Which API breaking change do you want?\n\n"
-                "1. **Versioned API:** keep the dollar-based endpoint temporarily.\n"
-                "2. **New field:** add `amount_cents` and deprecate the dollar field.",
+                "The repository currently contains only a README—no schema, API, "
+                "runtime, or deployment context—so the design must establish the "
+                "contract first.\n\nWhich public API transition do you want?\n\n"
+                "1. **Versioned API (recommended):** keep the dollar-based endpoint "
+                "temporarily; introduce a new version using integer cents.\n"
+                "2. **New field:** add `amount_cents`, deprecate the dollar field, "
+                "then remove it later.\n"
+                "3. **In-place breaking change:** keep the existing field name but "
+                "change its meaning from dollars to cents in one coordinated release.",
                 item_id="item_14",
             ),
             {"type": "item.completed", "item": {"id": "item_7", "type": "todo_list"}},
@@ -3291,8 +3298,8 @@ class ValidatorTest(unittest.TestCase):
                 item_id="item_4",
             ),
             codex_event(
-                "The mode is active. The brainstorming skill is running for a "
-                "small design comparison only; it will not result in edits.",
+                "The mode is active. The brainstorming skill now guides a small "
+                "design comparison only; it will not result in edits.",
                 item_id="item_5",
             ),
             {"type": "item.started", "item": {"id": "item_7", "type": "todo_list"}},
@@ -3309,23 +3316,25 @@ class ValidatorTest(unittest.TestCase):
             ),
             codex_event(
                 "The current function is `greet(name) => \"Hello <name>\"`.\n\n"
-                "Option 1: `greet` — emphasize the action of greeting.\n"
-                "Option 2: `formatGreeting` — emphasize the returned string.\n\n"
-                "Which option do you prefer?",
+                "Should its name emphasize:\n\n- the action of greeting, or\n- "
+                "that it returns/formats a greeting string?",
                 item_id="item_11",
             ),
             {"type": "item.completed", "item": {"id": "item_7", "type": "todo_list"}},
             {"type": "turn.completed", "usage": {}},
         ]
 
-        for case, events in (
-            ("standard", standard_events),
-            ("strict", strict_events),
-            ("explicit-skill", explicit_events),
-        ):
+        for case, events in (("standard", standard_events), ("strict", strict_events)):
             with self.subTest(case=case):
                 result = self.run_validator("codex", case, events)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+        explicit_result = self.run_validator(
+            "codex", "explicit-skill", explicit_events
+        )
+        self.assertNotEqual(explicit_result.returncode, 0)
+        self.assertIn("two distinct positive options", explicit_result.stderr)
+        self.assertNotIn("item lifecycle", explicit_result.stderr)
 
     def test_strict_requires_a_relevant_question_or_approval_request(self) -> None:
         for text in (
