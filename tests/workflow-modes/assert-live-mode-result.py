@@ -24,11 +24,6 @@ DECLARATION = re.compile(r"(?im)^\s*Mode:\s*(lean|standard|strict)\b")
 PROMOTION = re.compile(
     r"(?i)^Promoting\s+to\s+(lean|standard|strict)\s+[—-]\s*([^\n]+)$"
 )
-CANONICAL_PROMOTION_REASON = (
-    "inspection found src/schema.js defines the amount field consumed by "
-    "src/billing.js as part of the public payment API; renaming it would break "
-    "compatibility."
-)
 WORKFLOW_TRANSITION = re.compile(
     r"\b(?P<verb>promot(?:e|es|ed|ing)|escalat(?:e|es|ed|ing)|"
     r"rais(?:e|es|ed|ing)|upgrad(?:e|es|ed|ing)|"
@@ -223,15 +218,6 @@ def split_read_command(command: str) -> list[str] | None:
     return arguments
 
 
-def split_direct_command(command: str) -> list[str] | None:
-    if re.search(r"[;&|<>\n`]|\$\(", command):
-        return None
-    try:
-        return shlex.split(command, posix=True)
-    except ValueError:
-        return None
-
-
 def exact_bootstrap_path(argument: str, expected_root: Path) -> bool:
     candidate = Path(argument)
     if not candidate.is_absolute():
@@ -332,12 +318,23 @@ def valid_claude_inspection(
     ) is not None
 
 
-def project_operands(arguments: list[str], expected_project_root: Path) -> bool:
+def safe_claude_read_probe(tool_input: object, expected_project_root: Path) -> bool:
+    return isinstance(tool_input, dict) and project_path(
+        tool_input.get("file_path"), expected_project_root
+    ) is not None
+
+
+def project_operands(
+    arguments: list[str],
+    expected_project_root: Path,
+    *,
+    require_file: bool,
+) -> bool:
     return bool(arguments) and all(
         project_path(
             argument,
             expected_project_root,
-            require_file=True,
+            require_file=require_file,
         ) is not None
         for argument in arguments
     )
@@ -347,10 +344,12 @@ def is_read_only_inspection_command(
     command: str,
     expected_root: Path | None,
     expected_project_root: Path,
+    *,
+    require_files: bool = True,
 ) -> bool:
     if expected_root is not None and is_codex_bootstrap(command, expected_root):
         return False
-    arguments = split_direct_command(command)
+    arguments = split_read_command(command)
     if not arguments:
         return False
     executable = arguments[0]
@@ -359,7 +358,11 @@ def is_read_only_inspection_command(
         return (
             bool(operands)
             and not any(operand.startswith("-") for operand in operands)
-            and project_operands(operands, expected_project_root)
+            and project_operands(
+                operands,
+                expected_project_root,
+                require_file=require_files,
+            )
         )
     if executable == "sed":
         operands = arguments[3:]
@@ -369,7 +372,11 @@ def is_read_only_inspection_command(
             and re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", arguments[2])
             is not None
             and not any(operand.startswith("-") for operand in operands)
-            and project_operands(operands, expected_project_root)
+            and project_operands(
+                operands,
+                expected_project_root,
+                require_file=require_files,
+            )
         )
     return False
 
@@ -732,6 +739,10 @@ def escalation_records(
                             name, tool_input, expected_project_root
                         ):
                             tool_uses[tool_id] = "inspection"
+                        elif name == "Read" and safe_claude_read_probe(
+                            tool_input, expected_project_root
+                        ):
+                            tool_uses[tool_id] = "inspection_probe"
                         else:
                             tool_uses[tool_id] = "invalid"
                             add("invalid", f"invalid project inspection: {name}", event_index)
@@ -780,7 +791,7 @@ def escalation_records(
                     add("invalid", f"duplicate tool result for {tool_id!r}", event_index)
                     continue
                 completed_tool_uses.add(tool_id)
-                if tool_uses[tool_id] == "inspection":
+                if tool_uses[tool_id] in {"inspection", "inspection_probe"}:
                     if "is_error" in block and type(block["is_error"]) is not bool:
                         add(
                             "invalid",
@@ -788,17 +799,20 @@ def escalation_records(
                             event_index,
                         )
                     elif block.get("is_error") is True:
+                        continue
+                    elif tool_uses[tool_id] == "inspection":
+                        add("inspection", tool_id, event_index)
+                    else:
                         add(
                             "invalid",
-                            f"inspection tool result is_error=true for {tool_id!r}",
+                            f"inspection probe claimed success for missing path {tool_id!r}",
                             event_index,
                         )
-                    else:
-                        add("inspection", tool_id, event_index)
         missing_results = [
             tool_id
             for tool_id, kind in tool_uses.items()
-            if kind == "inspection" and tool_id not in observed_tool_results
+            if kind in {"inspection", "inspection_probe"}
+            and tool_id not in observed_tool_results
         ]
         if missing_results:
             records.insert(
@@ -832,26 +846,40 @@ def escalation_records(
             elif is_codex_bootstrap(command, expected_plugin_root):
                 continue
             elif is_read_only_inspection_command(
-                command, expected_plugin_root, expected_project_root
+                command,
+                expected_plugin_root,
+                expected_project_root,
+                require_files=False,
             ):
                 continue
             else:
                 add("mutation", command, event_index)
         elif event.get("type") == "item.completed" and item_type == "command_execution":
             command = item.get("command")
-            if (
-                isinstance(command, str)
-                and not is_codex_bootstrap(command, expected_plugin_root)
-                and is_read_only_inspection_command(
+            if isinstance(command, str) and not is_codex_bootstrap(
+                command, expected_plugin_root
+            ) and is_read_only_inspection_command(
+                command,
+                expected_plugin_root,
+                expected_project_root,
+                require_files=False,
+            ):
+                exit_code = item.get("exit_code")
+                complete_inspection = is_read_only_inspection_command(
                     command, expected_plugin_root, expected_project_root
                 )
-            ):
-                if item.get("exit_code") == 0:
+                if exit_code == 0 and complete_inspection:
                     add("inspection", command, event_index)
-                else:
+                elif exit_code is None:
                     add(
                         "invalid",
-                        "Codex command lacks successful completed inspection",
+                        "Codex command lacks a completed inspection exit code",
+                        event_index,
+                    )
+                elif exit_code == 0:
+                    add(
+                        "invalid",
+                        "Codex inspection claimed success for an invalid project operand",
                         event_index,
                     )
         elif event.get("type") == "item.started" and item_type == "file_change":
@@ -868,8 +896,49 @@ def escalation_records(
     return records
 
 
-def has_canonical_promotion_reason(reason: str) -> bool:
-    return reason == CANONICAL_PROMOTION_REASON
+def has_structured_promotion_relation(reason: str) -> bool:
+    normalized = re.sub(r"`+", "", reason)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    identifier = r"[A-Za-z_$][\w$]*"
+    source = r"src/schema\.js\s+defines\s+(?:the\s+)?amount(?:\s+field)?"
+    consumer = (
+        rf"(?:,?\s+(?:is\s+)?(?:used|consumed)\s+by\s+"
+        rf"(?:(?:{identifier})\s+in\s+)?src/billing\.js"
+        rf"(?:'s\s+{identifier}|\s+\([^;]+\))?|"
+        rf"\s+(?:and\s+)?src/billing\.js"
+        rf"(?:'s\s+{identifier}|\s+\([^;]+\))?\s+"
+        rf"(?:uses|consumes)\s+(?:the\s+)?(?:amount|it)(?:\s+field)?)"
+    )
+    public_surface = (
+        r"(?:as\s+part\s+of|in)\s+(?:(?:the|a)\s+)?(?:production\s+)?public\s+"
+        r"(?:billing|payments?)(?:\s+(?:billing|payments?))?\s+api"
+        r"(?:\s+(?:billing|payments?|response|surface|compatibility))*"
+    )
+    evidence = rf"inspection\s+found\s+{source}{consumer}\s+{public_surface}"
+    rename = (
+        r"renaming\s+(?:the\s+)?(?:amount|it)(?:\s+field)?"
+        r"(?:\s+to\s+amountcents)?"
+    )
+    breaking_object = (
+        r"(?:compatibility|(?:the\s+)?(?:public\s+|external\s+)?"
+        r"(?:(?:billing|payments?)\s+)?api(?:'s)?\s+"
+        r"(?:change|response(?:\s+shape)?|compatibility(?:\s+change)?|contract)"
+        r"(?:\s+for\s+(?:external|existing)\s+(?:clients?|consumers?))?)"
+    )
+    breaking_change = (
+        r"(?:a\s+)?breaking\s+"
+        r"(?:(?:public|external|billing|payments?)\s+)*api\s+"
+        r"(?:change|response(?:\s+shape)?|compatibility(?:\s+change)?|contract)"
+    )
+    consequence = (
+        rf"(?:would|will)\s+(?:break\s+{breaking_object}|"
+        rf"(?:create|cause)\s+{breaking_change})"
+    )
+    return re.fullmatch(
+        rf"{evidence}\s*;\s*{rename}\s+{consequence}\.?",
+        normalized,
+        re.IGNORECASE,
+    ) is not None
 
 
 def validate_escalation_order(
@@ -931,9 +1000,9 @@ def validate_escalation_order(
                     )
                 if match.group(1).lower() != "strict":
                     raise ValidationError("escalation requires promotion to strict")
-                if not has_canonical_promotion_reason(match.group(2)):
+                if not has_structured_promotion_relation(match.group(2)):
                     raise ValidationError(
-                        "strict promotion lacks canonical fixture evidence reason"
+                        "strict promotion lacks a closed structured promotion relation"
                     )
                 if not inspection_seen:
                     raise ValidationError(
