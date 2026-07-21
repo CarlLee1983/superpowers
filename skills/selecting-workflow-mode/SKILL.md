@@ -53,8 +53,13 @@ When new risk emerges, announce the reason before promoting the mode.
 Never demote automatically. The human partner may change the mode at any time.
 
 After any project inspection and before the first mutation, re-evaluate the
-observed evidence against the strict triggers. If inspection reveals a strict
-trigger, output exactly this evidence-backed line, replacing every placeholder:
+observed evidence against the strict triggers.
+
+If `User override` is `lean` or `standard`, warn without promoting and keep that explicitly chosen mode active.
+Continue under that mode unless host safety or permission controls require a pause.
+If `User override` is `strict`, strict is already active; do not output a promotion.
+Only when `User override` is `none` may newly discovered strict risk trigger the canonical promotion.
+In that case, output exactly this evidence-backed line, replacing every placeholder:
 
 Keep pre-promotion inspection independently auditable and read-only.
 When dedicated Read, Glob, or Grep tools are available, use only those; do not use a
@@ -76,9 +81,7 @@ Do not name a file in the promotion line unless that exact path was read literal
 
 Then pause before the first mutation and ask the human partner whether to
 proceed in strict mode. Do not mutate until they answer. Do not output another `Mode:` line:
-the promotion line changes the active state. If the user forced
-lean, warn without promoting, keep lean active, and continue unless host safety
-or permission controls require a pause.
+the promotion line changes the active state.
 
 An explicitly requested process skill runs without silently promoting the
 rest of the task.

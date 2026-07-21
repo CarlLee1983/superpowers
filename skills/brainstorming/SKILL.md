@@ -36,7 +36,10 @@ Every project goes through this process. A todo list, a single-function utility,
 
 ## Checklist
 
-You MUST create a task for each of these items and complete them in order:
+Follow these steps in order:
+
+Before approval, track steps 1–5 in the visible conversation without creating tool-backed task or todo items.
+After post-design approval, create tasks for the remaining checklist items and complete them in order.
 
 1. **Explore project context** — check files, docs, recent commits
 2. **Offer the visual companion just-in-time** — NOT upfront. The first time a question would genuinely be clearer shown than described, offer it then (its own message); on approval its browser tab opens for you. If no visual question ever arises, never offer it. See the Visual Companion section below.

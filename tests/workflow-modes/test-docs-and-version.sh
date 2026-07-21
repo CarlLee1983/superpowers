@@ -57,7 +57,7 @@ guide_contract_valid() {
   expected_lean='Lean mode is for clear, localized, reversible work. The agent inspects, changes, runs the most relevant verification, reviews the diff, and reports evidence. Written specs, worktrees, subagents, and independent review are optional. Strict TDD is optional in lean mode. Relevant verification remains mandatory.'
   expected_standard='Standard mode is for bounded multi-component work. The agent gives a short inline design and execution outline, then proceeds without an approval pause. It uses test-first development, isolation, subagents, and independent review only when they materially control risk.'
   expected_strict='Strict mode is for security, payments, production data, migrations, irreversible operations, breaking APIs, broad architecture, or material ambiguity. It preserves the complete upstream Superpowers workflow.'
-  expected_guarantees='- Fresh verification evidence is required in every mode. - Explicit skill requests still run. - Domain skills remain active. - Host and platform safety controls remain active. - The agent may promote a mode when new risk appears, but never demotes it automatically within a task. - A forced lean mode on high-risk work produces a warning but remains lean.'
+  expected_guarantees='- Fresh verification evidence is required in every mode. - Explicit skill requests still run. - Domain skills remain active. - Host and platform safety controls remain active. - Automatic promotion on newly discovered risk applies only when no explicit mode override is active. - An explicitly selected lean or standard mode remains active after newly discovered strict risk; the agent warns instead of auto-promoting. - The agent never demotes a mode automatically within a task.'
 
   preamble="$(guide_preamble_text "$file" | normalize_contract_text)"
   lean="$(section_text "$file" "## Lean" | normalize_contract_text)"
@@ -109,9 +109,10 @@ public_guide_checks_valid() {
     "Relevant verification remains mandatory" \
     "proceeds without an approval pause" \
     "complete upstream Superpowers workflow" \
-    "forced lean mode on high-risk work produces a warning but remains lean" \
-    "may promote a mode when new risk appears" \
-    "never demotes it" \
+    "Automatic promotion on newly discovered risk applies only when no explicit mode override is active" \
+    "explicitly selected lean or standard mode remains active after newly discovered strict risk" \
+    "warns instead of auto-promoting" \
+    "never demotes a mode automatically" \
     "Fresh verification evidence is required in every mode" \
     "Explicit skill requests still run" \
     "Domain skills" \
@@ -203,9 +204,10 @@ if [[ -f "$DOC" ]]; then
   assert_normalized_guide_contains "$normalized_guide" "Relevant verification remains mandatory" "guide keeps lean verification mandatory"
   assert_normalized_guide_contains "$normalized_guide" "proceeds without an approval pause" "guide keeps standard execution continuous"
   assert_normalized_guide_contains "$normalized_guide" "complete upstream Superpowers workflow" "guide preserves the upstream strict workflow"
-  assert_normalized_guide_contains "$normalized_guide" "forced lean mode on high-risk work produces a warning but remains lean" "guide documents forced-lean warning behavior"
-  assert_normalized_guide_contains "$normalized_guide" "may promote a mode when new risk appears" "guide documents risk promotion"
-  assert_normalized_guide_contains "$normalized_guide" "never demotes it" "guide forbids automatic demotion"
+  assert_normalized_guide_contains "$normalized_guide" "Automatic promotion on newly discovered risk applies only when no explicit mode override is active" "guide limits promotion to automatic modes"
+  assert_normalized_guide_contains "$normalized_guide" "explicitly selected lean or standard mode remains active after newly discovered strict risk" "guide preserves explicit non-strict overrides"
+  assert_normalized_guide_contains "$normalized_guide" "warns instead of auto-promoting" "guide documents override warning behavior"
+  assert_normalized_guide_contains "$normalized_guide" "never demotes a mode automatically" "guide forbids automatic demotion"
   assert_normalized_guide_contains "$normalized_guide" "Fresh verification evidence is required in every mode" "guide documents the verification invariant"
   assert_normalized_guide_contains "$normalized_guide" "Explicit skill requests still run" "guide preserves explicit skill requests"
   assert_normalized_guide_contains "$normalized_guide" "Domain skills" "guide preserves domain skills"
@@ -222,6 +224,7 @@ if [[ -f "$DOC" ]]; then
   assert_guide_mutation_rejected "strict-partial-upstream" "## Strict" "Strict follows only part of the upstream Superpowers workflow."
   assert_guide_mutation_rejected "model-capability-name-routing" "## Guarantees" "Mode selection routes by model capability and name."
   assert_guide_mutation_rejected "automatic-mode-lowering" "## Guarantees" "The agent may lower the mode automatically."
+  assert_guide_mutation_rejected "explicit-standard-auto-promotion" "## Guarantees" "An explicitly selected standard mode automatically promotes when strict risk appears."
   wording_mutation="$TEST_TMP/legitimate-wording-change.md"
   sed 's/Relevant verification remains mandatory/Relevant verification is still mandatory/' \
     "$DOC" >"$wording_mutation"
@@ -281,6 +284,7 @@ assert_contains "$README" "standard" "README documents standard mode"
 assert_contains "$README" "without an approval pause" "README documents continuous standard execution"
 assert_contains "$README" "Relevant domain skills still apply" "README preserves domain skills"
 assert_contains "$README" "Risk-proportionate TDD" "README documents risk-proportionate TDD"
+assert_contains "$README" "An explicit lean or standard override remains active if later inspection discovers strict risk; the agent warns instead of auto-promoting." "README preserves explicit non-strict overrides"
 assert_not_matches "$README" "upstream.*typo|typo.*upstream" "README makes no unsupported upstream typo claim"
 how_it_works="$(section_text "$README" "## How it works")"
 [[ "$how_it_works" == *"Every task starts with workflow-mode selection"* ]] \

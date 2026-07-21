@@ -26,7 +26,9 @@ if [[ -f "$SELECTOR" ]]; then
   assert_contains "$SELECTOR" "A wildcard or glob read may discover candidate paths, but it cannot establish consumer identity or count as source or consumer proof." "selector limits wildcard reads to discovery"
   assert_contains "$SELECTOR" "Do not name a file in the promotion line unless that exact path was read literally and successfully." "selector forbids fabricated promotion paths"
   assert_contains "$SELECTOR" 'Do not output another `Mode:` line' "selector forbids a second mode declaration during promotion"
-  assert_contains "$SELECTOR" "warn without promoting" "selector preserves forced-lean semantics during re-evaluation"
+  assert_contains "$SELECTOR" 'If `User override` is `lean` or `standard`, warn without promoting and keep that explicitly chosen mode active.' "selector preserves explicit non-strict overrides"
+  assert_contains "$SELECTOR" 'If `User override` is `strict`, strict is already active; do not output a promotion.' "selector preserves explicit strict override"
+  assert_contains "$SELECTOR" 'Only when `User override` is `none` may newly discovered strict risk trigger the canonical promotion.' "selector limits automatic promotion to automatic modes"
   assert_contains "$SELECTOR" "Explicit user mode instructions are authoritative" "selector honors overrides"
   assert_contains "$SELECTOR" "A materially different requested outcome starts a new task." "selector defines task continuity"
   assert_not_matches "$SELECTOR" '\b(gpt|claude|gemini|opus|sonnet|fable)\b' "selector has no model allowlist"
@@ -37,6 +39,9 @@ if [[ -f "$MATRIX" ]]; then
   assert_contains "$MATRIX" 'A schema or consumer rename with unknown blast radius starts in `standard`' "matrix keeps unknown rename impact standard until inspection"
   assert_contains "$MATRIX" "Authentication, authorization, or secrets" "matrix defines security trigger"
   assert_contains "$MATRIX" "Production data or data migration" "matrix defines data trigger"
+  assert_contains "$MATRIX" 'An explicit `lean` or `standard` choice remains active when later inspection reveals a strict trigger.' "matrix preserves explicit non-strict override"
+  assert_contains "$MATRIX" "Warn about the risk without auto-promoting." "matrix warns instead of promoting explicit non-strict mode"
+  assert_contains "$MATRIX" 'An explicit `strict` choice remains strict.' "matrix preserves explicit strict mode"
   assert_not_matches "$MATRIX" '\b(gpt|claude|gemini|opus|sonnet|fable)\b' "matrix has no model allowlist"
 fi
 

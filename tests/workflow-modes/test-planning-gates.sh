@@ -31,6 +31,10 @@ assert_contains "$brainstorming" "Approval is only a new user reply sent after t
 assert_contains "$brainstorming" 'An initial request to `begin work` or `start work` is not design approval.' "brainstorming rejects initial begin-work approval"
 assert_contains "$brainstorming" "Until that approval reply arrives, only read-only project inspection, visible questions, and visible design or options are allowed." "brainstorming limits pre-approval actions"
 assert_contains "$brainstorming" "Do not write or commit a spec or plan, create or enter a worktree, invoke a planning or implementation skill, or make project changes before approval." "brainstorming blocks pre-approval artifacts and skills"
+assert_contains "$brainstorming" "Follow these steps in order:" "brainstorming preserves ordered checklist flow"
+assert_contains "$brainstorming" "Before approval, track steps 1–5 in the visible conversation without creating tool-backed task or todo items." "brainstorming tracks pre-approval steps without task tools"
+assert_contains "$brainstorming" "After post-design approval, create tasks for the remaining checklist items and complete them in order." "brainstorming creates remaining tasks only after approval"
+assert_not_matches "$brainstorming" 'You MUST create a task for each of these items' "brainstorming removes contradictory pre-approval task mandate"
 assert_contains "$brainstorming" "When the user explicitly asks to compare a specific number of options and the existing context is sufficient, present that many named options with trade-offs before asking a clarifying question." "brainstorming answers bounded option requests directly"
 assert_contains "$brainstorming" "Keep the project unchanged during that requested comparison." "brainstorming keeps explicit option comparison read-only"
 

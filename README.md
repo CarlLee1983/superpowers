@@ -205,6 +205,7 @@ workflow to every change:
 The agent declares the selected mode once. Override it by including
 `Mode: lean`, `Mode: standard`, or `Mode: strict` in the request. See
 [`docs/workflow-modes.md`](docs/workflow-modes.md).
+An explicit lean or standard override remains active if later inspection discovers strict risk; the agent warns instead of auto-promoting.
 
 ## The Strict Workflow
 

@@ -38,8 +38,10 @@ Choose `strict` when any material trigger is present:
 
 ## Overrides
 
-Honor an explicit `lean`, `standard`, or `strict` instruction. If the human
-partner forces lean for high-risk work, warn briefly and continue in lean.
+Honor an explicit `lean`, `standard`, or `strict` instruction.
+An explicit `lean` or `standard` choice remains active when later inspection reveals a strict trigger.
+Warn about the risk without auto-promoting.
+An explicit `strict` choice remains strict.
 Host safety and permission controls still apply.
 
 After classifying, return to the selector's completion contract: output its
