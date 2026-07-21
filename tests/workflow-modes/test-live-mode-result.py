@@ -1062,6 +1062,104 @@ class ValidatorTest(unittest.TestCase):
                     "mutation before strict promotion/approval pause", result.stderr
                 )
 
+    def test_escalation_codex_rejects_escaped_operand_metacharacters(self) -> None:
+        for name in ("*", "?", "["):
+            (self.project / "src" / name).write_text("literal metachar file\n")
+        declaration = codex_event(
+            "Mode: standard — bounded rename pending repository inspection.",
+            item_id="declaration",
+        )
+        promotion = codex_event(
+            f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+            "Should we retain the compatibility alias during migration?",
+            item_id="promotion",
+        )
+        commands = (
+            "/bin/zsh -lc \"sed -n '1,20p' src/\\*\"",
+            "/bin/zsh -lc \"sed -n '1,20p' src/\\?\"",
+            "/bin/zsh -lc \"sed -n '1,20p' src/\\[\"",
+        )
+        for index, command in enumerate(commands):
+            with self.subTest(command=command):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    declaration,
+                    *codex_command_lifecycle(command, f"escaped-{index}"),
+                    promotion,
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "mutation before strict promotion/approval pause", result.stderr
+                )
+
+    def test_escalation_codex_no_match_does_not_hide_invalid_later_operand(
+        self,
+    ) -> None:
+        (self.project / "src/nested").mkdir()
+        (self.project / "src/schema-link.js").symlink_to(
+            self.project / "src/schema.js"
+        )
+        declaration = codex_event(
+            "Mode: standard — bounded rename pending repository inspection.",
+            item_id="declaration",
+        )
+        promotion = codex_event(
+            f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+            "Should we retain the compatibility alias during migration?",
+            item_id="promotion",
+        )
+
+        safe_no_match = codex_command_lifecycle(
+            "/bin/zsh -lc \"sed -n '1,20p' src/no-match-* src/optional.js\"",
+            "safe-no-match",
+            exit_code=1,
+        )
+        safe_events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            declaration,
+            *safe_no_match,
+            *codex_command_lifecycle("cat src/schema.js", "schema"),
+            *codex_command_lifecycle("cat src/billing.js", "billing"),
+            promotion,
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", safe_events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        invalid_later_operands = (
+            str(self.project / "src/schema.js"),
+            "src/nested",
+            "src/schema-link.js",
+            "src/../src/schema.js",
+            "src/{schema,billing}.js",
+        )
+        for index, operand in enumerate(invalid_later_operands):
+            with self.subTest(operand=operand):
+                command = (
+                    "/bin/zsh -lc \"sed -n '1,20p' "
+                    f"src/no-match-* {operand}\""
+                )
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    declaration,
+                    *codex_command_lifecycle(
+                        command,
+                        f"invalid-after-no-match-{index}",
+                        exit_code=1,
+                    ),
+                    *codex_command_lifecycle("cat src/schema.js", "schema"),
+                    *codex_command_lifecycle("cat src/billing.js", "billing"),
+                    promotion,
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "mutation before strict promotion/approval pause", result.stderr
+                )
+
     def test_escalation_codex_rejects_unsafe_wrapped_project_commands(self) -> None:
         (self.project / "src/billing.js").write_text("export const billing = {};\n")
         commands = (

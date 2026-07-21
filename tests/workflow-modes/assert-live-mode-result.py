@@ -364,7 +364,10 @@ def project_operand_paths(
         return None
     root = expected_project_root.resolve(strict=True)
     paths: list[str] = []
+    unmatched_glob = False
     for argument in arguments:
+        if Path(argument).is_absolute():
+            return None
         if re.search(r"[?\[\]{}~$]", argument):
             return None
         if "*" in argument:
@@ -372,7 +375,8 @@ def project_operand_paths(
             if expanded is None:
                 return None
             if not expanded:
-                return ()
+                unmatched_glob = True
+                continue
             paths.extend(expanded)
             continue
         resolved = project_path(
@@ -382,8 +386,10 @@ def project_operand_paths(
         )
         if resolved is None:
             return None
+        if not require_file and resolved.exists() and not resolved.is_file():
+            return None
         paths.append(resolved.relative_to(root).as_posix())
-    return tuple(paths)
+    return () if unmatched_glob else tuple(paths)
 
 
 def inspection_command_paths(
@@ -393,6 +399,8 @@ def inspection_command_paths(
     *,
     require_files: bool = True,
 ) -> tuple[str, ...] | None:
+    if "\\" in command:
+        return None
     if expected_root is not None and is_codex_bootstrap(command, expected_root):
         return None
     arguments = split_read_command(command)
