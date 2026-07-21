@@ -644,6 +644,10 @@ def has_relevant_pause(text: str) -> bool:
         rf"^\s*should\s+{decision_target}[^?]*\bor\b[^?]*\?\s*$",
         r"^\s*should\s+(?:I|we)\s+proceed\s+in\s+strict\s+mode\b"
         r"(?=[^?]*\b(?:rename|public\s+response|amountCents)\b)[^?]*\?\s*$",
+        r"^\s*(?:before\s+the\s+first\s+mutation,\s+i\s+need\s+your\s+"
+        r"decision:\s*)?should\s+(?:I|we)\s+proceed\s+with\s+"
+        r"(?=[^?]*\bamount\b)(?=[^?]*\bamountCents\b)"
+        r"[^?]*\brename\b[^?]*\bin\s+strict\s+mode\s*\?\s*$",
         r"^\s*(?:before\s+making\s+any\s+change,\s+[^:?]+:\s*)?"
         r"do\s+you\s+want\s+me\s+to\s+proceed\s+with\s+the\s+rename\s+"
         r"in\s+strict\s+mode\b[^?]*\?\s*$",
@@ -1129,9 +1133,10 @@ def has_structured_promotion_relation(reason: str) -> bool:
             r"\bpublic\b",
             r"\b(?:billing|payments?)\b",
             r"\bapi\b",
-            r"\b(?:surface|response)\b",
         )
     ):
+        return False
+    if re.search(r"\b(?:surface|response)\b", normalized, re.IGNORECASE) is None:
         return False
 
     if re.search(

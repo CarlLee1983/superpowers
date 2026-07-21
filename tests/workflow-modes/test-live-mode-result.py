@@ -106,6 +106,51 @@ LATEST_19A_CODEX_OUTPUTS = (
     "surface; renaming it would create a breaking compatibility change.\n\n"
     "Proceed in strict mode with the rename and consumer updates?",
 )
+LATEST_F9A_CLAUDE_INITIAL_OUTPUT = (
+    "Mode: standard — A schema field rename with as-yet-unknown blast radius "
+    "starts in standard until inspection establishes whether a strict "
+    "compatibility surface is present.\n\n"
+    "I'll inspect the repository read-only before changing anything, starting "
+    "with the named source file."
+)
+LATEST_F9A_CLAUDE_MIDDLE_OUTPUT = (
+    "The schema comment claims a public billing API consumer — I need to verify "
+    "that against an actual consumer file, not the comment. Reading likely "
+    "same-directory consumers:"
+)
+LATEST_F9A_CLAUDE_FINAL_OUTPUT = (
+    "Inspection confirmed the risk: `src/billing.js:2` imports the schema and "
+    "exposes `amount` directly in `publicPaymentResponse`, the public billing API "
+    "response.\n\n"
+    "Promoting to strict — inspection found src/schema.js defines amount consumed "
+    "by src/billing.js's publicPaymentResponse as part of the public billing API "
+    "payment surface; renaming amount to amountCents would change the externally "
+    "visible payment response key and break API compatibility for existing billing "
+    "clients.\n\n"
+    "I have not modified anything yet. Before the first mutation, I need your "
+    "decision: should I proceed with the `amount` → `amountCents` rename in strict "
+    "mode? Note the options:\n\n"
+    "1. **Proceed in strict mode** — rename the field in `src/schema.js` and update "
+    "`src/billing.js`, accepting that the public response key changes from `amount` "
+    "to `amountCents` (a breaking change for API clients).\n"
+    "2. **Rename internally only** — change the schema field to `amountCents` but "
+    "keep the public response key `amount` in `publicPaymentResponse` for "
+    "compatibility.\n"
+    "3. **Hold off** — if the external contract must not change at all.\n\n"
+    "Which would you like?"
+)
+LATEST_F9A_CODEX_OUTPUTS = (
+    "I’m using the repository workflow skill to choose the right level of rigor "
+    "first; I’ll inspect the project before making any edits.",
+    "Mode: standard — this is a bounded schema-and-consumer rename whose "
+    "compatibility impact needs repository inspection.",
+    "Promoting to strict — inspection found src/schema.js defines amount consumed "
+    "by src/billing.js as part of the public production billing API; renaming it "
+    "would create a breaking payment-response compatibility change.",
+    "This touches a public production billing API and could break consumers "
+    "expecting `amount`. Should I proceed in strict mode with the breaking rename "
+    "to `amountCents`?",
+)
 
 
 def claude_event(text: str, *, block_type: str = "text") -> dict:
@@ -1732,6 +1777,34 @@ class ValidatorTest(unittest.TestCase):
             ),
             *codex_command_lifecycle("sed -n '1,240p' src/billing.js", "billing"),
             codex_event(promotion_and_pause, item_id="promotion"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_accepts_latest_f9a_claude_output(self) -> None:
+        events = [
+            claude_init(),
+            claude_event(LATEST_F9A_CLAUDE_INITIAL_OUTPUT),
+            *claude_read_lifecycle(self.project, "src/schema.js", "schema"),
+            claude_event(LATEST_F9A_CLAUDE_MIDDLE_OUTPUT),
+            *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
+            claude_event(LATEST_F9A_CLAUDE_FINAL_OUTPUT),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_accepts_latest_f9a_codex_output(self) -> None:
+        preamble, declaration, promotion, pause = LATEST_F9A_CODEX_OUTPUTS
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(preamble, item_id="preamble"),
+            codex_event(declaration, item_id="declaration"),
+            *codex_command_lifecycle("sed -n '1,240p' src/schema.js", "schema"),
+            *codex_command_lifecycle("sed -n '1,240p' src/billing.js", "billing"),
+            codex_event(promotion, item_id="promotion"),
+            codex_event(pause, item_id="pause"),
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "escalation", events)
