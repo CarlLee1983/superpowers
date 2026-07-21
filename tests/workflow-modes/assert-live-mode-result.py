@@ -1651,9 +1651,9 @@ def validate_explicit_skill_actions(
 
 
 def require_affirmative_brainstorming(
-    text: str, *, structured_invocation_status: str = "absent"
+    text: str, *, structured_invocation_status: str = "visible-only"
 ) -> None:
-    if structured_invocation_status == "failed":
+    if structured_invocation_status in {"absent", "failed"}:
         raise ValidationError(
             "assistant-visible text lacks affirmative brainstorming skill use/invocation"
         )
@@ -1791,7 +1791,7 @@ def require_affirmative_brainstorming(
 
 
 def validate_case(
-    case: str, text: str, *, structured_brainstorming_status: str = "absent"
+    case: str, text: str, *, structured_brainstorming_status: str = "visible-only"
 ) -> None:
     if case in {"lean", "standard"}:
         require_pattern(
@@ -1871,7 +1871,7 @@ def validate(
         structured_brainstorming_status=(
             claude_brainstorming_skill_status(events)
             if backend == "claude"
-            else "absent"
+            else "visible-only"
         ),
     )
     return visible

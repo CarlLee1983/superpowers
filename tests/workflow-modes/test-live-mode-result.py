@@ -3679,6 +3679,15 @@ class ValidatorTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("affirmative brainstorming", result.stderr)
 
+        claude_no_skill = [
+            claude_init(),
+            visible,
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "explicit-skill", claude_no_skill)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("affirmative brainstorming", result.stderr)
+
         codex_visible_fallback = [
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
