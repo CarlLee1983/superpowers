@@ -3325,6 +3325,38 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("codex", "escalation", events)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_escalation_accepts_breaking_public_contract_rename_pause(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle(
+                "cat src/schema.js src/billing.js",
+                "inspection",
+            ),
+            codex_event(
+                "Promoting to strict — inspection found src/schema.js defines "
+                "amount consumed by src/billing.js as part of a production payment "
+                "and public API surface; renaming it would change the public "
+                "response contract.",
+                item_id="promotion",
+            ),
+            codex_event(
+                "Inspection shows this is a strict-risk change: src/billing.js "
+                "exposes the field through a production payment API response. "
+                "Should I proceed with the breaking public contract rename to "
+                "amountCents?",
+                item_id="pause",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "escalation", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_escalation_accepts_exact_claude_possessive_consumer_promotion(
         self,
     ) -> None:

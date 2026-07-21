@@ -1099,6 +1099,7 @@ def has_relevant_pause(text: str) -> bool:
         r"migration\s+(?:approach|plan|strategy|options?)|"
         r"rollout(?:\s+(?:approach|plan|strategy|options?))?|"
         r"public\s+API\s+transition|"
+        r"(?:breaking\s+)?public\s+(?:API\s+)?contract\s+rename|"
         r"API\s+(?:compatibility|contract(?:\s+change)?|changes?|versions?|"
         r"breaking\s+change)|compatibility(?:\s+(?:requirements?|plan|"
         r"aliases?))?|breaking\s+(?:API\s+)?(?:change|release)|"
