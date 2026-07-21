@@ -129,6 +129,28 @@ if case == "escalation":
                 "input": {"file_path": str(project / "src/schema.js")},
             }]},
         })
+elif case == "explicit-skill":
+    events[2:2] = [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{
+            "type": "tool_use",
+            "id": "brainstorming",
+            "name": "Skill",
+            "input": {"skill": "superpowers:brainstorming"},
+        }]}},
+        {
+            "type": "user",
+            "message": {"role": "user", "content": [{
+                "type": "tool_result",
+                "tool_use_id": "brainstorming",
+                "is_error": False,
+                "content": "Launching skill: superpowers:brainstorming",
+            }]},
+            "tool_use_result": {
+                "success": True,
+                "commandName": "superpowers:brainstorming",
+            },
+        },
+    ]
 if os.environ.get("STUB_NO_MODE") == "1":
     events[1]["message"]["content"][0]["text"] = "Finished and verified without a declaration."
 for event in events:
