@@ -57,8 +57,8 @@ observed evidence against the strict triggers.
 
 If `User override` is `lean` or `standard`, warn without promoting and keep that explicitly chosen mode active.
 Continue under that mode unless host safety or permission controls require a pause.
-If `User override` is `strict`, strict is already active; do not output a promotion.
-Only when `User override` is `none` may newly discovered strict risk trigger the canonical promotion.
+If the active mode is already `strict`, whether selected automatically or explicitly, do not output a promotion.
+Canonical promotion requires both `User override: none` and an active mode of `lean` or `standard`.
 In that case, output exactly this evidence-backed line, replacing every placeholder:
 
 Keep pre-promotion inspection independently auditable and read-only.

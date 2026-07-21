@@ -57,7 +57,7 @@ guide_contract_valid() {
   expected_lean='Lean mode is for clear, localized, reversible work. The agent inspects, changes, runs the most relevant verification, reviews the diff, and reports evidence. Written specs, worktrees, subagents, and independent review are optional. Strict TDD is optional in lean mode. Relevant verification remains mandatory.'
   expected_standard='Standard mode is for bounded multi-component work. The agent gives a short inline design and execution outline, then proceeds without an approval pause. It uses test-first development, isolation, subagents, and independent review only when they materially control risk.'
   expected_strict='Strict mode is for security, payments, production data, migrations, irreversible operations, breaking APIs, broad architecture, or material ambiguity. It preserves the complete upstream Superpowers workflow.'
-  expected_guarantees='- Fresh verification evidence is required in every mode. - Explicit skill requests still run. - Domain skills remain active. - Host and platform safety controls remain active. - Automatic promotion on newly discovered risk applies only when no explicit mode override is active. - An explicitly selected lean or standard mode remains active after newly discovered strict risk; the agent warns instead of auto-promoting. - The agent never demotes a mode automatically within a task.'
+  expected_guarantees='- Fresh verification evidence is required in every mode. - Explicit skill requests still run. - Domain skills remain active. - Host and platform safety controls remain active. - Automatic promotion on newly discovered risk applies only when no explicit mode override is active and the current mode is lean or standard. - An active strict mode is never promoted again. - An explicitly selected lean or standard mode remains active after newly discovered strict risk; the agent warns instead of auto-promoting. - The agent never demotes a mode automatically within a task.'
 
   preamble="$(guide_preamble_text "$file" | normalize_contract_text)"
   lean="$(section_text "$file" "## Lean" | normalize_contract_text)"
@@ -109,7 +109,8 @@ public_guide_checks_valid() {
     "Relevant verification remains mandatory" \
     "proceeds without an approval pause" \
     "complete upstream Superpowers workflow" \
-    "Automatic promotion on newly discovered risk applies only when no explicit mode override is active" \
+    "Automatic promotion on newly discovered risk applies only when no explicit mode override is active and the current mode is lean or standard" \
+    "An active strict mode is never promoted again" \
     "explicitly selected lean or standard mode remains active after newly discovered strict risk" \
     "warns instead of auto-promoting" \
     "never demotes a mode automatically" \
@@ -204,7 +205,8 @@ if [[ -f "$DOC" ]]; then
   assert_normalized_guide_contains "$normalized_guide" "Relevant verification remains mandatory" "guide keeps lean verification mandatory"
   assert_normalized_guide_contains "$normalized_guide" "proceeds without an approval pause" "guide keeps standard execution continuous"
   assert_normalized_guide_contains "$normalized_guide" "complete upstream Superpowers workflow" "guide preserves the upstream strict workflow"
-  assert_normalized_guide_contains "$normalized_guide" "Automatic promotion on newly discovered risk applies only when no explicit mode override is active" "guide limits promotion to automatic modes"
+  assert_normalized_guide_contains "$normalized_guide" "Automatic promotion on newly discovered risk applies only when no explicit mode override is active and the current mode is lean or standard" "guide limits promotion to non-strict automatic modes"
+  assert_normalized_guide_contains "$normalized_guide" "An active strict mode is never promoted again" "guide forbids duplicate strict promotion"
   assert_normalized_guide_contains "$normalized_guide" "explicitly selected lean or standard mode remains active after newly discovered strict risk" "guide preserves explicit non-strict overrides"
   assert_normalized_guide_contains "$normalized_guide" "warns instead of auto-promoting" "guide documents override warning behavior"
   assert_normalized_guide_contains "$normalized_guide" "never demotes a mode automatically" "guide forbids automatic demotion"

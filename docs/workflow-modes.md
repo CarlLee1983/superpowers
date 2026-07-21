@@ -37,7 +37,8 @@ ambiguity. It preserves the complete upstream Superpowers workflow.
 - Domain skills remain active.
 - Host and platform safety controls remain active.
 - Automatic promotion on newly discovered risk applies only when no explicit
-  mode override is active.
+  mode override is active and the current mode is lean or standard.
+- An active strict mode is never promoted again.
 - An explicitly selected lean or standard mode remains active after newly
   discovered strict risk; the agent warns instead of auto-promoting.
 - The agent never demotes a mode automatically within a task.
