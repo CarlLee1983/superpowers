@@ -593,6 +593,25 @@ def require_pattern(text: str, pattern: str, description: str) -> None:
 
 def has_relevant_pause(text: str) -> bool:
     sentences = re.split(r"(?<=[?.!])\s+|\n+", text)
+    current_system_question = re.search(
+        r"(?:\*\*)?what\s+does\s+(?:the\s+)?"
+        r"(?:payment|billing|financial)\s+system\s+look\s+like\s+today\?"
+        r"(?:\*\*)?",
+        text,
+        re.IGNORECASE,
+    )
+    if current_system_question is not None:
+        requirement_signals = (
+            r"\b(?:relational\s+DB|document\s+store|Postgres|MySQL|Mongo|Dynamo)\b",
+            r"\b(?:column\s+type|amount\s+column|DECIMAL|NUMERIC|float)\b",
+            r"\b(?:REST\s+API|API\s+shape|API\s+(?:returns?|response))\b",
+            r"\b(?:external|internal|first-party)\b.{0,40}\b(?:consumer|client)",
+        )
+        if all(
+            re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+            for pattern in requirement_signals
+        ):
+            return True
     decision_object_body = (
         r"(?:requirements?|scope|rollback\s+requirements?|"
         r"migration\s+(?:approach|plan|strategy|options?)|"

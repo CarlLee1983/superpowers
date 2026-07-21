@@ -3357,6 +3357,7 @@ class ValidatorTest(unittest.TestCase):
             "Mode: strict — migration design is complete. Should I proceed in strict mode with lunch?",
             "Mode: strict — migration design is complete. Is strict mode relevant to the API?",
             "Mode: strict — migration design is complete. Do you approve this API in strict mode?",
+            "Mode: strict — migration design is complete. What does the payment system look like today?",
         ):
             with self.subTest(text=text):
                 events = [
@@ -3411,6 +3412,40 @@ class ValidatorTest(unittest.TestCase):
                 ]
                 result = self.run_validator("codex", "strict", events)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_targeted_current_system_requirement_question(self) -> None:
+        # Preserved from /tmp/superpowers-mode-evals/task1-followup-targeted-0a49b1c/
+        # claude/claude-fable-5/strict/20260721T074747Z-55633-1488/assistant.txt
+        events = [
+            claude_init(),
+            claude_event(
+                "Mode: strict — payments, production data migration, and a "
+                "breaking public API change are explicit strict-risk triggers.\n\n"
+                "Per the strict workflow, I'll start with the brainstorming skill "
+                "before designing."
+            ),
+            claude_event(
+                "The repo turns out to be nearly empty — just a README reading "
+                "\"payment migration fixture.\" There's no existing payment code, "
+                "schema, or API to inspect, so the design has to be grounded in a "
+                "few facts about your actual system.\n\n"
+                "First question, since it shapes everything else (migration "
+                "mechanics, rollout, and API versioning):\n\n"
+                "**What does the payment system look like today?** Specifically, "
+                "which of these best matches:\n\n"
+                "- **A.** Relational DB (Postgres/MySQL) with amounts in a "
+                "`DECIMAL`/`NUMERIC` dollars column, REST API returning decimal "
+                "dollar amounts, external API consumers we don't control\n"
+                "- **B.** Same as A, but all API consumers are internal/first-party\n"
+                "- **C.** Document store (Mongo/Dynamo) with float or decimal "
+                "dollar amounts\n"
+                "- **D.** Something else — tell me the DB, the amount column type, "
+                "the API shape, and who consumes it"
+            ),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "strict", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_escalation_requires_a_relevant_question_or_approval_request(self) -> None:
         events = [
