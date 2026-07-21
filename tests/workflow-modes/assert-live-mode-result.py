@@ -21,7 +21,7 @@ EXPECTED_MODE = {
 }
 DECLARATION = re.compile(r"(?im)^\s*Mode:\s*(lean|standard|strict)\b")
 PROMOTION = re.compile(
-    r"(?im)^\s*Promoting\s+to\s+(lean|standard|strict)\s+[—-]\s*([^\n]+)"
+    r"(?i)^Promoting\s+to\s+(lean|standard|strict)\s+[—-]\s*([^\n]+)$"
 )
 CANONICAL_PROMOTION_REASON = (
     "inspection found src/schema.js defines the amount field consumed by "
@@ -581,6 +581,38 @@ def require_relevant_pause(text: str) -> None:
     )
 
 
+def markdown_prose_lines(text: str) -> list[str]:
+    prose: list[str] = []
+    fence_character: str | None = None
+    fence_length = 0
+    fence = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+    for line in text.splitlines():
+        marker = fence.match(line)
+        if fence_character is not None:
+            if marker:
+                run = marker.group(1)
+                suffix = marker.group(2)
+                if (
+                    run[0] == fence_character
+                    and len(run) >= fence_length
+                    and not suffix.strip()
+                ):
+                    fence_character = None
+                    fence_length = 0
+            continue
+        if marker:
+            run = marker.group(1)
+            fence_character = run[0]
+            fence_length = len(run)
+            continue
+        if line.startswith(("    ", "\t")):
+            continue
+        if re.match(r"^ {0,3}>", line):
+            continue
+        prose.append(line)
+    return prose
+
+
 def escalation_records(
     backend: str,
     events: list[dict[str, Any]],
@@ -781,7 +813,9 @@ def validate_escalation_order(
                 )
             continue
 
-        transitions = list(WORKFLOW_TRANSITION.finditer(value))
+        prose_lines = markdown_prose_lines(value)
+        prose_text = "\n".join(prose_lines)
+        transitions = list(WORKFLOW_TRANSITION.finditer(prose_text))
         for transition in transitions:
             transition_count += 1
             transition_targets.append(transition.group("mode").lower())
@@ -790,9 +824,13 @@ def validate_escalation_order(
                     "strict promotion occurred before project inspection"
                 )
 
-        matches = list(PROMOTION.finditer(value))
+        matches = [
+            (line_number, match)
+            for line_number, line in enumerate(prose_lines)
+            if (match := PROMOTION.fullmatch(line)) is not None
+        ]
         if matches:
-            for match in matches:
+            for line_number, match in matches:
                 canonical_promotion_count += 1
                 if canonical_promotion_count > 1:
                     raise ValidationError(
@@ -808,10 +846,22 @@ def validate_escalation_order(
                     raise ValidationError(
                         "strict promotion occurred before project inspection"
                     )
+                other_prose = [
+                    line
+                    for other_number, line in enumerate(prose_lines)
+                    if other_number != line_number and line.strip()
+                ]
+                if any(not has_relevant_pause(line) for line in other_prose):
+                    raise ValidationError(
+                        "canonical promotion block contains non-workflow prose"
+                    )
                 promotion_seen = True
-                if has_relevant_pause(value[match.end() :]):
+                if any(
+                    other_number > line_number and has_relevant_pause(line)
+                    for other_number, line in enumerate(prose_lines)
+                ):
                     pause_seen = True
-        elif promotion_seen and has_relevant_pause(value):
+        elif promotion_seen and has_relevant_pause(prose_text):
             pause_seen = True
 
     if not inspection_seen:

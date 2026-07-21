@@ -798,6 +798,51 @@ class ValidatorTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("canonical fixture evidence", result.stderr)
 
+    def test_escalation_promotion_must_be_real_prose_in_a_closed_block(self) -> None:
+        canonical = f"Promoting to strict — {CANONICAL_PROMOTION_REASON}"
+        pause = "Should we retain the compatibility alias during migration?"
+        invalid_blocks = (
+            f"```text\n{canonical}\n```\n{pause}",
+            f"~~~transcript\n{canonical}\n~~~\n{pause}",
+            f"> {canonical}\n{pause}",
+            f"    {canonical}\n{pause}",
+            f"Documentation example:\n{canonical}\n{pause}",
+            f"Quote from a transcript:\n{canonical}\n{pause}",
+            f"{canonical}\n{pause}\nUnrelated documentation note.",
+        )
+        for block in invalid_blocks:
+            with self.subTest(block=block):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    codex_event(block, item_id="promotion"),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_escalation_accepts_canonical_prose_line_plus_relevant_pause(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n\n"
+                "Should we retain the compatibility alias during migration?",
+                item_id="promotion",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_escalation_rejects_semantic_duplicate_promotions(self) -> None:
         duplicates = (
             "Escalating to strict because the API is breaking.",
@@ -1569,7 +1614,7 @@ class ValidatorTest(unittest.TestCase):
             ),
             *codex_command_lifecycle("cat src/schema.js", "inspection"),
             codex_event(
-                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\nDone.",
+                f"Promoting to strict — {CANONICAL_PROMOTION_REASON}",
                 item_id="promotion",
             ),
             {"type": "turn.completed", "usage": {}},
