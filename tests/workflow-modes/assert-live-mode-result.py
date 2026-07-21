@@ -1218,8 +1218,9 @@ def require_relevant_pause(text: str) -> None:
 
 def has_concrete_discovery_pause(text: str) -> bool:
     question = re.search(
-        r"(?mi)^\s*(?:\*\*)?((?:where|what|which|how)\b[^?\n]*"
-        r"(?:system|stack|migration|public\s+API|API)\b[^?\n]*\?)",
+        r"(?mi)^\s*(?:\*\*)?((?:(?:where|what|which|how)\b[^?\n]*"
+        r"(?:system|stack|migration|public\s+API|API)\b[^?\n]*|"
+        r"what\s+should\s+(?:this|the)\s+design\s+target)\?)",
         text,
     )
     if question is None:
@@ -1227,7 +1228,7 @@ def has_concrete_discovery_pause(text: str) -> bool:
     question_text = question.group(1)
     if re.search(
         r"\b(?:live|stack|expose|store|format|transition|version|migrat\w*|"
-        r"architecture|implementation|look\s+like|use)\b",
+        r"architecture|implementation|look\s+like|use|target)\b",
         question_text,
         re.IGNORECASE,
     ) is None:
@@ -1252,7 +1253,8 @@ def has_concrete_discovery_pause(text: str) -> bool:
         r"`[A-Za-z_][^`]*`|\b(?:Postgres|MySQL|REST|database|framework|"
         r"schema|migration\s+scripts?|API|runbook|design\s+document|integer|"
         r"dollars?|cents?|versioned|v\d+|field|transition|deprecation|"
-        r"compatibility|breaking|cutoff|in[- ]place)\b",
+        r"compatibility|breaking|cutoff|in[- ]place|repository|repo|branch|"
+        r"files?)\b",
         re.IGNORECASE,
     )
     negative_option = re.compile(
@@ -1354,8 +1356,9 @@ def has_concrete_discovery_pause(text: str) -> bool:
         )
     else:
         responsive_signal = re.compile(
-            r"\b(?:system|repo|Postgres|MySQL|REST|database|framework|"
-            r"implementation|schema|migration|API|runbook|document)\b",
+            r"\b(?:system|repo|repository|branch|files?|Postgres|MySQL|REST|"
+            r"database|framework|implementation|schema|migration|API|runbook|"
+            r"document)\b",
             re.IGNORECASE,
         )
     return all(responsive_signal.search(option) for _, option in options)

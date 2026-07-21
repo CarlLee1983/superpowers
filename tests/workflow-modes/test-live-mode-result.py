@@ -6605,6 +6605,31 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("claude", "strict", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_strict_accepts_concrete_design_target_question(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — this work combines payments, production data "
+                "migration, and a breaking public API change.\n\n"
+                "The repository only contains a placeholder README—there’s no "
+                "schema, service code, API contract, or migration tooling to "
+                "inspect.\n\n"
+                "What should this design target?\n\n"
+                "- **Provide existing system details (recommended):** Share the "
+                "database, service stack, current payment schema/API, and "
+                "deployment model.\n"
+                "- **Create a reference design:** I’ll assume PostgreSQL, a REST "
+                "API, and rolling deployments with mixed-version instances.\n"
+                "- **Point me to another location:** Provide the relevant "
+                "repository, branch, or files."
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_strict_accepts_concrete_unlabelled_discovery_options(self) -> None:
         events = [
             claude_init(),
