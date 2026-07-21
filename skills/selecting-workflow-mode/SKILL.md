@@ -101,9 +101,9 @@ use a shell command. On platforms where inspection is shell-based, safe closed
 read-only discovery may precede literal file reads. A safe discovery command may be standalone `rg --files` or standalone `rg -n`
 or `rg --line-number` under this closed grammar:
 
-- For `rg --files`, allow only repeated `-g <glob>` or `--glob <glob>` pairs followed by project path operands.
-- For `rg -n` or `rg --line-number`, allow only repeated `-g <glob>` or `--glob <glob>` pairs plus `--hidden`, `--no-heading`, and `--color=never` before the first positional.
-  The first positional is the search pattern; all remaining positionals are project path operands.
+- For `rg --files`, allow only repeated `-g <glob>` or `--glob <glob>` pairs and project path operands, in any order.
+- For `rg -n` or `rg --line-number`, allow only repeated `-g <glob>` or `--glob <glob>` pairs, `--hidden`, `--no-heading`, `--color=never`, and positionals; the allowlisted flags may appear anywhere.
+  The first non-option positional must be a non-hyphen search pattern; every later positional is a project path operand.
 - The only permitted discovery pipeline is one allowed `rg` discovery command followed by one output-limiting `sed -n` command.
   The output limiter must be exactly `sed -n '<positive-start>[,<positive-end>]p'`; no other `sed` flags, scripts, or operands are allowed.
 
