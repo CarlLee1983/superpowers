@@ -38,6 +38,7 @@ assert_not_matches "$brainstorming" 'You MUST create a task for each of these it
 assert_contains "$brainstorming" "When the user explicitly asks to compare a specific number of options and the existing context is sufficient, present that many named options with trade-offs before asking a clarifying question." "brainstorming answers bounded option requests directly"
 assert_contains "$brainstorming" "Keep the project unchanged during that requested comparison." "brainstorming keeps explicit option comparison read-only"
 assert_contains "$brainstorming" 'Waiting on your approval before proceeding.' "brainstorming defines canonical declarative approval pause"
+assert_contains "$brainstorming" 'After that terminal sentence, do not inspect, read, or take another action.' "brainstorming keeps declarative approval pause terminal"
 
 assert_contains "$writing_plans" "description: Use when strict mode has an approved design, standard mode needs a durable cross-session handoff, or the human partner explicitly requests a written implementation plan" "writing-plans has exact trigger description"
 assert_contains "$writing_plans" "Run this skill when explicitly requested." "writing-plans preserves explicit requests"

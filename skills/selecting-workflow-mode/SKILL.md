@@ -88,6 +88,8 @@ First complete risk routing:
   branch unless inspection finds a materially different strict risk. Use
   exactly:
   `Warning: <concrete trigger> is strict-risk work. Retaining your explicit <lean|standard> override.`
+  This is a closed two-sentence protocol. Replace only the two placeholders;
+  do not paraphrase, prefix, suffix, or merge the warning.
   If inspection finds one materially different trigger, emit the same template
   once more with that distinct trigger. Apart from that one exception, if
   `lean` remains active, emit no assistant prose after the warning and before
@@ -153,7 +155,8 @@ Do not name a file in the promotion line unless that exact path was read literal
 
 Then pause before the first mutation and ask the human partner whether to
 proceed in strict mode. Do not mutate until they answer. Do not output another `Mode:` line:
-the promotion line changes the active state.
+the promotion line changes the active state. A second `Mode:` line is invalid,
+including `Mode: strict — promoted from ...`.
 
 If the active mode remains `standard`, complete its inline design contract
 before mutation. In `standard`, after project inspection and before the first mutation, output a short inline design and execution outline in a visible inline message.

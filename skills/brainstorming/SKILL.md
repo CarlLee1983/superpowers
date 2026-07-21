@@ -106,6 +106,8 @@ digraph brainstorming {
 - Ask after each section whether it looks right so far
 - When the final design asks for approval declaratively rather than as a
   question, end with exactly: `Waiting on your approval before proceeding.`
+  After that terminal sentence, do not inspect, read, or take another action.
+  A host-native approval control may accompany it, but no project tool may.
 - Cover: architecture, components, data flow, error handling, testing
 - Be ready to go back and clarify if something doesn't make sense
 

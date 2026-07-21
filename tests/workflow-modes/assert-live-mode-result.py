@@ -759,6 +759,38 @@ def is_safe_discovery_command(
     )
 
 
+def is_safe_ls_discovery_command(
+    command: str, expected_project_root: Path
+) -> bool:
+    pipeline = shell_pipeline_arguments(command)
+    if pipeline is None or len(pipeline) != 1:
+        return False
+    arguments = pipeline[0]
+    if not arguments or arguments[0] not in {"ls", "/bin/ls", "/usr/bin/ls"}:
+        return False
+    operands: list[str] = []
+    options_done = False
+    for argument in arguments[1:]:
+        if not options_done and argument == "--":
+            options_done = True
+            continue
+        if not options_done and argument.startswith("-"):
+            if re.fullmatch(r"-[al1]+", argument) is None:
+                return False
+            continue
+        options_done = True
+        operands.append(argument)
+    return all(
+        project_path(
+            operand,
+            expected_project_root,
+            require_directory=True,
+        )
+        is not None
+        for operand in operands
+    )
+
+
 def is_generic_codex_bootstrap_narration(text: str) -> bool:
     """Allow only platform-facing workflow narration before Codex's Mode line."""
     return (
@@ -1142,8 +1174,8 @@ def has_concrete_discovery_pause(text: str) -> bool:
         return False
 
     option_pattern = re.compile(
-        r"(?m)^\s*(?:[-*]\s+)?(?:\*\*)?([A-Z]|\d+)[.)]"
-        r"(?:\*\*)?\s+(.+)$"
+        r"(?m)^\s*(?:(?:[-*]\s+)?(?:\*\*)?([A-Z]|\d+)[.)]"
+        r"(?:\*\*)?\s+(.+)|[-*]\s+(.+))$"
     )
     concrete_signal = re.compile(
         r"`[A-Za-z_][^`]*`|\b(?:Postgres|MySQL|REST|database|framework|"
@@ -1179,7 +1211,9 @@ def has_concrete_discovery_pause(text: str) -> bool:
         line = option_lines[line_index]
         option_match = option_pattern.fullmatch(line)
         if option_match is not None:
-            options.append((option_match.group(1), option_match.group(2)))
+            label = option_match.group(1) or f"bullet-{len(options) + 1}"
+            option = option_match.group(2) or option_match.group(3)
+            options.append((label, option))
             line_index += 1
             continue
         if not line.strip():
@@ -1315,7 +1349,9 @@ def is_strict_read_only_shell_command(
 ) -> bool:
     if is_read_only_inspection_command(
         command, None, expected_project_root, require_files=False
-    ) or is_safe_discovery_command(command, expected_project_root):
+    ) or is_safe_discovery_command(
+        command, expected_project_root
+    ) or is_safe_ls_discovery_command(command, expected_project_root):
         return True
     pipeline = shell_pipeline_arguments(command)
     if pipeline is None or len(pipeline) not in {1, 2}:
@@ -1366,8 +1402,18 @@ def strict_transcript_has_mutation(
 ) -> bool:
     tool_states: dict[str, str] = {}
     completed_tool_ids: set[str] = set()
+    terminal_pause_seen = False
     for event in events:
         item = event.get("item")
+        if (
+            isinstance(item, dict)
+            and event.get("type") == "item.completed"
+            and item.get("type") == "agent_message"
+            and isinstance(item.get("text"), str)
+            and has_strict_design_approval_pause(item["text"])
+        ):
+            terminal_pause_seen = True
+            continue
         if (
             isinstance(item, dict)
             and event.get("type") == "item.started"
@@ -1379,6 +1425,8 @@ def strict_transcript_has_mutation(
             and event.get("type") == "item.started"
             and item.get("type") == "command_execution"
         ):
+            if terminal_pause_seen:
+                return True
             command = item.get("command")
             if isinstance(command, str) and is_codex_bootstrap(
                 command, expected_plugin_root
@@ -1416,7 +1464,17 @@ def strict_transcript_has_mutation(
         if event.get("type") != "assistant":
             continue
         for block in content:
-            if not isinstance(block, dict) or block.get("type") != "tool_use":
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "text":
+                value = block.get("text")
+                if (
+                    isinstance(value, str)
+                    and has_strict_design_approval_pause(value)
+                ):
+                    terminal_pause_seen = True
+                continue
+            if block.get("type") != "tool_use":
                 continue
             tool_id = block.get("id")
             if (
@@ -1428,6 +1486,8 @@ def strict_transcript_has_mutation(
             tool_states[tool_id] = "other"
             name = block.get("name")
             tool_input = block.get("input")
+            if terminal_pause_seen and name != "AskUserQuestion":
+                return True
             if is_claude_bootstrap(block, expected_plugin_root):
                 continue
             if name == "Skill":
@@ -1651,10 +1711,13 @@ def escalation_records(
                             add("invalid", f"invalid project inspection: {name}", event_index)
                     elif name == "Bash" and isinstance(tool_input, dict):
                         command = tool_input.get("command")
-                        if isinstance(command, str) and is_read_only_inspection_command(
-                            command,
-                            expected_plugin_root,
-                            expected_project_root,
+                        if (
+                            isinstance(command, str)
+                            and is_read_only_inspection_command(
+                                command,
+                                expected_plugin_root,
+                                expected_project_root,
+                            )
                         ):
                             paths = inspection_command_paths(
                                 command,
@@ -1662,6 +1725,13 @@ def escalation_records(
                                 expected_project_root,
                             )
                             tool_uses[tool_id] = ("inspection", paths or ())
+                        elif (
+                            isinstance(command, str)
+                            and is_safe_ls_discovery_command(
+                                command, expected_project_root
+                            )
+                        ):
+                            tool_uses[tool_id] = ("discovery", ())
                         else:
                             tool_uses[tool_id] = ("mutation", (str(name),))
                     elif name in {"Edit", "Write", "NotebookEdit"}:
@@ -1827,6 +1897,8 @@ def escalation_records(
                 continue
             elif is_safe_discovery_command(command, expected_project_root):
                 continue
+            elif is_safe_ls_discovery_command(command, expected_project_root):
+                continue
             else:
                 add("mutation", command, event_index)
         elif event.get("type") == "item.completed" and item_type == "command_execution":
@@ -1864,6 +1936,18 @@ def escalation_records(
                         event_index,
                     )
             elif isinstance(command, str) and is_safe_discovery_command(
+                command, expected_project_root
+            ):
+                exit_code = item.get("exit_code")
+                if exit_code == 0:
+                    add("discovery", command, event_index)
+                elif exit_code is None:
+                    add(
+                        "invalid",
+                        "Codex command lacks a completed discovery exit code",
+                        event_index,
+                    )
+            elif isinstance(command, str) and is_safe_ls_discovery_command(
                 command, expected_project_root
             ):
                 exit_code = item.get("exit_code")
@@ -2386,7 +2470,9 @@ def validate_standard_inline_design_order(
         )
 
 
-def override_warning_trigger(text: str, override_mode: str) -> str | None:
+def override_warning_trigger(
+    text: str, override_mode: str
+) -> frozenset[str] | None:
     warning = re.fullmatch(
         r"\s*Warning:\s+(?P<trigger>[^.\n]{1,200})\s+is\s+"
         r"strict-risk\s+work\.\s+"
@@ -2405,20 +2491,44 @@ def override_warning_trigger(text: str, override_mode: str) -> str | None:
         re.IGNORECASE,
     ):
         return None
-    if re.search(
-        r"\b(?:auth(?:entication|orization)?|credentials?|secrets?|"
-        r"security(?:\s+boundar(?:y|ies))?|vulnerabilit(?:y|ies)|"
-        r"payments?|billing|finance|regulated\s+behavior|"
-        r"production\s+data|data\s+migration|migrations?|"
-        r"destructive\s+external\s+operations?|"
-        r"irreversible\s+external\s+operations?|"
-        r"public\s+API|compatibility|broad\s+architecture|"
-        r"downstream\s+consumers?|unresolved\s+ambiguity)\b",
-        trigger,
-        re.IGNORECASE,
-    ) is None:
+    category_patterns = {
+        "security": (
+            r"\b(?:auth(?:entication|orization)?|credentials?|secrets?|"
+            r"security(?:\s+boundar(?:y|ies))?|vulnerabilit(?:y|ies))\b"
+        ),
+        "financial": r"\b(?:payments?|billing|finance|financial)\b",
+        "regulated": (
+            r"\b(?:regulated\s+behavior|regulatory|compliance|GDPR|HIPAA|"
+            r"PCI(?:-DSS)?)\b"
+        ),
+        "production-data": (
+            r"\bproduction(?:\s+[A-Za-z0-9_-]+){0,3}\s+"
+            r"(?:data|records?)\b"
+        ),
+        "migration": r"\b(?:data\s+migration|migrations?)\b",
+        "irreversible": (
+            r"\b(?:destructive|irreversible)\b.{0,100}\b"
+            r"(?:delet(?:e|es|ed|ing|ion)|remov(?:e|es|ed|ing|al)|"
+            r"operations?|actions?|changes?)\b|"
+            r"\b(?:delet(?:e|es|ed|ing)|remov(?:e|es|ed|ing|al))\b"
+            r".{0,100}\b(?:production|customer|account|external)\b"
+        ),
+        "compatibility": (
+            r"\b(?:public\s+API|compatibility|breaking\s+(?:API|change))\b"
+        ),
+        "architecture": (
+            r"\b(?:broad\s+architecture|downstream\s+consumers?)\b"
+        ),
+        "ambiguity": r"\bunresolved\s+ambiguity\b",
+    }
+    categories = frozenset(
+        category
+        for category, pattern in category_patterns.items()
+        if re.search(pattern, trigger, re.IGNORECASE) is not None
+    )
+    if not categories:
         return None
-    return re.sub(r"\s+", " ", trigger).casefold()
+    return categories
 
 
 def has_positive_verification(text: str) -> bool:
@@ -2463,6 +2573,34 @@ def has_positive_verification(text: str) -> bool:
     return status
 
 
+def has_affirmative_override_mode_change(text: str) -> bool:
+    declarative_change = re.compile(
+        r"\b(?:"
+        r"operat(?:e|es|ed|ing)\s+in\s+strict\s+mode|"
+        r"(?:the\s+)?active\s+mode\s+is\s+(?:now\s+)?strict|"
+        r"strict\s+mode\s+is\s+(?:now\s+)?active|"
+        r"adopt(?:s|ed|ing)?\s+strict\s+mode|"
+        r"proceed(?:s|ed|ing)?\s+in\s+strict\s+mode"
+        r")\b",
+        re.IGNORECASE,
+    )
+    negation = re.compile(
+        r"\b(?:not|never|no\s+longer|without|cannot|can['’]t|"
+        r"won['’]t|wouldn['’]t|didn['’]t|doesn['’]t|isn['’]t|"
+        r"aren['’]t)\b",
+        re.IGNORECASE,
+    )
+    for clause in re.split(r"[\n.;]+", text):
+        matches = [
+            *WORKFLOW_TRANSITION.finditer(clause),
+            *declarative_change.finditer(clause),
+        ]
+        for match in sorted(matches, key=lambda candidate: candidate.start()):
+            if negation.search(clause[: match.end()]) is None:
+                return True
+    return False
+
+
 def validate_override_order(
     backend: str,
     events: list[dict[str, Any]],
@@ -2472,7 +2610,7 @@ def validate_override_order(
     immediate_warning_required: bool,
 ) -> None:
     warning_seen = False
-    warning_trigger = ""
+    warning_categories: frozenset[str] = frozenset()
     additional_warning_seen = False
     mode_seen = False
     override_mode = ""
@@ -2506,7 +2644,7 @@ def validate_override_order(
                 trigger = override_warning_trigger(warning_text, override_mode)
                 if trigger is not None:
                     warning_seen = True
-                    warning_trigger = trigger
+                    warning_categories = trigger
                 elif warning_text.strip():
                     raise ValidationError(
                         "high-risk override warning must be the first assistant "
@@ -2521,8 +2659,13 @@ def validate_override_order(
                     inspection_seen
                     and not additional_warning_seen
                     and additional_trigger is not None
-                    and additional_trigger != warning_trigger
+                    and bool(additional_trigger - warning_categories)
                 ):
+                    if standard_outline_seen:
+                        raise ValidationError(
+                            "new override risk warning must precede the standard "
+                            "inline outline"
+                        )
                     additional_warning_seen = True
                     continue
                 if (
@@ -2538,6 +2681,24 @@ def validate_override_order(
                     "standard outline between its warning and first mutation"
                 )
             if mutation_seen:
+                protocol_violation = False
+                for line in MarkdownProseStream().consume(record):
+                    if line.contextual or line.qualifier:
+                        continue
+                    if re.match(r"\s*Warning\s*:", line.text, re.IGNORECASE):
+                        protocol_violation = True
+                        break
+                    if (
+                        PROMOTION.fullmatch(line.text) is not None
+                        or has_affirmative_override_mode_change(line.text)
+                    ):
+                        protocol_violation = True
+                        break
+                if protocol_violation:
+                    raise ValidationError(
+                        "explicit non-strict override risk routing must finish "
+                        "before mutation and cannot promote to strict"
+                    )
                 if has_positive_verification(record.value):
                     verification_seen = True
             continue
@@ -2764,7 +2925,9 @@ def is_explicit_read_only_command(
 ) -> bool:
     if is_read_only_inspection_command(
         command, expected_plugin_root, expected_project_root
-    ):
+    ) or is_safe_discovery_command(
+        command, expected_project_root
+    ) or is_safe_ls_discovery_command(command, expected_project_root):
         return True
     arguments = split_read_command(command)
     if arguments and expected_plugin_root:
@@ -2958,6 +3121,12 @@ def require_affirmative_brainstorming(
         r"\b(?:I|we)(?:\s+have|['’]ve)?\s+ceased\s+"
         r"(?:using|invoking|running|applying)\s+"
         r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
+        r"\b(?:I|we)(?:\s+have|['’]ve)?\s+discontinued\s+"
+        r"(?:using|invoking|running|applying)\s+"
+        r"(?:it|that\s+skill|the\s+skill)\b",
+        r"\b(?:I|we)(?:\s+am|['’]m|\s+are|['’]re)?\s+done\s+"
+        r"(?:using|invoking|running|applying|with)\s+"
+        r"(?:it|that\s+skill|the\s+skill)\b",
         r"\bwithout\s+(?:currently\s+|actually\s+|now\s+)?"
         r"(?:using|invoking|running|applying)\s+"
         r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",

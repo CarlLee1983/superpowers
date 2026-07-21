@@ -1,6 +1,6 @@
 ---
 name: using-superpowers
-description: Use at every task entry. Before reading this skill, Codex may output exactly `Loading workflow-selection sources before task analysis.` and no other narration. Then read this skill alone, selecting-workflow-mode alone, and its risk matrix alone; output exactly one Mode line before any project command or other tool.
+description: Use at every task entry. Before reading this skill, Codex may output exactly `Loading workflow-selection sources before task analysis.` and no other narration. Then Codex MUST use three separate read-only tool calls: read this skill alone, selecting-workflow-mode alone, and its risk matrix alone. Never combine them. Output exactly one Mode line before any project command or other tool.
 ---
 
 <SUBAGENT-STOP>
@@ -39,6 +39,9 @@ On Codex, read this skill alone, then read `selecting-workflow-mode` alone, then
 The exact second and third paths are `skills/selecting-workflow-mode/SKILL.md`
 and `skills/selecting-workflow-mode/references/risk-matrix.md`.
 Use one standalone read-only command for each file. Do not combine those reads with each other or with project inspection.
+This is a closed three-command protocol: use exactly three separate command
+executions in order, with one file operand in each. A command containing `&&`,
+`;`, `|`, `find`, or multiple file operands is invalid.
 After the matrix read, output the declaration before any project command or
 other tool. Do not read platform references until the mode is active.
 
@@ -54,6 +57,8 @@ After any project inspection, complete risk routing before mutation:
   concrete risk and retain the override. If the immediate warning already
   covered that evidence, do not repeat it. Use exactly:
   `Warning: <concrete trigger> is strict-risk work. Retaining your explicit <lean|standard> override.`
+  This is a closed two-sentence protocol. Replace only the two placeholders.
+  Do not paraphrase, prefix, suffix, or merge this warning.
   If inspection finds one materially different trigger, emit the same template
   once more with that distinct trigger. Apart from that one exception, if
   `lean` remains active, emit no assistant prose after the warning and before
@@ -62,6 +67,7 @@ After any project inspection, complete risk routing before mutation:
   prose allowed before mutation.
 - Automatic `lean` or `standard` plus strict evidence: output the selector's
   canonical promotion line, then pause for approval without mutating.
+  A second `Mode:` line is invalid; promotion changes the existing active state.
 - Active `strict`: follow the strict skills and their approval gates without
   emitting a duplicate promotion.
 
