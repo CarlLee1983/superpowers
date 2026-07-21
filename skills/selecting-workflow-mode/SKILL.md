@@ -99,7 +99,15 @@ Keep pre-promotion inspection independently auditable and read-only.
 When dedicated Read, Glob, or Grep tools are available, use only those; do not
 use a shell command. On platforms where inspection is shell-based, safe closed
 read-only discovery may precede literal file reads. A safe discovery command may be standalone `rg --files` or standalone `rg -n`
-with read-only selection flags, literal patterns, and path operands. The only permitted discovery pipeline is one `rg --files` or `rg -n` command followed by one output-limiting `sed -n` command.
+or `rg --line-number` under this closed grammar:
+
+- For `rg --files`, allow only repeated `-g <glob>` or `--glob <glob>` pairs followed by project path operands.
+- For `rg -n` or `rg --line-number`, allow only repeated `-g <glob>` or `--glob <glob>` pairs plus `--hidden`, `--no-heading`, and `--color=never` before the first positional.
+  The first positional is the search pattern; all remaining positionals are project path operands.
+- The only permitted discovery pipeline is one allowed `rg` discovery command followed by one output-limiting `sed -n` command.
+  The output limiter must be exactly `sed -n '<positive-start>[,<positive-end>]p'`; no other `sed` flags, scripts, or operands are allowed.
+
+All other `rg` flags are forbidden here, including command-bearing `--pre` and `--pre-glob`.
 Do not use shell chaining, pipelines, redirections, command substitution,
 command separators, or mix inspection with mutation outside that single closed
 exception. Discovery never counts as strict-promotion proof.
