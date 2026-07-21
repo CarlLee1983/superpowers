@@ -26,8 +26,12 @@ For every new user task:
 4. Discover domain skills and mode-permitted process skills.
 5. Announce each skill when it causes an action or pause.
 
-After the selector returns, the next assistant output is its exact `Mode:`
-declaration line. Task entry is incomplete until that line is output.
+After the selector returns, the next task-specific assistant output is its exact
+`Mode:` declaration line. Task entry is incomplete until that line is output.
+Codex may emit one concise, generic bootstrap narration while loading the three
+required sources. That narration may only identify workflow loading and defer
+project work; it must not contain task analysis, a risk conclusion, a concrete
+project path, or a project finding.
 
 Do not invoke a general process skill before a mode is active.
 
@@ -72,7 +76,7 @@ strict or the human partner explicitly requests brainstorming.
 
 ## Strict skill discipline
 
-The required `Mode:` declaration remains the first task-entry output. Once
+The required `Mode:` declaration remains the first task-specific output. Once
 `strict` is active, invoke every relevant skill before any further response or action.
 Even a 1% chance that a skill applies means it is relevant. Process skills run before implementation skills.
 Follow the selected skill exactly; do not weaken its checklist or gates.

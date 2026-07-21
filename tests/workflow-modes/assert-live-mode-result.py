@@ -252,18 +252,9 @@ def has_unsafe_shell_expansion(payload: str) -> bool:
 
 def shell_pipeline_arguments(command: str) -> list[list[str]] | None:
     """Parse a closed shell pipeline without evaluating shell syntax."""
-    try:
-        outer = shlex.split(command, posix=True)
-    except ValueError:
+    payload = shell_payload(command)
+    if payload is None:
         return None
-    if (
-        len(outer) == 3
-        and outer[0] in {"/bin/zsh", "/bin/bash", "/bin/sh"}
-        and outer[1] == "-lc"
-    ):
-        payload = outer[2]
-    else:
-        payload = command
     if (
         "\n" in payload
         or "`" in payload
@@ -296,6 +287,117 @@ def shell_pipeline_arguments(command: str) -> list[list[str]] | None:
     if any(not segment for segment in segments):
         return None
     return segments
+
+
+def shell_payload(command: str) -> str | None:
+    try:
+        outer = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    if (
+        len(outer) == 3
+        and outer[0] in {"/bin/zsh", "/bin/bash", "/bin/sh"}
+        and outer[1] == "-lc"
+    ):
+        return outer[2]
+    return command
+
+
+def shell_pipeline_raw_tokens(command: str) -> list[list[str]] | None:
+    """Return lexical shell words with their quote delimiters preserved."""
+    payload = shell_payload(command)
+    if payload is None:
+        return None
+    try:
+        lexer = shlex.shlex(payload, posix=False, punctuation_chars="|;&<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    if not tokens or any(
+        token in {";", "&", "&&", "||", "<", ">", ">>"} for token in tokens
+    ):
+        return None
+    if tokens.count("|") > 1:
+        return None
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token == "|":
+            if not segments[-1]:
+                return None
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    if any(not segment for segment in segments):
+        return None
+    return segments
+
+
+def is_fully_shell_quoted(raw_token: str) -> bool:
+    return (
+        len(raw_token) >= 2
+        and raw_token[0] in {"'", '"'}
+        and raw_token[-1] == raw_token[0]
+    )
+
+
+def discovery_metacharacters_are_quoted(command: str) -> bool:
+    parsed = shell_pipeline_arguments(command)
+    raw = shell_pipeline_raw_tokens(command)
+    if parsed is None or raw is None or len(parsed) != len(raw):
+        return False
+    for parsed_segment, raw_segment in zip(parsed, raw):
+        if len(parsed_segment) != len(raw_segment):
+            return False
+        for value, raw_token in zip(parsed_segment, raw_segment):
+            try:
+                if shlex.split(raw_token, posix=True) != [value]:
+                    return False
+            except ValueError:
+                return False
+
+    arguments = parsed[0]
+    raw_arguments = raw[0]
+    if arguments[:2] == ["rg", "--files"]:
+        search_pattern_index = None
+    elif len(arguments) >= 3 and arguments[0] == "rg" and arguments[1] in {
+        "-n",
+        "--line-number",
+    }:
+        search_pattern_index = next(
+            (
+                index
+                for index in range(2, len(arguments))
+                if arguments[index] not in {
+                    "-g",
+                    "--glob",
+                    "--hidden",
+                    "--no-heading",
+                    "--color=never",
+                }
+                and (index == 2 or arguments[index - 1] not in {"-g", "--glob"})
+            ),
+            None,
+        )
+    else:
+        return False
+
+    if search_pattern_index is not None:
+        pattern = arguments[search_pattern_index]
+        if (
+            re.search(r"[\\.^$|?*+()[\]{}]", pattern)
+            and not is_fully_shell_quoted(raw_arguments[search_pattern_index])
+        ):
+            return False
+
+    for index, argument in enumerate(arguments[:-1]):
+        if argument not in {"-g", "--glob"}:
+            continue
+        glob = arguments[index + 1]
+        if "*" in glob and not is_fully_shell_quoted(raw_arguments[index + 1]):
+            return False
+    return True
 
 
 def exact_bootstrap_path(argument: str, expected_root: Path) -> bool:
@@ -642,7 +744,7 @@ def is_safe_discovery_command(
     pipeline = shell_pipeline_arguments(command)
     if pipeline is None or not valid_rg_discovery_arguments(
         pipeline[0], expected_project_root
-    ):
+    ) or not discovery_metacharacters_are_quoted(command):
         return False
     if len(pipeline) == 1:
         return True
@@ -653,6 +755,25 @@ def is_safe_discovery_command(
         and re.fullmatch(r"[1-9]\d*(?:,[1-9]\d*)?p", pipeline[1][2])
         is not None
     )
+
+
+def is_generic_codex_bootstrap_narration(text: str) -> bool:
+    """Allow only platform-facing workflow narration before Codex's Mode line."""
+    stripped = text.strip()
+    if (
+        not stripped
+        or len(stripped) > 400
+        or DECLARATION.search(stripped)
+        or re.search(r"(?:^|\s)(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+", stripped)
+    ):
+        return False
+    return re.search(
+        r"\b(?:load|read|use|using|invoke|follow)\w*\b.{0,160}"
+        r"\b(?:superpowers|workflow|selector|selection\s+skills?|"
+        r"workflow-selection|mode\s+selection)\b",
+        stripped,
+        re.IGNORECASE,
+    ) is not None
 
 
 def validate_declaration_order(
@@ -678,8 +799,19 @@ def validate_declaration_order(
                     continue
                 if block.get("type") == "text":
                     text = block.get("text")
-                    if isinstance(text, str) and DECLARATION.search(text):
+                    if not isinstance(text, str) or not text.strip():
+                        continue
+                    declaration = DECLARATION.search(text)
+                    if declaration:
+                        if not declared and text[: declaration.start()].strip():
+                            raise ValidationError(
+                                "assistant prose before mode declaration"
+                            )
                         declared = True
+                    elif not declared:
+                        raise ValidationError(
+                            "assistant prose before mode declaration"
+                        )
                 elif block.get("type") == "tool_use" and not declared:
                     if not is_claude_bootstrap(block, expected_plugin_root):
                         raise ValidationError(
@@ -730,7 +862,14 @@ def validate_declaration_order(
                     completed_items.add(item_id)
             if item_type == "agent_message":
                 text = item.get("text")
-                if isinstance(text, str) and DECLARATION.search(text):
+                declaration = (
+                    DECLARATION.search(text) if isinstance(text, str) else None
+                )
+                if declaration:
+                    if text[: declaration.start()].strip():
+                        raise ValidationError(
+                            "assistant prose before mode declaration"
+                        )
                     if (
                         expected_plugin_root is not None
                         and bootstrap_index != len(BOOTSTRAP_PATHS)
@@ -740,6 +879,19 @@ def validate_declaration_order(
                             "standalone bootstrap reads in exact order"
                         )
                     declared = True
+                elif (
+                    not declared
+                    and isinstance(text, str)
+                    and text.strip()
+                    and (
+                        bootstrap_index != 0
+                        or not is_generic_codex_bootstrap_narration(text)
+                    )
+                ):
+                    raise ValidationError(
+                        "assistant prose before mode declaration is not generic "
+                        "Codex bootstrap narration"
+                    )
                 continue
             if declared:
                 continue
@@ -1128,8 +1280,16 @@ def has_strict_design_approval_pause(text: str) -> bool:
     )
     if pause is None:
         return False
-    pause_prefix = text[max(0, pause.start() - 40) : pause.start()]
-    if re.search(r"\b(?:not|never|no\s+longer)\s*$", pause_prefix, re.IGNORECASE):
+    clause_start = max(
+        text.rfind(separator, 0, pause.start()) for separator in (".", ";", "\n")
+    )
+    pause_prefix = text[clause_start + 1 : pause.start()]
+    if re.search(
+        r"\b(?:not|never|without|no\s+longer)"
+        r"(?:\s+(?:currently|actually|really|now|still)){0,3}\s*$",
+        pause_prefix,
+        re.IGNORECASE,
+    ):
         return False
     if re.search(
         r"\bapproaches?\s+considered\b|\bdesign\s+options?\b",
@@ -1254,6 +1414,10 @@ def strict_transcript_has_mutation(
                 continue
             if name in {"Read", "Glob", "Grep"} and valid_claude_inspection(
                 name, tool_input, expected_project_root
+            ):
+                continue
+            if name == "Read" and safe_claude_read_probe(
+                tool_input, expected_project_root
             ):
                 continue
             if (
@@ -2180,21 +2344,73 @@ def validate_standard_inline_design_order(
 
 
 def has_override_warning(text: str) -> bool:
-    signal_sets = (
+    clauses = [
+        clause.strip()
+        for clause in re.split(r"[\n.;]+|\bbut\b", text, flags=re.IGNORECASE)
+        if clause.strip()
+    ]
+    negative = re.compile(
+        r"\b(?:not|never|no\s+longer|without|isn['’]t|aren['’]t|"
+        r"won['’]t|wouldn['’]t|can['’]t|cannot)\b",
+        re.IGNORECASE,
+    )
+    risk_pattern = re.compile(
         r"\b(?:auth(?:entication|orization)?|credentials?|session|security)\b",
+        re.IGNORECASE,
+    )
+    risk_level_pattern = re.compile(
         r"\b(?:strict|risk|security[- ]sensitive|high[- ]risk)\b",
-        r"\b(?:remain|keep|continue|honou?r|authoritative|as\s+requested|"
-        r"override|explicit\s+lean)\b",
+        re.IGNORECASE,
     )
-    return all(
-        re.search(pattern, text, re.IGNORECASE) is not None
-        for pattern in signal_sets
+    risk_seen = any(
+        negative.search(clause) is None
+        and risk_pattern.search(clause)
+        and risk_level_pattern.search(clause)
+        for clause in clauses[:1]
     )
+    retention_negative = re.compile(
+        r"\b(?:not|never|without|won['’]t|wouldn['’]t|cannot|can['’]t)\s+"
+        r"(?:continue(?:ing)?\s+(?:in|with)\s+|remain(?:ing)?\s+(?:in\s+)?|"
+        r"stay(?:ing)?\s+(?:in\s+)?|keep(?:ing)?\s+(?:the\s+)?|"
+        r"honou?r(?:ing)?\s+(?:your\s+|the\s+)?)"
+        r"(?:explicit\s+)?lean(?:\s+(?:mode|request|override))?\b|"
+        r"\b(?:reject|ignore|decline|disregard|abandon)\w*\s+"
+        r"(?:the\s+)?(?:explicit\s+)?lean\s+(?:request|override)\b|"
+        r"\blean\s+override\b[^.;]*\b(?:is|remains?)\s+not\s+"
+        r"(?:authoritative|active|in\s+effect)\b",
+        re.IGNORECASE,
+    )
+    if retention_negative.search(text):
+        return False
+    retention_seen = any(
+        negative.search(clause) is None
+        and re.search(
+            r"\b(?:remain(?:ing)?\s+(?:in\s+)?lean|"
+            r"keep(?:ing)?\s+(?:the\s+)?lean(?:\s+mode)?|"
+            r"continue(?:ing)?\s+(?:in|with)\s+lean|"
+            r"stay(?:ing)?\s+(?:in\s+)?lean|"
+            r"honou?r(?:ing)?\s+(?:your\s+|the\s+)?(?:explicit\s+)?"
+            r"lean(?:\s+(?:request|override))?|"
+            r"(?:explicit\s+|requested\s+)?lean\s+override\b[^.;]*"
+            r"\b(?:authoritative|active|in\s+effect))\b",
+            clause,
+            re.IGNORECASE,
+        )
+        for clause in clauses
+    )
+    return risk_seen and retention_seen
 
 
 def has_positive_verification(text: str) -> bool:
     status = False
     for clause in re.split(r"[\n.;]+", text):
+        if "?" in clause or re.search(
+            r"\b(?:expect|expected|should|may|might|hopefully|likely|"
+            r"assume|assuming|will)\b",
+            clause,
+            re.IGNORECASE,
+        ):
+            continue
         normalized = re.sub(
             r"\b0\s+(?:tests?\s+)?fail(?:ed|ures?)\b",
             "",
@@ -2658,9 +2874,16 @@ def require_affirmative_brainstorming(
         r"(?:using|invoking|running|applying|use|invoke|run|apply)\s+"
         r"(?:it|that\s+skill|the\s+skill)\b",
         r"\b(?:I|we)\s+(?:(?:am|are|was|were)\s+)?no\s+longer\s+"
+        r"(?:currently\s+|actually\s+|now\s+)?"
         r"(?:using|invoking|running|applying|use|invoke|run|apply)\s+"
         r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
         r"\b(?:I|we)\s+(?:have\s+)?stopped\s+"
+        r"(?:using|invoking|running|applying)\s+"
+        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
+        r"\b(?:I|we)\s+(?:have\s+)?ceased\s+"
+        r"(?:using|invoking|running|applying)\s+"
+        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
+        r"\bwithout\s+(?:currently\s+|actually\s+|now\s+)?"
         r"(?:using|invoking|running|applying)\s+"
         r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
     )

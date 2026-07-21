@@ -126,6 +126,36 @@ if case == "standard":
             "type": "text", "text": text,
         }]}},
     ]
+elif case == "override":
+    events[1:2] = [
+        {"type": "assistant", "message": {"role": "assistant", "content": [{
+            "type": "text",
+            "text": (
+                "Mode: lean — explicit override.\n"
+                "Warning: authentication is security-sensitive; I will remain "
+                "lean as requested."
+            ),
+        }]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{
+            "type": "tool_use",
+            "id": "override-mutation",
+            "name": "Write",
+            "input": {
+                "file_path": str(project / "src/auth.js"),
+                "content": "implemented",
+            },
+        }]}},
+        {"type": "user", "message": {"role": "user", "content": [{
+            "type": "tool_result",
+            "tool_use_id": "override-mutation",
+            "is_error": False,
+            "content": "Authentication implementation written.",
+        }]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{
+            "type": "text",
+            "text": "Verification: authentication tests pass.",
+        }]}},
+    ]
 elif case == "escalation":
     declaration = "Mode: standard — bounded rename pending repository inspection."
     events[1:2] = [
@@ -223,14 +253,37 @@ elif args and args[0] == "exec":
         raise SystemExit(19)
     project = pathlib.Path(args[args.index("--cd") + 1])
     (project / "README.md").write_text("This is the demo.\n")
-    events = [
-        {"type": "thread.started", "thread_id": "thread"},
+    plugin_root = (
+        pathlib.Path(os.environ["CODEX_HOME"])
+        / "plugins/cache/superpowers-dev/superpowers"
+        / os.environ["EXPECTED_PLUGIN_VERSION"]
+    )
+    events = [{"type": "thread.started", "thread_id": "thread"}]
+    for index, relative in enumerate((
+        "skills/using-superpowers/SKILL.md",
+        "skills/selecting-workflow-mode/SKILL.md",
+        "skills/selecting-workflow-mode/references/risk-matrix.md",
+    ), start=1):
+        command = f"sed -n '1,260p' {plugin_root / relative}"
+        item = {
+            "id": f"bootstrap-{index}",
+            "type": "command_execution",
+            "command": command,
+        }
+        events.extend((
+            {"type": "item.started", "item": item},
+            {
+                "type": "item.completed",
+                "item": {**item, "exit_code": 0},
+            },
+        ))
+    events.extend((
         {"type": "item.completed", "item": {
             "id": "message", "type": "agent_message",
             "text": "Mode: lean — localized typo correction.\nVerification passed.",
         }},
         {"type": "turn.completed", "usage": {}},
-    ]
+    ))
     for event in events:
         print(json.dumps(event))
 else:

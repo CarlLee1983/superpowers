@@ -482,8 +482,20 @@ class ValidatorTest(unittest.TestCase):
                 None,
             )
             if thread_index is not None:
-                events[thread_index + 1 : thread_index + 1] = (
-                    codex_bootstrap_lifecycles(expected_plugin_root)
+                insert_index = thread_index + 1
+                while insert_index < len(events):
+                    item = events[insert_index].get("item")
+                    if not (
+                        events[insert_index].get("type") == "item.completed"
+                        and isinstance(item, dict)
+                        and item.get("type") == "agent_message"
+                        and isinstance(item.get("text"), str)
+                        and not item["text"].lstrip().lower().startswith("mode:")
+                    ):
+                        break
+                    insert_index += 1
+                events[insert_index:insert_index] = codex_bootstrap_lifecycles(
+                    expected_plugin_root
                 )
         log = self.write_jsonl(f"{backend}-{case}.jsonl", events)
         command = [
@@ -1246,7 +1258,7 @@ class ValidatorTest(unittest.TestCase):
         ]
         result = self.run_validator("codex", "lean", events)
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("exactly one assistant-visible", result.stderr)
+        self.assertIn("assistant prose before mode declaration", result.stderr)
 
     def test_preserves_assistant_text_when_validation_fails(self) -> None:
         log = self.write_jsonl(
@@ -2069,6 +2081,11 @@ class ValidatorTest(unittest.TestCase):
             "rg --files {.,/tmp}",
             "rg --files *",
             "rg --files -g *",
+            "rg -n amount+payment .",
+            "rg -n amount.payment .",
+            "rg -n amount^payment .",
+            r"rg -n amount\*payment .",
+            r"rg --files -g \*.js",
             "rg --files | sed -n '0,10p'",
             "rg --files | sed -n '-1,10p'",
             "rg --files | sed -n 'one,10p'",
@@ -3760,6 +3777,123 @@ class ValidatorTest(unittest.TestCase):
                     ),
                 ],
             ),
+            (
+                "negated risk warning",
+                [
+                    declaration,
+                    codex_event(
+                        "Authentication is not a strict security risk; I’ll honor "
+                        "the explicit lean override.",
+                        item_id="warning",
+                    ),
+                    *mutation,
+                    codex_event(
+                        "Verification: authentication tests pass.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
+            (
+                "negated override retention",
+                [
+                    declaration,
+                    codex_event(
+                        "Authentication is a strict security risk; I will not honor "
+                        "the explicit lean override.",
+                        item_id="warning",
+                    ),
+                    *mutation,
+                    codex_event(
+                        "Verification: authentication tests pass.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
+            (
+                "contracted negated risk warning",
+                [
+                    declaration,
+                    codex_event(
+                        "Authentication isn't a strict security risk; I’ll honor "
+                        "the explicit lean override.",
+                        item_id="warning",
+                    ),
+                    *mutation,
+                    codex_event(
+                        "Verification: authentication tests pass.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
+            (
+                "negated retention followed by as requested",
+                [
+                    declaration,
+                    codex_event(
+                        "Authentication is a strict security risk; I will not honor "
+                        "the explicit lean override; as requested.",
+                        item_id="warning",
+                    ),
+                    *mutation,
+                    codex_event(
+                        "Verification: authentication tests pass.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
+            (
+                "rejected retention followed by as requested",
+                [
+                    declaration,
+                    codex_event(
+                        "Authentication is a strict security risk; I reject the "
+                        "explicit lean override; as requested.",
+                        item_id="warning",
+                    ),
+                    *mutation,
+                    codex_event(
+                        "Verification: authentication tests pass.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
+            (
+                "non-authoritative retention followed by as requested",
+                [
+                    declaration,
+                    codex_event(
+                        "Authentication is a strict security risk; the lean override "
+                        "is not authoritative; as requested.",
+                        item_id="warning",
+                    ),
+                    *mutation,
+                    codex_event(
+                        "Verification: authentication tests pass.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
+            (
+                "verification question",
+                [
+                    declaration,
+                    warning,
+                    *mutation,
+                    codex_event("Verification: tests pass?", item_id="verify"),
+                ],
+            ),
+            (
+                "expected verification",
+                [
+                    declaration,
+                    warning,
+                    *mutation,
+                    codex_event(
+                        "I expect authentication tests pass.",
+                        item_id="verify",
+                    ),
+                ],
+            ),
         )
         for label, body in cases:
             with self.subTest(label=label):
@@ -3803,6 +3937,95 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("claude", "lean", events, plugin_identity=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("task-specific action before mode declaration", result.stderr)
+
+    def test_claude_rejects_visible_prose_before_mode_declaration(self) -> None:
+        events = [
+            claude_init(),
+            claude_event("I’ll inspect the project before choosing a mode."),
+            claude_event(
+                "Mode: lean — localized typo correction.\nVerification passed."
+            ),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "lean", events, plugin_identity=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("assistant prose before mode declaration", result.stderr)
+
+    def test_codex_allows_only_generic_bootstrap_narration_before_mode(self) -> None:
+        generic = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "I’m loading the required workflow-selection skills first.",
+                item_id="bootstrap-note",
+            ),
+            *codex_bootstrap_lifecycles(),
+            codex_event(
+                "Mode: lean — localized typo correction.\nVerification passed.",
+                item_id="mode",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator(
+            "codex", "lean", generic, inject_codex_bootstrap=False
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        task_specific = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "I’ll inspect src/auth.js and change token expiry handling.",
+                item_id="early-task-prose",
+            ),
+            *codex_bootstrap_lifecycles(),
+            codex_event(
+                "Mode: lean — localized typo correction.\nVerification passed.",
+                item_id="mode",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator(
+            "codex", "lean", task_specific, inject_codex_bootstrap=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("assistant prose before mode declaration", result.stderr)
+
+        risk_conclusion = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "The workflow says authentication is strict-risk work.",
+                item_id="early-risk-conclusion",
+            ),
+            *codex_bootstrap_lifecycles(),
+            codex_event(
+                "Mode: lean — localized typo correction.\nVerification passed.",
+                item_id="mode",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator(
+            "codex", "lean", risk_conclusion, inject_codex_bootstrap=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("assistant prose before mode declaration", result.stderr)
+
+        late_generic = [
+            {"type": "thread.started", "thread_id": "thread"},
+            *codex_bootstrap_lifecycles(),
+            codex_event(
+                "I’m loading the required workflow-selection skills first.",
+                item_id="late-bootstrap-note",
+            ),
+            codex_event(
+                "Mode: lean — localized typo correction.\nVerification passed.",
+                item_id="mode",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator(
+            "codex", "lean", late_generic, inject_codex_bootstrap=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("assistant prose before mode declaration", result.stderr)
 
     def test_claude_allows_selector_bootstrap_before_mode_declaration(self) -> None:
         events = [
@@ -4593,20 +4816,27 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("claude", "strict", unknown_tool)
         self.assertNotEqual(result.returncode, 0)
 
-        negated_pause = [
-            claude_init(),
-            claude_event(
-                "Mode: strict — production payment migration and public API risk.\n"
-                "Approaches considered:\n"
-                "- A. Expand and backfill the amount_cents schema safely.\n"
-                "- B. Rewrite payment rows in place with rollback risk.\n"
-                "Recommended design: choose A with a versioned public API.\n"
-                "I am not waiting for your approval before proceeding."
-            ),
-            {"type": "result", "subtype": "success", "result": "done"},
-        ]
-        result = self.run_validator("claude", "strict", negated_pause)
-        self.assertNotEqual(result.returncode, 0)
+        for pause in (
+            "I am not waiting for your approval before proceeding.",
+            "I am not currently waiting for your approval before proceeding.",
+            "I am not actually waiting for your approval before proceeding.",
+            "Without waiting for your approval before proceeding.",
+        ):
+            with self.subTest(pause=pause):
+                negated_pause = [
+                    claude_init(),
+                    claude_event(
+                        "Mode: strict — production payment migration and public API risk.\n"
+                        "Approaches considered:\n"
+                        "- A. Expand and backfill the amount_cents schema safely.\n"
+                        "- B. Rewrite payment rows in place with rollback risk.\n"
+                        "Recommended design: choose A with a versioned public API.\n"
+                        f"{pause}"
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator("claude", "strict", negated_pause)
+                self.assertNotEqual(result.returncode, 0)
 
     def test_strict_rejects_mutation_before_any_pause_route(self) -> None:
         for pause in (
@@ -4632,6 +4862,28 @@ class ValidatorTest(unittest.TestCase):
                 ]
                 result = self.run_validator("claude", "strict", events)
                 self.assertNotEqual(result.returncode, 0)
+
+    def test_strict_allows_failed_read_probe_for_missing_project_path(self) -> None:
+        events = [
+            claude_init(),
+            claude_event(
+                "Mode: strict — production payment migration and public API risk."
+            ),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/missing.js")},
+                tool_id="missing-read",
+            ),
+            claude_tool_result(
+                "missing-read",
+                is_error=True,
+                content="File does not exist.",
+            ),
+            claude_event("Which rollback requirement applies to this migration?"),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "strict", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_strict_declarative_pause_allows_nonmutating_approval_tool(self) -> None:
         events = [
@@ -4978,6 +5230,9 @@ class ValidatorTest(unittest.TestCase):
             "I applied the brainstorming skill, but I’m not applying it after all.",
             "I applied the brainstorming skill. I am no longer applying the brainstorming skill.",
             "I applied the brainstorming skill. I stopped applying the brainstorming skill.",
+            "I applied the brainstorming skill. I am no longer currently applying the brainstorming skill.",
+            "I applied the brainstorming skill. I ceased applying the brainstorming skill.",
+            "I applied the brainstorming skill. Without applying the brainstorming skill now.",
         )
         for detail in details:
             with self.subTest(detail=detail):

@@ -43,8 +43,10 @@ Read [references/risk-matrix.md](references/risk-matrix.md), then select:
 - `standard`: bounded work needing some design judgment
 - `strict`: a concrete high-risk trigger is present
 
-After reading the matrix, the next assistant output is exactly one declaration
-line, before any task-specific tool call:
+After reading the matrix, the next task-specific assistant output is exactly one
+declaration line, before any task-specific tool call. Codex's generic bootstrap
+narration exception is defined by `using-superpowers` and ends when the matrix
+read completes:
 
 `Mode: <lean|standard|strict> — <one-sentence reason>.`
 
