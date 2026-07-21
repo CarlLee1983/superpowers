@@ -670,6 +670,34 @@ class ValidatorTest(unittest.TestCase):
                 ],
                 "standard inline design lacks concrete approach",
             ),
+            (
+                "task-unrelated CLI delete outline",
+                [
+                    codex_event(
+                        "Implementation outline:\n"
+                        "- Approach: update the CLI delete flag parser.\n"
+                        "- Affected files: src/cli.js and test/delete.test.js.\n"
+                        "- Verification: run npm test and check delete output.",
+                        item_id="outline",
+                    )
+                ],
+                "standard inline design lacks concrete approach",
+            ),
+            (
+                "long-gap negated outline",
+                [
+                    codex_event(
+                        "Implementation outline:\n"
+                        "- Approach: do not under any circumstances ever update the "
+                        "CLI summary calculation.\n"
+                        "- Affected files: src/cli.js and test/summary.test.js.\n"
+                        "- Verification: run npm test and check the summary JSON count "
+                        "and total.",
+                        item_id="outline",
+                    )
+                ],
+                "standard inline design lacks concrete approach",
+            ),
         )
         for label, between_inspection_and_mutation, error in cases:
             with self.subTest(label=label):
@@ -700,6 +728,12 @@ class ValidatorTest(unittest.TestCase):
             "Okay to proceed?",
             "Ready for me to implement?",
             "Before I continue, is this okay?",
+            "Shall I proceed?",
+            "Would you like me to go ahead?",
+            "Does this approach look good?",
+            "Is this plan acceptable?",
+            "Let me know if you'd like changes before I begin.",
+            "May I implement this now?",
         ):
             with self.subTest(pause=pause):
                 events = [
@@ -717,6 +751,174 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("codex", "standard", events)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("must not seek approval or pause", result.stderr)
+
+        pre_inspection_question = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.", item_id="mode"
+            ),
+            codex_event(
+                "What files currently implement the CLI summary? I’ll inspect them now.",
+                item_id="inspection-intro",
+            ),
+            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            codex_event(outline, item_id="outline"),
+            *codex_command_lifecycle("printf implementation", "mutation"),
+            codex_event("Tests passed.", item_id="result"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "standard", pre_inspection_question)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_accepts_natural_inline_outline_wording(self) -> None:
+        outlines = (
+            "I'll implement the summary command in src/cli.js and add coverage in "
+            "test/summary.test.js. I'll run npm test and verify JSON count/total.",
+            "Plan: modify src/cli.js to add the item summary command; cover "
+            "test/summary.test.js; run npm test and verify JSON count/total.",
+        )
+        for index, outline in enumerate(outlines):
+            with self.subTest(outline=outline):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded CLI behavior and coverage.",
+                        item_id="mode",
+                    ),
+                    *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+                    codex_event(outline, item_id=f"outline-{index}"),
+                    *codex_command_lifecycle("printf implementation", "mutation"),
+                    codex_event("Tests passed.", item_id="result"),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "standard", events)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_accepts_validated_auxiliary_workflow_lifecycles(self) -> None:
+        outline = (
+            "Implementation outline:\n"
+            "- Approach: update the CLI summary calculation to total item prices.\n"
+            "- Affected files: src/cli.js and test/summary.test.js.\n"
+            "- Verification: run npm test and check the summary JSON count and total."
+        )
+        skill_result = claude_tool_result(
+            "standard-tdd",
+            content="Launching skill: superpowers:test-driven-development",
+        )
+        skill_result["tool_use_result"] = {
+            "success": True,
+            "commandName": "superpowers:test-driven-development",
+        }
+        claude_events = [
+            claude_init(),
+            claude_event("Mode: standard — bounded CLI behavior and coverage."),
+            claude_tool_event(
+                "Skill",
+                {"skill": "superpowers:test-driven-development"},
+                tool_id="standard-tdd",
+            ),
+            skill_result,
+            *claude_read_lifecycle(self.project, "src/cli.js", "inspection"),
+            claude_event(outline),
+            claude_tool_event(
+                "Write",
+                {"file_path": str(self.project / "src/cli.js"), "content": "code"},
+                tool_id="mutation",
+            ),
+            claude_event("Tests passed and summary output verified."),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        codex_events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.", item_id="mode"
+            ),
+            {"type": "item.started", "item": {"id": "tasks", "type": "todo_list"}},
+            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            codex_event(outline, item_id="outline"),
+            codex_event(
+                "src/cli.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event(
+                "src/cli.js", item_type="file_change", item_id="mutation"
+            ),
+            {"type": "item.completed", "item": {"id": "tasks", "type": "todo_list"}},
+            codex_event(
+                "Tests passed and summary output verified.", item_id="result"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        for backend, events in (("claude", claude_events), ("codex", codex_events)):
+            with self.subTest(backend=backend):
+                result = self.run_validator(backend, "standard", events)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_rejects_invalid_auxiliary_workflow_lifecycles(self) -> None:
+        outline = (
+            "Implementation outline:\n"
+            "- Approach: update the CLI summary calculation to total item prices.\n"
+            "- Affected files: src/cli.js and test/summary.test.js.\n"
+            "- Verification: run npm test and check the summary JSON count and total."
+        )
+        failed_skill = claude_tool_result("standard-tdd", is_error=True)
+        claude_cases = (
+            (
+                "failed skill",
+                {"skill": "superpowers:test-driven-development"},
+                [failed_skill],
+            ),
+            (
+                "unknown skill",
+                {"skill": "superpowers:unknown-standard-skill"},
+                [claude_tool_result("standard-tdd")],
+            ),
+        )
+        for label, tool_input, result_events in claude_cases:
+            with self.subTest(backend="claude", label=label):
+                events = [
+                    claude_init(),
+                    claude_event("Mode: standard — bounded CLI behavior and coverage."),
+                    claude_tool_event(
+                        "Skill", tool_input, tool_id="standard-tdd"
+                    ),
+                    *result_events,
+                    *claude_read_lifecycle(self.project, "src/cli.js", "inspection"),
+                    claude_event(outline),
+                    claude_tool_event(
+                        "Write",
+                        {"file_path": str(self.project / "src/cli.js"), "content": "code"},
+                        tool_id="mutation",
+                    ),
+                    claude_event("Tests passed."),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator("claude", "standard", events)
+                self.assertNotEqual(result.returncode, 0)
+
+        malformed_todo = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.", item_id="mode"
+            ),
+            {
+                "type": "item.started",
+                "item": {"id": "tasks", "type": "todo_list", "items": "malformed"},
+            },
+            {
+                "type": "item.completed",
+                "item": {"id": "tasks", "type": "todo_list", "items": "malformed"},
+            },
+            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            codex_event(outline, item_id="outline"),
+            *codex_command_lifecycle("printf implementation", "mutation"),
+            codex_event("Tests passed.", item_id="result"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "standard", malformed_todo)
+        self.assertNotEqual(result.returncode, 0)
 
     def test_lean_accepts_an_evidence_heading_as_verification_reporting(self) -> None:
         events = [
@@ -3814,6 +4016,15 @@ class ValidatorTest(unittest.TestCase):
             "What should the public API expose?\n"
             "1. Review API docs.\n"
             "2. Inspect API schema.",
+            "What should the public API expose?\n"
+            "1. API documentation.\n"
+            "2. API schema.",
+            "What should the public API expose?\n"
+            "1. Use API documentation.\n"
+            "2. Use API schema.",
+            "What should the public API expose?\n"
+            "1. API docs.\n"
+            "2. API schema.",
         )
         for discovery in reviewer_adversarials:
             with self.subTest(discovery=discovery):
@@ -3843,6 +4054,11 @@ class ValidatorTest(unittest.TestCase):
                 "What architecture should the public API use?\n"
                 "1. A versioned API exposes `amount_cents`.\n"
                 "2. No public API; use an internal migration runbook."
+            ),
+            (
+                "What architecture should the public API use?\n"
+                "1. A REST interface backed by the payment database.\n"
+                "2. An internal migration runbook with no external endpoint."
             ),
             (
                 "What should the public API expose?\n"

@@ -835,10 +835,18 @@ def has_concrete_discovery_pause(text: str) -> bool:
             if alternative is None or concrete_signal.search(alternative.group(0)) is None:
                 return False
 
-    if re.search(r"\b(?:public\s+API|API|expose)\b", question_text, re.IGNORECASE):
+    if re.search(r"\bexpose\b", question_text, re.IGNORECASE):
         responsive_signal = re.compile(
-            r"`[A-Za-z_][^`]*`|\b(?:API|amount|field|integer|dollars?|cents?|"
-            r"versioned|v\d+)\b",
+            r"`[A-Za-z_][^`]*`|\b(?:amount|field|value|integer|dollars?|cents?|"
+            r"versioned|v\d+|endpoint|interface|in[- ]place|response)\b",
+            re.IGNORECASE,
+        )
+    elif re.search(
+        r"\b(?:public\s+API|API)\b", question_text, re.IGNORECASE
+    ):
+        responsive_signal = re.compile(
+            r"`[A-Za-z_][^`]*`|\b(?:REST|database|runbook|internal|external|"
+            r"endpoint|interface|versioned|v\d+|schema|migration)\b",
             re.IGNORECASE,
         )
     else:
@@ -1005,7 +1013,20 @@ def escalation_records(
                         continue
                     name = block.get("name")
                     tool_input = block.get("input")
-                    if name in {"Read", "Glob", "Grep"}:
+                    if (
+                        action_context == "standard"
+                        and name == "Skill"
+                        and isinstance(tool_input, dict)
+                        and tool_input.get("skill")
+                        == "superpowers:test-driven-development"
+                        and set(tool_input).issubset({"skill", "args"})
+                        and (
+                            "args" not in tool_input
+                            or isinstance(tool_input.get("args"), str)
+                        )
+                    ):
+                        tool_uses[tool_id] = ("standard_skill", ())
+                    elif name in {"Read", "Glob", "Grep"}:
                         if valid_claude_inspection(
                             name, tool_input, expected_project_root
                         ):
@@ -1104,10 +1125,35 @@ def escalation_records(
                             f"inspection probe claimed success for missing path {tool_id!r}",
                             event_index,
                         )
+                elif tool_kind == "standard_skill":
+                    is_error = block.get("is_error", False)
+                    metadata = event.get("tool_use_result")
+                    metadata_valid = metadata is None or (
+                        isinstance(metadata, dict)
+                        and type(metadata.get("success")) is bool
+                        and metadata.get("success") is True
+                        and metadata.get("commandName")
+                        == "superpowers:test-driven-development"
+                    )
+                    if (
+                        type(is_error) is not bool
+                        or is_error is True
+                        or not metadata_valid
+                    ):
+                        add(
+                            "invalid",
+                            "standard workflow Skill did not complete successfully",
+                            event_index,
+                        )
         missing_results = [
             tool_id
             for tool_id, (kind, _) in tool_uses.items()
-            if kind in {"inspection", "inspection_probe", "discovery"}
+            if kind in {
+                "inspection",
+                "inspection_probe",
+                "discovery",
+                "standard_skill",
+            }
             and tool_id not in observed_tool_results
         ]
         if missing_results:
@@ -1127,6 +1173,17 @@ def escalation_records(
         if not isinstance(item, dict):
             continue
         item_type = item.get("type")
+        if item_type == "todo_list" and action_context == "standard":
+            if (
+                event.get("type") not in {"item.started", "item.completed"}
+                or set(item) != {"id", "type"}
+            ):
+                add(
+                    "invalid",
+                    "standard todo lifecycle has malformed shape",
+                    event_index,
+                )
+            continue
         if event.get("type") == "item.completed" and item_type == "agent_message":
             value = item.get("text")
             if isinstance(value, str):
@@ -1136,7 +1193,7 @@ def escalation_records(
             if not isinstance(command, str):
                 add(
                     "invalid",
-                    "unrecognized escalation action: command_execution",
+                    f"unrecognized {action_context} action: command_execution",
                     event_index,
                 )
             elif is_codex_bootstrap(command, expected_plugin_root):
@@ -1550,23 +1607,12 @@ def validate_escalation_order(
 
 
 def has_standard_approval_pause(text: str) -> bool:
-    approval_patterns = (
-        r"\bshould\s+(?:I|we)\s+(?:proceed|continue|implement|make\s+(?:the\s+)?changes?)\b[^?]*\?",
-        r"\b(?:do\s+you\s+want|would\s+you\s+like)\s+(?:me|us)\s+to\s+"
-        r"(?:proceed|continue|implement|make\s+(?:the\s+)?changes?)\b[^?]*\?",
-        r"\b(?:can|could)\s+you\s+(?:please\s+)?(?:approve|confirm)\b[^?]*\?",
-        r"\b(?:I|we)\s+(?:need|await)\s+your\s+(?:approval|confirmation)\b"
-        r"[^.!?]*\bbefore\s+(?:I|we\s+)?(?:proceed|continue|implement)",
-        r"\b(?:is\s+(?:it|this|that)\s+)?okay\s+to\s+"
-        r"(?:proceed|continue|implement|make\s+(?:the\s+)?changes?)\s*\?",
-        r"\bready\s+for\s+(?:me|us)\s+to\s+"
-        r"(?:proceed|continue|implement|make\s+(?:the\s+)?changes?)\s*\?",
-        r"\bbefore\s+(?:I|we)\s+(?:proceed|continue|implement)\s*,\s*"
-        r"is\s+(?:this|that|it)\s+okay\s*\?",
-    )
-    return has_relevant_pause(text) or any(
-        re.search(pattern, text, re.IGNORECASE) for pattern in approval_patterns
-    )
+    return "?" in text or re.search(
+        r"\blet\s+me\s+know\s+if\s+you(?:['’]d|\s+would)\s+like\s+"
+        r"(?:any\s+)?changes?\s+before\s+I\s+(?:begin|start|implement)",
+        text,
+        re.IGNORECASE,
+    ) is not None
 
 
 def has_standard_inline_design(text: str) -> bool:
@@ -1579,21 +1625,21 @@ def has_standard_inline_design(text: str) -> bool:
         r"parse|read|refactor|return|update|wire|write)\w*"
     )
     negated_action = re.search(
-        rf"\b(?:do\s+not|don't|will\s+not|won't|not\s+going\s+to|avoid)\s+"
-        rf"(?:\w+\s+){{0,3}}{concrete_action}\b",
+        rf"\b(?:do\s+not|don't|will\s+not|won't|not\s+going\s+to|avoid)\b"
+        rf"[^.;\n]{{0,180}}\b{concrete_action}\b",
         text,
         re.IGNORECASE,
     )
     negated_verification = re.search(
-        r"\b(?:do\s+not|don't|will\s+not|won't|not\s+going\s+to|avoid)\s+"
-        r"(?:\w+\s+){0,3}(?:run|check|assert|compare|exercise|invoke|test|verify)\w*\b",
+        r"\b(?:do\s+not|don't|will\s+not|won't|not\s+going\s+to|avoid)\b"
+        r"[^.;\n]{0,180}\b(?:run|check|assert|compare|exercise|invoke|test|verify)\w*\b",
         text,
         re.IGNORECASE,
     )
     if negated_action or negated_verification:
         return False
     approach = re.search(
-        rf"\b(?:approach|design|implementation(?:\s+outline|\s+plan)?)\b"
+        rf"\b(?:approach|design|plan|implementation(?:\s+outline|\s+plan)?)\b"
         rf"[^\n]{{0,100}}\b{concrete_action}\b|"
         rf"\b(?:I|we)\s*(?:['’]ll|will)\s+{concrete_action}\b",
         text,
@@ -1607,7 +1653,8 @@ def has_standard_inline_design(text: str) -> bool:
     affected = re.search(
         rf"\baffected\s+(?:files?|components?|surface)\b[^\n]{{0,140}}"
         rf"(?:{named_file}|\b{named_component}\b)|"
-        rf"\b(?:touch|change|modify|update)\w*\b[^\n]{{0,80}}{named_file}",
+        rf"\b(?:add|implement|touch|change|modify|update|write)\w*\b"
+        rf"[^\n]{{0,80}}{named_file}",
         text,
         re.IGNORECASE,
     )
@@ -1617,6 +1664,8 @@ def has_standard_inline_design(text: str) -> bool:
         r"[^\n]{0,100}\b(?:npm\s+test|tests?|JSON|output|fixture|command|CLI)\b|"
         r"\b(?:I|we)\s*(?:['’]ll|will)\s+"
         r"(?:run|check|assert|compare|exercise|invoke|verify)\w*\b"
+        r"[^\n]{0,100}\b(?:npm\s+test|tests?|JSON|output|fixture|command|CLI)\b|"
+        r"(?:^|[;.]\s*)(?:run|check|assert|compare|exercise|invoke|verify)\w*\b"
         r"[^\n]{0,100}\b(?:npm\s+test|tests?|JSON|output|fixture|command|CLI)\b",
         text,
         re.IGNORECASE,
@@ -1630,7 +1679,12 @@ def has_standard_inline_design(text: str) -> bool:
         re.search(pattern, text, re.IGNORECASE) is not None
         for pattern in task_signal_families
     )
-    return bool(approach and affected and verification and relevant_families >= 2)
+    return bool(
+        approach
+        and affected
+        and verification
+        and relevant_families == len(task_signal_families)
+    )
 
 
 def validate_standard_inline_design_order(
@@ -1671,6 +1725,8 @@ def validate_standard_inline_design_order(
             "standard inline design lacks concrete approach, affected files/components, "
             f"and verification strategy{position}"
         )
+    if has_standard_approval_pause("\n\n".join(pre_mutation_text)):
+        raise ValidationError("standard inline design must not seek approval or pause")
 
 
 def claude_brainstorming_skill_status(events: list[dict[str, Any]]) -> str:
@@ -2143,10 +2199,6 @@ def validate_case(
             r"\b(evidence|verif\w*|tests?\s+pass)",
             "verification evidence",
         )
-        if case == "standard" and has_standard_approval_pause(text):
-            raise ValidationError(
-                "standard inline design must not seek approval or pause"
-            )
     elif case == "strict":
         require_strict_pause(text)
     elif case == "override":
