@@ -3637,7 +3637,7 @@ class ValidatorTest(unittest.TestCase):
                 ]
                 result = self.run_validator("claude", "explicit-skill", malformed)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("affirmative brainstorming", result.stderr)
+                self.assertIn("explicit-skill action", result.stderr)
 
         negated = [
             *exact[:-1],
