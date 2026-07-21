@@ -611,8 +611,8 @@ class MarkdownProseStream:
     TRAILING_QUALIFIER = re.compile(
         r"(?i)^\s*the\s+(?:preceding|previous|above)\s+"
         r"(?:statement|line|promotion(?:\s+statement)?)\s+is\s+"
-        r"(?:only\s+)?(?:a\s+)?(?:documentation\s+)?"
-        r"(?:example|quotation|quote)(?:\s+example)?[.!]?\s*$"
+        r"(?:only\s+)?(?:an?\s+)?(?:(?:unrelated|documentation)\s+)*"
+        r"(?:example|quotation|quote|documentation)(?:\s+example)?[.!]?\s*$"
     )
 
     def __init__(self) -> None:
@@ -907,7 +907,7 @@ def validate_escalation_order(
             if not line.text.strip():
                 continue
             if line.qualifier:
-                if awaiting_pause or line.record_order == promotion_record_order:
+                if promotion_seen:
                     promotion_context_invalid = True
                 continue
             if line.contextual:

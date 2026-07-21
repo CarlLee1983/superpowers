@@ -936,6 +936,98 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "escalation", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_escalation_codex_trailing_qualifier_invalidates_completed_promotion(
+        self,
+    ) -> None:
+        canonical = f"Promoting to strict — {CANONICAL_PROMOTION_REASON}"
+        pause = "Should we retain the compatibility alias during migration?"
+        codex_prefix = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(canonical, item_id="promotion"),
+            codex_event(pause, item_id="pause"),
+        ]
+        codex_events = [
+            *codex_prefix,
+            codex_event(
+                "The preceding promotion statement is only an unrelated quotation.",
+                item_id="qualifier",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", codex_events)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("non-workflow prose", result.stderr)
+
+    def test_escalation_claude_trailing_qualifier_invalidates_completed_promotion(
+        self,
+    ) -> None:
+        canonical = f"Promoting to strict — {CANONICAL_PROMOTION_REASON}"
+        pause = "Should we retain the compatibility alias during migration?"
+        claude_events = [
+            claude_init(),
+            claude_event(
+                "Mode: standard — bounded rename pending repository inspection."
+            ),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/schema.js")},
+                tool_id="inspect",
+            ),
+            claude_tool_result("inspect"),
+            {
+                "type": "assistant",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": canonical},
+                        {"type": "text", "text": pause},
+                        {
+                            "type": "text",
+                            "text": (
+                                "The preceding promotion statement is only a "
+                                "documentation example."
+                            ),
+                        },
+                    ],
+                },
+            },
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "escalation", claude_events)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("non-workflow prose", result.stderr)
+
+    def test_escalation_accepts_normal_task_prose_after_completed_promotion(
+        self,
+    ) -> None:
+        canonical = f"Promoting to strict — {CANONICAL_PROMOTION_REASON}"
+        pause = "Should we retain the compatibility alias during migration?"
+        codex_prefix = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(canonical, item_id="promotion"),
+            codex_event(pause, item_id="pause"),
+        ]
+        normal_events = [
+            *codex_prefix,
+            codex_event(
+                "An unrelated cleanup remains out of scope for this task.",
+                item_id="normal-prose",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", normal_events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_escalation_split_fences_ignore_examples_but_real_demotion_rejects(self) -> None:
         canonical = f"Promoting to strict — {CANONICAL_PROMOTION_REASON}"
         pause = "Should we retain the compatibility alias during migration?"
