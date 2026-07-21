@@ -1196,7 +1196,7 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "escalation", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_escalation_codex_accepts_wrapped_project_glob_inspection(self) -> None:
+    def test_escalation_codex_allows_glob_discovery_before_literal_reads(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
@@ -1205,8 +1205,10 @@ class ValidatorTest(unittest.TestCase):
             ),
             *codex_command_lifecycle(
                 "/bin/zsh -lc \"sed -n '1,240p' src/*\"",
-                "glob-inspection",
+                "glob-discovery",
             ),
+            *codex_command_lifecycle("cat src/schema.js", "schema"),
+            *codex_command_lifecycle("cat src/billing.js", "billing"),
             codex_event(
                 f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                 "Should we retain the compatibility alias during migration?",
@@ -1216,6 +1218,63 @@ class ValidatorTest(unittest.TestCase):
         ]
         result = self.run_validator("codex", "escalation", events)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_discovery_does_not_satisfy_literal_read_proof(self) -> None:
+        promotion = (
+            f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+            "Should we retain the compatibility alias during migration?"
+        )
+        claude_discovery = [
+            claude_init(),
+            claude_event(
+                "Mode: standard — bounded rename pending repository inspection."
+            ),
+            claude_tool_event(
+                "Glob",
+                {"path": str(self.project), "pattern": "src/*.js"},
+                tool_id="discovery",
+            ),
+            claude_tool_result(
+                "discovery", content="src/schema.js\nsrc/billing.js"
+            ),
+            claude_event(promotion),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        codex_glob_only = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle(
+                "/bin/zsh -lc \"sed -n '1,240p' src/*\"",
+                "glob-discovery",
+            ),
+            codex_event(promotion, item_id="promotion"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        codex_mixed_glob_and_literals = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle(
+                "cat src/* src/schema.js src/billing.js",
+                "mixed-discovery",
+            ),
+            codex_event(promotion, item_id="promotion"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        for label, backend, events in (
+            ("Claude Glob", "claude", claude_discovery),
+            ("Codex glob", "codex", codex_glob_only),
+            ("Codex mixed glob and literals", "codex", codex_mixed_glob_and_literals),
+        ):
+            with self.subTest(label=label):
+                result = self.run_validator(backend, "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("schema.js and src/billing.js", result.stderr)
 
     def test_escalation_codex_project_glob_is_closed_and_no_match_is_neutral(
         self,

@@ -449,6 +449,19 @@ def is_read_only_inspection_command(
     ) is not None
 
 
+def inspection_command_uses_glob(command: str) -> bool:
+    arguments = split_read_command(command)
+    if not arguments:
+        return False
+    if arguments[0] == "cat":
+        operands = arguments[1:]
+    elif arguments[0] == "sed":
+        operands = arguments[3:]
+    else:
+        return False
+    return any("*" in operand for operand in operands)
+
+
 def validate_declaration_order(
     backend: str,
     events: list[dict[str, Any]],
@@ -847,7 +860,10 @@ def escalation_records(
                                             expected_project_root.resolve(strict=True)
                                         ).as_posix(),
                                     )
-                            tool_uses[tool_id] = ("inspection", paths)
+                            tool_uses[tool_id] = (
+                                "inspection" if name == "Read" else "discovery",
+                                paths,
+                            )
                         elif name == "Read" and safe_claude_read_probe(
                             tool_input, expected_project_root
                         ):
@@ -906,7 +922,7 @@ def escalation_records(
                     continue
                 completed_tool_uses.add(tool_id)
                 tool_kind, inspection_paths = tool_uses[tool_id]
-                if tool_kind in {"inspection", "inspection_probe"}:
+                if tool_kind in {"inspection", "inspection_probe", "discovery"}:
                     if "is_error" in block and type(block["is_error"]) is not bool:
                         add(
                             "invalid",
@@ -918,6 +934,8 @@ def escalation_records(
                     elif tool_kind == "inspection":
                         for path in inspection_paths:
                             add("inspection", path, event_index)
+                    elif tool_kind == "discovery":
+                        add("discovery", tool_id, event_index)
                     else:
                         add(
                             "invalid",
@@ -927,7 +945,7 @@ def escalation_records(
         missing_results = [
             tool_id
             for tool_id, (kind, _) in tool_uses.items()
-            if kind in {"inspection", "inspection_probe"}
+            if kind in {"inspection", "inspection_probe", "discovery"}
             and tool_id not in observed_tool_results
         ]
         if missing_results:
@@ -985,8 +1003,13 @@ def escalation_records(
                     command, expected_plugin_root, expected_project_root
                 )
                 if exit_code == 0 and completed_paths:
+                    record_kind = (
+                        "discovery"
+                        if inspection_command_uses_glob(command)
+                        else "inspection"
+                    )
                     for path in completed_paths:
-                        add("inspection", path, event_index)
+                        add(record_kind, path, event_index)
                 elif exit_code is None:
                     add(
                         "invalid",
