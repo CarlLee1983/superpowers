@@ -85,10 +85,15 @@ First complete risk routing:
 
 - Explicit `lean` or `standard` plus strict evidence: warn about the concrete
   risk and retain the override. An immediate request-text warning fulfills this
-  branch unless inspection finds a materially different strict risk. Put the
-  risk warning and retained override in one assistant block, then emit no
-  assistant prose before the first mutation. Read-only inspection tools remain
-  allowed during that interval.
+  branch unless inspection finds a materially different strict risk. Use
+  exactly:
+  `Warning: <concrete trigger> is strict-risk work. Retaining your explicit <lean|standard> override.`
+  If inspection finds one materially different trigger, emit the same template
+  once more with that distinct trigger. Apart from that one exception, if
+  `lean` remains active, emit no assistant prose after the warning and before
+  the first mutation. If `standard` remains active, its required inline outline
+  is the only additional assistant prose allowed before mutation. Read-only
+  inspection tools remain allowed during either interval.
 - Automatic `lean` or `standard` plus strict evidence: emit the canonical
   promotion below and pause for approval.
 - Active `strict`: follow its strict skills and approval gates without a

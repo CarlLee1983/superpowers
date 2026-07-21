@@ -1,6 +1,6 @@
 ---
 name: using-superpowers
-description: Use at every task entry. Codex must read this skill alone, then selecting-workflow-mode alone, then its risk matrix alone in standalone read-only commands; output exactly one Mode line before any project command or other tool.
+description: Use at every task entry. Before reading this skill, Codex may output exactly `Loading workflow-selection sources before task analysis.` and no other narration. Then read this skill alone, selecting-workflow-mode alone, and its risk matrix alone; output exactly one Mode line before any project command or other tool.
 ---
 
 <SUBAGENT-STOP>
@@ -52,9 +52,14 @@ After any project inspection, complete risk routing before mutation:
 
 - Explicit `lean` or `standard` plus strict evidence: visibly warn about the
   concrete risk and retain the override. If the immediate warning already
-  covered that evidence, do not repeat it. Put the warning and override
-  retention in one assistant block. After that block, emit no assistant prose
-  before the first mutation; read-only inspection tools may still run.
+  covered that evidence, do not repeat it. Use exactly:
+  `Warning: <concrete trigger> is strict-risk work. Retaining your explicit <lean|standard> override.`
+  If inspection finds one materially different trigger, emit the same template
+  once more with that distinct trigger. Apart from that one exception, if
+  `lean` remains active, emit no assistant prose after the warning and before
+  the first mutation; read-only inspection tools may still run. If `standard`
+  remains active, its required inline outline is the only additional assistant
+  prose allowed before mutation.
 - Automatic `lean` or `standard` plus strict evidence: output the selector's
   canonical promotion line, then pause for approval without mutating.
 - Active `strict`: follow the strict skills and their approval gates without

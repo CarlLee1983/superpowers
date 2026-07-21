@@ -63,7 +63,7 @@ elif "authentication sample" in prompt:
         'import { accepts } from "./auth.js";\n'
         'test("expired", () => assert.equal(accepts({exp: 0}), false));\n'
     )
-    text = "Mode: lean — explicit override.\nWarning: authentication is security-sensitive; I will remain lean as requested. Verification passed."
+    text = "Mode: lean — explicit override.\nWarning: Authentication is strict-risk work. Retaining your explicit lean override. Verification passed."
 elif "Rename the amount field" in prompt:
     case = "escalation"
     text = "Promoting to strict — inspection found src/schema.js defines the amount field consumed by src/billing.js as part of the public payment API response surface; renaming it would break compatibility.\nShould we retain the compatibility alias for existing API clients?"
@@ -138,8 +138,8 @@ elif case == "override":
             "type": "text",
             "text": (
                 "Mode: lean — explicit override.\n"
-                "Warning: authentication is security-sensitive; I will remain "
-                "lean as requested."
+                "Warning: Authentication is strict-risk work. "
+                "Retaining your explicit lean override."
             ),
         }]}},
         {"type": "assistant", "message": {"role": "assistant", "content": [{

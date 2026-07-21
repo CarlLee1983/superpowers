@@ -17,6 +17,8 @@ EXPECTED_MODE = {
     "standard": "standard",
     "strict": "strict",
     "override": "lean",
+    "override-standard": "standard",
+    "override-discovered": "standard",
     "escalation": "standard",
     "explicit-skill": "lean",
 }
@@ -774,6 +776,7 @@ def validate_declaration_order(
     active_items: dict[str, tuple[str, str | None]] = {}
     completed_items: set[str] = set()
     bootstrap_index = 0
+    bootstrap_narration_seen = False
     active_bootstrap_items: dict[str, str] = {}
     for event in events:
         if backend == "claude":
@@ -874,6 +877,7 @@ def validate_declaration_order(
                     and text.strip()
                     and (
                         bootstrap_index != 0
+                        or bootstrap_narration_seen
                         or not is_generic_codex_bootstrap_narration(text)
                     )
                 ):
@@ -881,6 +885,8 @@ def validate_declaration_order(
                         "assistant prose before mode declaration is not generic "
                         "Codex bootstrap narration"
                     )
+                elif not declared and isinstance(text, str) and text.strip():
+                    bootstrap_narration_seen = True
                 continue
             if declared:
                 continue
@@ -1261,7 +1267,7 @@ def require_strict_pause(text: str) -> None:
 
 def has_strict_design_approval_pause(text: str) -> bool:
     pause = re.search(
-        r"(?mi)^[ \t]*(?:"
+        r"(?i)(?:^|\n)[ \t]*(?:"
         r"Waiting\s+on\s+your\s+approval\s+before\s+proceeding|"
         r"I(?:\s+am|['’]m)\s+waiting\s+(?:for|on)\s+your\s+approval\s+"
         r"before\s+proceeding|"
@@ -1269,7 +1275,7 @@ def has_strict_design_approval_pause(text: str) -> bool:
         r"before\s+proceeding|"
         r"I(?:\s+am|['’]m)\s+pausing\s+here\s+for\s+your\s+approval\s+"
         r"before\s+proceeding"
-        r")\.[ \t]*$",
+        r")\.[ \t]*\Z",
         text,
     )
     if pause is None:
@@ -1358,9 +1364,8 @@ def strict_transcript_has_mutation(
     events: list[dict[str, Any]], expected_project_root: Path,
     expected_plugin_root: Path | None,
 ) -> bool:
-    pending_read_probes: set[str] = set()
-    completed_read_probes: set[str] = set()
-    seen_tool_ids: set[str] = set()
+    tool_states: dict[str, str] = {}
+    completed_tool_ids: set[str] = set()
     for event in events:
         item = event.get("item")
         if (
@@ -1394,14 +1399,19 @@ def strict_transcript_has_mutation(
                 tool_id = block.get("tool_use_id")
                 if not isinstance(tool_id, str) or not tool_id:
                     return True
-                if tool_id in completed_read_probes:
+                if tool_id not in tool_states or tool_id in completed_tool_ids:
                     return True
-                if tool_id not in pending_read_probes:
-                    continue
-                pending_read_probes.remove(tool_id)
-                if block.get("is_error") is not True:
+                state = tool_states[tool_id]
+                is_error = block.get("is_error")
+                if state == "read-error" and is_error is not True:
                     return True
-                completed_read_probes.add(tool_id)
+                if (
+                    state == "read-success"
+                    and is_error is not None
+                    and is_error is not False
+                ):
+                    return True
+                completed_tool_ids.add(tool_id)
             continue
         if event.get("type") != "assistant":
             continue
@@ -1412,10 +1422,10 @@ def strict_transcript_has_mutation(
             if (
                 not isinstance(tool_id, str)
                 or not tool_id
-                or tool_id in seen_tool_ids
+                or tool_id in tool_states
             ):
                 return True
-            seen_tool_ids.add(tool_id)
+            tool_states[tool_id] = "other"
             name = block.get("name")
             tool_input = block.get("input")
             if is_claude_bootstrap(block, expected_plugin_root):
@@ -1427,11 +1437,13 @@ def strict_transcript_has_mutation(
             if name in {"Read", "Glob", "Grep"} and valid_claude_inspection(
                 name, tool_input, expected_project_root
             ):
+                if name == "Read":
+                    tool_states[tool_id] = "read-success"
                 continue
             if name == "Read" and safe_claude_read_probe(
                 tool_input, expected_project_root
             ):
-                pending_read_probes.add(tool_id)
+                tool_states[tool_id] = "read-error"
                 continue
             if (
                 name == "Bash"
@@ -1443,7 +1455,10 @@ def strict_transcript_has_mutation(
             ):
                 continue
             return True
-    return bool(pending_read_probes)
+    return any(
+        state.startswith("read-") and tool_id not in completed_tool_ids
+        for tool_id, state in tool_states.items()
+    )
 
 
 @dataclass(frozen=True)
@@ -2371,69 +2386,39 @@ def validate_standard_inline_design_order(
         )
 
 
-def has_override_warning(text: str) -> bool:
-    clauses = [
-        clause.strip()
-        for clause in re.split(r"[\n.;]+|\bbut\b", text, flags=re.IGNORECASE)
-        if clause.strip()
-    ]
-    negative = re.compile(
-        r"\b(?:not|never|no\s+longer|without|isn['’]t|aren['’]t|"
-        r"won['’]t|wouldn['’]t|can['’]t|cannot)\b",
+def override_warning_trigger(text: str, override_mode: str) -> str | None:
+    warning = re.fullmatch(
+        r"\s*Warning:\s+(?P<trigger>[^.\n]{1,200})\s+is\s+"
+        r"strict-risk\s+work\.\s+"
+        r"Retaining\s+your\s+explicit\s+"
+        r"(?P<mode>lean|standard)\s+override\.\s*",
+        text,
         re.IGNORECASE,
     )
-    risk_pattern = re.compile(
-        r"\b(?:auth(?:entication|orization)?|credentials?|session|security)\b",
+    if warning is None or warning.group("mode").lower() != override_mode:
+        return None
+    trigger = warning.group("trigger").strip()
+    if re.search(
+        r"\b(?:lean|standard|strict|risk|mode|workflow|override|"
+        r"not|never|without|no\s+longer)\b",
+        trigger,
         re.IGNORECASE,
-    )
-    risk_level_pattern = re.compile(
-        r"\b(?:strict|risk|security[- ]sensitive|high[- ]risk)\b",
-        re.IGNORECASE,
-    )
-    risk_seen = any(
-        negative.search(clause) is None
-        and risk_pattern.search(clause)
-        and risk_level_pattern.search(clause)
-        for clause in clauses[:1]
-    )
-    if any(
-        negative.search(clause)
-        and risk_pattern.search(clause)
-        and risk_level_pattern.search(clause)
-        for clause in clauses
     ):
-        return False
-    retention_negative = re.compile(
-        r"\b(?:not|never|without|won['’]t|wouldn['’]t|cannot|can['’]t)\s+"
-        r"(?:continue(?:ing)?\s+(?:in|with)\s+|remain(?:ing)?\s+(?:in\s+)?|"
-        r"stay(?:ing)?\s+(?:in\s+)?|keep(?:ing)?\s+(?:the\s+)?|"
-        r"honou?r(?:ing)?\s+(?:your\s+|the\s+)?)"
-        r"(?:explicit\s+)?lean(?:\s+(?:mode|request|override))?\b|"
-        r"\b(?:reject|ignore|decline|disregard|abandon)\w*\s+"
-        r"(?:the\s+)?(?:explicit\s+)?lean\s+(?:request|override)\b|"
-        r"\blean\s+override\b[^.;]*\b(?:is|remains?)\s+not\s+"
-        r"(?:authoritative|active|in\s+effect)\b",
+        return None
+    if re.search(
+        r"\b(?:auth(?:entication|orization)?|credentials?|secrets?|"
+        r"security(?:\s+boundar(?:y|ies))?|vulnerabilit(?:y|ies)|"
+        r"payments?|billing|finance|regulated\s+behavior|"
+        r"production\s+data|data\s+migration|migrations?|"
+        r"destructive\s+external\s+operations?|"
+        r"irreversible\s+external\s+operations?|"
+        r"public\s+API|compatibility|broad\s+architecture|"
+        r"downstream\s+consumers?|unresolved\s+ambiguity)\b",
+        trigger,
         re.IGNORECASE,
-    )
-    if retention_negative.search(text):
-        return False
-    retention_seen = any(
-        negative.search(clause) is None
-        and re.search(
-            r"\b(?:remain(?:ing)?\s+(?:in\s+)?lean|"
-            r"keep(?:ing)?\s+(?:the\s+)?lean(?:\s+mode)?|"
-            r"continue(?:ing)?\s+(?:in|with)\s+lean|"
-            r"stay(?:ing)?\s+(?:in\s+)?lean|"
-            r"honou?r(?:ing)?\s+(?:your\s+|the\s+)?(?:explicit\s+)?"
-            r"lean(?:\s+(?:request|override))?|"
-            r"(?:explicit\s+|requested\s+)?lean\s+override\b[^.;]*"
-            r"\b(?:authoritative|active|in\s+effect))\b",
-            clause,
-            re.IGNORECASE,
-        )
-        for clause in clauses
-    )
-    return risk_seen and retention_seen
+    ) is None:
+        return None
+    return re.sub(r"\s+", " ", trigger).casefold()
 
 
 def has_positive_verification(text: str) -> bool:
@@ -2483,9 +2468,16 @@ def validate_override_order(
     events: list[dict[str, Any]],
     expected_plugin_root: Path | None,
     expected_project_root: Path,
+    *,
+    immediate_warning_required: bool,
 ) -> None:
     warning_seen = False
+    warning_trigger = ""
+    additional_warning_seen = False
     mode_seen = False
+    override_mode = ""
+    inspection_seen = False
+    standard_outline_seen = False
     mutation_seen = False
     verification_seen = False
     for record in escalation_records(
@@ -2503,15 +2495,18 @@ def validate_override_order(
                 if declaration is None:
                     continue
                 mode_seen = True
+                override_mode = declaration.group(1).lower()
             warning_text = re.sub(
-                r"(?im)^\s*Mode:\s*lean\b[^\n]*(?:\n|$)",
+                r"(?im)^\s*Mode:\s*(?:lean|standard)\b[^\n]*(?:\n|$)",
                 "",
                 record.value,
                 count=1,
             )
             if not warning_seen:
-                if has_override_warning(warning_text):
+                trigger = override_warning_trigger(warning_text, override_mode)
+                if trigger is not None:
                     warning_seen = True
+                    warning_trigger = trigger
                 elif warning_text.strip():
                     raise ValidationError(
                         "high-risk override warning must be the first assistant "
@@ -2519,25 +2514,57 @@ def validate_override_order(
                     )
                 continue
             if not mutation_seen and record.value.strip():
+                additional_trigger = override_warning_trigger(
+                    record.value, override_mode
+                )
+                if (
+                    inspection_seen
+                    and not additional_warning_seen
+                    and additional_trigger is not None
+                    and additional_trigger != warning_trigger
+                ):
+                    additional_warning_seen = True
+                    continue
+                if (
+                    override_mode == "standard"
+                    and inspection_seen
+                    and not standard_outline_seen
+                    and has_standard_inline_design(record.value)
+                ):
+                    standard_outline_seen = True
+                    continue
                 raise ValidationError(
-                    "explicit non-strict override permits no extra assistant "
-                    "prose between its warning and first mutation"
+                    "explicit non-strict override permits only the required "
+                    "standard outline between its warning and first mutation"
                 )
             if mutation_seen:
-                if not has_positive_verification(record.value):
-                    raise ValidationError(
-                        "override assistant prose after mutation must provide "
-                        "positive verification evidence"
-                    )
-                verification_seen = True
+                if has_positive_verification(record.value):
+                    verification_seen = True
             continue
         if record.kind in {"inspection", "discovery", "mutation"}:
             if not warning_seen:
-                raise ValidationError(
-                    "high-risk override warning must appear immediately after "
-                    "the Mode line and before project action"
+                if (
+                    record.kind in {"inspection", "discovery"}
+                    and not immediate_warning_required
+                ):
+                    inspection_seen = True
+                    continue
+                position = (
+                    "immediately after the Mode line and before project action"
+                    if immediate_warning_required
+                    else "after discovery and before mutation"
                 )
+                raise ValidationError(
+                    f"high-risk override warning must appear {position}"
+                )
+            if record.kind in {"inspection", "discovery"}:
+                inspection_seen = True
             if record.kind == "mutation":
+                if override_mode == "standard" and not standard_outline_seen:
+                    raise ValidationError(
+                        "explicit standard override requires its inline outline "
+                        "before mutation"
+                    )
                 mutation_seen = True
 
     if not warning_seen:
@@ -2546,6 +2573,10 @@ def validate_override_order(
         )
     if not mutation_seen:
         raise ValidationError("override case requires a validated project mutation")
+    if override_mode == "standard" and not standard_outline_seen:
+        raise ValidationError(
+            "explicit standard override requires its inline outline before mutation"
+        )
     if not verification_seen:
         raise ValidationError(
             "override case requires verification evidence after mutation"
@@ -2933,6 +2964,7 @@ def require_affirmative_brainstorming(
     )
     affirmative_seen = structured_invocation_status == "successful"
     negated_after_affirmative = False
+    brainstorming_clauses: list[tuple[str, bool, bool]] = []
     for clause in clauses:
         is_negative = any(
             re.search(pattern, clause, re.IGNORECASE)
@@ -2942,11 +2974,27 @@ def require_affirmative_brainstorming(
             re.search(pattern, clause, re.IGNORECASE)
             for pattern in affirmative_patterns
         )
+        if re.search(r"\bbrainstorming\b", clause, re.IGNORECASE):
+            brainstorming_clauses.append((clause, is_affirmative, is_negative))
         if is_negative and affirmative_seen:
             negated_after_affirmative = True
         elif is_affirmative and not is_negative:
             affirmative_seen = True
-    if not affirmative_seen or negated_after_affirmative:
+    final_brainstorming_is_affirmative = (
+        not brainstorming_clauses
+        or (
+            brainstorming_clauses[-1][1]
+            and not brainstorming_clauses[-1][2]
+        )
+    )
+    if (
+        not affirmative_seen
+        or negated_after_affirmative
+        or (
+            structured_invocation_status != "successful"
+            and not final_brainstorming_is_affirmative
+        )
+    ):
         raise ValidationError(
             "assistant-visible text lacks affirmative brainstorming skill use/invocation"
         )
@@ -3047,7 +3095,7 @@ def validate_case(
         )
     elif case == "strict":
         require_strict_pause(text)
-    elif case == "override":
+    elif case in {"override", "override-standard", "override-discovered"}:
         require_pattern(text, r"\b(warn|risk|security|authentication)", "high-risk override warning")
     elif case == "explicit-skill":
         require_affirmative_brainstorming(
@@ -3111,12 +3159,13 @@ def validate(
             expected_plugin_root,
             transcript.parent / "project",
         )
-    elif case == "override":
+    elif case in {"override", "override-standard", "override-discovered"}:
         validate_override_order(
             backend,
             events,
             expected_plugin_root,
             transcript.parent / "project",
+            immediate_warning_required=case != "override-discovered",
         )
     elif case == "explicit-skill":
         validate_explicit_skill_actions(

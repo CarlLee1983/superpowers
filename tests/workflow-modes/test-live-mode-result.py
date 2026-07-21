@@ -3636,7 +3636,8 @@ class ValidatorTest(unittest.TestCase):
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
                 "Mode: lean — explicit override.\n"
-                "Warning: authentication is security-sensitive; I will remain lean as requested.",
+                "Warning: Authentication is strict-risk work. "
+                "Retaining your explicit lean override.",
                 item_id="mode-warning",
             ),
             codex_event(
@@ -3657,8 +3658,8 @@ class ValidatorTest(unittest.TestCase):
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
                 "Mode: lean — The user explicitly requested lean mode.\n"
-                "Authentication is normally a strict-risk area, but your explicit "
-                "lean override is authoritative here; I’ll keep the change tightly scoped.",
+                "Warning: Authentication is strict-risk work. "
+                "Retaining your explicit lean override.",
                 item_id="mode-warning",
             ),
             codex_event(
@@ -3674,13 +3675,13 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "override", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_override_accepts_negated_switch_inside_initial_warning(self) -> None:
+    def test_override_warning_is_a_closed_two_sentence_contract(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
                 "Mode: lean — explicit authentication override.\n"
-                "Authentication is a strict security risk; I am not switching "
-                "the workflow mode to strict; I will remain lean.",
+                "Warning: Authentication is strict-risk work. "
+                "Retaining your explicit lean override.",
                 item_id="mode-warning",
             ),
             codex_event(
@@ -3696,14 +3697,126 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "override", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+        destructive_operation = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit destructive-operation override.\n"
+                "Warning: Destructive external operation is strict-risk work. "
+                "Retaining your explicit lean override.",
+                item_id="mode-warning",
+            ),
+            codex_event(
+                "src/auth.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/auth.js", item_type="file_change", item_id="mutation"),
+            codex_event("Verification: operation tests pass.", item_id="verify"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "override", destructive_operation)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        contradictory_warning = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit authentication override.\n"
+                "Warning: Authentication is strict-risk work. "
+                "Retaining your explicit lean override. "
+                "I am now operating in strict mode.",
+                item_id="mode-warning",
+            ),
+            codex_event(
+                "src/auth.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/auth.js", item_type="file_change", item_id="mutation"),
+            codex_event("Verification: authentication tests pass.", item_id="verify"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "override", contradictory_warning)
+        self.assertNotEqual(result.returncode, 0)
+
+        trigger_injection = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit authentication override.\n"
+                "Warning: I am now operating in strict mode because authentication "
+                "is strict-risk work. Retaining your explicit lean override.",
+                item_id="mode-warning",
+            ),
+            codex_event(
+                "src/auth.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/auth.js", item_type="file_change", item_id="mutation"),
+            codex_event("Verification: authentication tests pass.", item_id="verify"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "override", trigger_injection)
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_override_allows_one_distinct_post_inspection_warning(self) -> None:
+        declaration_and_warning = codex_event(
+            "Mode: lean — explicit authentication override.\n"
+            "Warning: Authentication is strict-risk work. "
+            "Retaining your explicit lean override.",
+            item_id="mode-warning",
+        )
+        mutation = [
+            codex_event(
+                "src/auth.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/auth.js", item_type="file_change", item_id="mutation"),
+        ]
+        distinct = [
+            {"type": "thread.started", "thread_id": "thread"},
+            declaration_and_warning,
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                "Warning: Production data migration is strict-risk work. "
+                "Retaining your explicit lean override.",
+                item_id="additional-warning",
+            ),
+            *mutation,
+            codex_event("Verification: authentication tests pass.", item_id="verify"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "override", distinct)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        duplicate = [
+            {"type": "thread.started", "thread_id": "thread"},
+            declaration_and_warning,
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                "Warning: Authentication is strict-risk work. "
+                "Retaining your explicit lean override.",
+                item_id="duplicate-warning",
+            ),
+            *mutation,
+            codex_event("Verification: authentication tests pass.", item_id="verify"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "override", duplicate)
+        self.assertNotEqual(result.returncode, 0)
+
     def test_override_does_not_require_a_redundant_lean_continuity_sentence(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
                 "Mode: lean — the user explicitly requested lean mode for this localized "
                 "authentication fix.\n"
-                "Warning: authentication is normally strict-risk work; I’ll honor the "
-                "explicit lean override and keep it tightly scoped.",
+                "Warning: Authentication is strict-risk work. "
+                "Retaining your explicit lean override.",
                 item_id="mode-warning",
             ),
             codex_event(
@@ -3724,8 +3837,8 @@ class ValidatorTest(unittest.TestCase):
             "Mode: lean — explicit authentication override.", item_id="mode"
         )
         warning = codex_event(
-            "Warning: authentication is strict security-risk work; I’ll honor the "
-            "explicit lean override.",
+            "Warning: Authentication is strict-risk work. "
+            "Retaining your explicit lean override.",
             item_id="warning",
         )
         mutation = [
@@ -4019,13 +4132,156 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("codex", "override", events)
                 self.assertNotEqual(result.returncode, 0)
 
+    def test_override_allows_neutral_summary_before_separate_verification(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit authentication override.\n"
+                "Warning: Authentication is strict-risk work. "
+                "Retaining your explicit lean override.",
+                item_id="mode-warning",
+            ),
+            codex_event(
+                "src/auth.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/auth.js", item_type="file_change", item_id="mutation"),
+            codex_event(
+                "Updated the session expiry handling in src/auth.js.",
+                item_id="summary",
+            ),
+            codex_event(
+                "Verification: authentication tests pass.",
+                item_id="verify",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "override", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        negated_transition_verification = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit authentication override.\n"
+                "Warning: Authentication is strict-risk work. "
+                "Retaining your explicit lean override.",
+                item_id="mode-warning",
+            ),
+            codex_event(
+                "src/auth.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/auth.js", item_type="file_change", item_id="mutation"),
+            codex_event(
+                "Verification: confirmed the workflow did not switch to strict "
+                "mode; authentication tests passed.",
+                item_id="verify",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator(
+            "codex", "override", negated_transition_verification
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_explicit_standard_override_keeps_required_inline_outline(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — explicit override for a production migration.\n"
+                "Warning: Production data migration is strict-risk work. "
+                "Retaining your explicit standard override.",
+                item_id="mode-warning",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                "Implementation outline:\n"
+                "- Approach: update the CLI summary calculation to total item prices.\n"
+                "- Affected files: src/cli.js and test/summary.test.js.\n"
+                "- Verification: run npm test and check the summary JSON count and total.",
+                item_id="standard-outline",
+            ),
+            codex_event(
+                "src/cli.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/cli.js", item_type="file_change", item_id="mutation"),
+            codex_event(
+                "Verification: npm test passes.",
+                item_id="verify",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "override-standard", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_inspection_discovered_override_warns_before_readiness_and_mutation(
+        self,
+    ) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — explicit override for a bounded field rename.",
+                item_id="mode",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                "Warning: Public API compatibility is strict-risk work. "
+                "Retaining your explicit standard override.",
+                item_id="warning",
+            ),
+            codex_event(
+                "Implementation outline:\n"
+                "- Approach: update the CLI summary calculation to total item prices.\n"
+                "- Affected files: src/cli.js and test/summary.test.js.\n"
+                "- Verification: run npm test and check the summary JSON count and total.",
+                item_id="standard-outline",
+            ),
+            codex_event(
+                "src/cli.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/cli.js", item_type="file_change", item_id="mutation"),
+            codex_event("Verification: npm test passes.", item_id="verify"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "override-discovered", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        prose_before_warning = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — explicit override for a bounded field rename.",
+                item_id="mode",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(
+                "The field appears in an external response.",
+                item_id="early-prose",
+            ),
+            *events[4:-1],
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator(
+            "codex", "override-discovered", prose_before_warning
+        )
+        self.assertNotEqual(result.returncode, 0)
+
     def test_override_requires_successful_claude_mutation_result(self) -> None:
         events = [
             claude_init(),
             claude_event(
                 "Mode: lean — explicit override.\n"
-                "Warning: authentication is security-sensitive; I will remain "
-                "lean as requested."
+                "Warning: Authentication is strict-risk work. "
+                "Retaining your explicit lean override."
             ),
             claude_tool_event(
                 "Write",
@@ -4111,6 +4367,28 @@ class ValidatorTest(unittest.TestCase):
             "codex", "lean", generic, inject_codex_bootstrap=False
         )
         self.assertEqual(result.returncode, 0, result.stderr)
+
+        duplicate_generic = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Loading workflow-selection sources before task analysis.",
+                item_id="bootstrap-note-1",
+            ),
+            codex_event(
+                "Loading workflow-selection sources before task analysis.",
+                item_id="bootstrap-note-2",
+            ),
+            *codex_bootstrap_lifecycles(),
+            codex_event(
+                "Mode: lean — localized typo correction.\nVerification passed.",
+                item_id="mode",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator(
+            "codex", "lean", duplicate_generic, inject_codex_bootstrap=False
+        )
+        self.assertNotEqual(result.returncode, 0)
 
         task_specific = [
             {"type": "thread.started", "thread_id": "thread"},
@@ -5033,6 +5311,29 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("claude", "strict", negated_pause)
                 self.assertNotEqual(result.returncode, 0)
 
+        for trailing in (
+            "Actually, I am proceeding without approval.",
+            "Implementation starts now.",
+        ):
+            with self.subTest(trailing=trailing):
+                trailing_after_pause = [
+                    claude_init(),
+                    claude_event(
+                        "Mode: strict — production payment migration and public API risk.\n"
+                        "Approaches considered:\n"
+                        "- A. Expand and backfill the amount_cents schema safely.\n"
+                        "- B. Rewrite payment rows in place with rollback risk.\n"
+                        "Recommended design: choose A with a versioned public API.\n"
+                        "Waiting on your approval before proceeding.\n"
+                        f"{trailing}"
+                    ),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator(
+                    "claude", "strict", trailing_after_pause
+                )
+                self.assertNotEqual(result.returncode, 0)
+
     def test_strict_rejects_mutation_before_any_pause_route(self) -> None:
         for pause in (
             "Should I proceed with the payment migration approach?",
@@ -5152,6 +5453,71 @@ class ValidatorTest(unittest.TestCase):
         ]
         result = self.run_validator("claude", "strict", opposing_results)
         self.assertNotEqual(result.returncode, 0)
+
+        ghost_result = [
+            claude_init(),
+            claude_event(
+                "Mode: strict — production payment migration and public API risk."
+            ),
+            claude_tool_result(
+                "ghost-read",
+                is_error=True,
+                content="No matching tool use.",
+            ),
+            claude_event("Which rollback requirement applies to this migration?"),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "strict", ghost_result)
+        self.assertNotEqual(result.returncode, 0)
+
+        early_result = [
+            claude_init(),
+            claude_event(
+                "Mode: strict — production payment migration and public API risk."
+            ),
+            claude_tool_result(
+                "missing-read",
+                is_error=True,
+                content="Result arrived before the tool use.",
+            ),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/missing.js")},
+                tool_id="missing-read",
+            ),
+            claude_tool_result(
+                "missing-read",
+                is_error=True,
+                content="File does not exist.",
+            ),
+            claude_event("Which rollback requirement applies to this migration?"),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "strict", early_result)
+        self.assertNotEqual(result.returncode, 0)
+
+        malformed_success_result = [
+            claude_init(),
+            claude_event(
+                "Mode: strict — production payment migration and public API risk."
+            ),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/schema.js")},
+                tool_id="schema-read",
+            ),
+            claude_tool_result(
+                "schema-read",
+                is_error=[],
+                content="Malformed success status.",
+            ),
+            claude_event("Which rollback requirement applies to this migration?"),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "strict", malformed_success_result)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FAIL:", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
 
     def test_strict_declarative_pause_allows_nonmutating_approval_tool(self) -> None:
         events = [
@@ -5506,6 +5872,9 @@ class ValidatorTest(unittest.TestCase):
             "I applied the brainstorming skill. I am no longer currently applying the brainstorming skill.",
             "I applied the brainstorming skill. I ceased applying the brainstorming skill.",
             "I applied the brainstorming skill. We've ceased applying the brainstorming skill.",
+            "I applied the brainstorming skill. I haven't used the brainstorming skill after all.",
+            "I applied the brainstorming skill. I've discontinued using the brainstorming skill.",
+            "I applied the brainstorming skill. I'm done using the brainstorming skill.",
             "I applied the brainstorming skill. Without applying the brainstorming skill now.",
             "I applied the brainstorming skill. We aren't using the brainstorming skill anymore.",
         )
