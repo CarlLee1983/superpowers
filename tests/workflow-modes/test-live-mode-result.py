@@ -3554,6 +3554,47 @@ class ValidatorTest(unittest.TestCase):
                     "relevant clarification/approval pause", result.stderr
                 )
 
+        valid_post_question_cases = (
+            (
+                "1. Review the README.\n"
+                "2. Inspect the repository.\n"
+                "What should the public API expose?\n"
+                "1. `amount_cents` as an integer.\n"
+                "2. A versioned API introduces `amount_cents`."
+            ),
+            (
+                "What architecture should the public API use?\n"
+                "1. A versioned API exposes `amount_cents`.\n"
+                "2. No public API; use an internal migration runbook."
+            ),
+        )
+        for discovery in valid_post_question_cases:
+            with self.subTest(valid_discovery=discovery):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: strict — payments production migration and public "
+                        f"API risk.\n{discovery}"
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "strict", events)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+        pre_question_only = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — payments production migration and public API risk.\n"
+                "1. `amount_cents` as an integer.\n"
+                "2. A versioned API introduces `amount_cents`.\n"
+                "What should the public API expose?"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "strict", pre_question_only)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("relevant clarification/approval pause", result.stderr)
+
     def test_escalation_requires_a_relevant_question_or_approval_request(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},

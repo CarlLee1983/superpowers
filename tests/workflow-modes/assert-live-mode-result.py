@@ -760,7 +760,7 @@ def has_concrete_discovery_pause(text: str) -> bool:
         r"^\s*(?:\*\*)?(?:no|none|not|neither|without)\b",
         re.IGNORECASE,
     )
-    options = option_pattern.findall(text)
+    options = option_pattern.findall(text[question.end():])
     if len(options) < 2:
         return False
     labels = [label.casefold() for label, _ in options]
@@ -770,11 +770,17 @@ def has_concrete_discovery_pause(text: str) -> bool:
     ]
     if len(set(labels)) != len(labels) or len(set(normalized_options)) != len(options):
         return False
-    if any(
-        negative_option.search(option) or concrete_signal.search(option) is None
-        for _, option in options
-    ):
-        return False
+    concrete_negative_alternative = re.compile(
+        r"[;:—]\s*(?:use|adopt|keep|build|create|provide|run|rely\s+on)\b(.+)$",
+        re.IGNORECASE,
+    )
+    for _, option in options:
+        if concrete_signal.search(option) is None:
+            return False
+        if negative_option.search(option):
+            alternative = concrete_negative_alternative.search(option)
+            if alternative is None or concrete_signal.search(alternative.group(0)) is None:
+                return False
 
     if re.search(r"\b(?:public\s+API|API|expose)\b", question_text, re.IGNORECASE):
         responsive_signal = re.compile(
