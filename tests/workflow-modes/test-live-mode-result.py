@@ -3565,6 +3565,29 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("claude", "explicit-skill", exact)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+        failed_result = claude_tool_result("brainstorming")
+        failed_result["tool_use_result"] = {"success": False}
+        invalid_results = (
+            ("missing", []),
+            ("error", [claude_tool_result("brainstorming", is_error=True)]),
+            ("failed", [failed_result]),
+            ("mismatched", [claude_tool_result("different")]),
+        )
+        for label, result_events in invalid_results:
+            with self.subTest(result=label):
+                invalid_lifecycle = [
+                    claude_init(),
+                    options,
+                    exact[2],
+                    *result_events,
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator(
+                    "claude", "explicit-skill", invalid_lifecycle
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("affirmative brainstorming", result.stderr)
+
         for skill in ("brainstorming", "superpowers:brainstorming-extra"):
             with self.subTest(skill=skill):
                 malformed = [

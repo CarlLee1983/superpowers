@@ -1389,24 +1389,59 @@ def validate_escalation_order(
 
 
 def claude_invoked_brainstorming_skill(events: list[dict[str, Any]]) -> bool:
+    invocations: dict[str, str] = {}
     for event in events:
-        if event.get("type") != "assistant":
-            continue
         message = event.get("message")
         content = message.get("content") if isinstance(message, dict) else None
         if not isinstance(content, list):
             continue
         for block in content:
-            if not isinstance(block, dict) or block.get("type") != "tool_use":
+            if not isinstance(block, dict):
                 continue
-            tool_input = block.get("input")
-            if (
-                block.get("name") == "Skill"
-                and isinstance(tool_input, dict)
-                and tool_input.get("skill") == "superpowers:brainstorming"
-            ):
-                return True
-    return False
+            if event.get("type") == "assistant" and block.get("type") == "tool_use":
+                tool_input = block.get("input")
+                tool_id = block.get("id")
+                if not (
+                    block.get("name") == "Skill"
+                    and isinstance(tool_input, dict)
+                    and tool_input.get("skill") == "superpowers:brainstorming"
+                    and isinstance(tool_id, str)
+                    and tool_id
+                ):
+                    continue
+                if tool_id in invocations:
+                    invocations[tool_id] = "invalid"
+                else:
+                    invocations[tool_id] = "pending"
+                continue
+            if block.get("type") != "tool_result":
+                continue
+            tool_id = block.get("tool_use_id")
+            if not isinstance(tool_id, str) or tool_id not in invocations:
+                continue
+            if invocations[tool_id] != "pending":
+                invocations[tool_id] = "invalid"
+                continue
+            successful_role = (
+                event.get("type") == "user"
+                and isinstance(message, dict)
+                and message.get("role") == "user"
+            )
+            is_error = block.get("is_error", False)
+            tool_use_result = event.get("tool_use_result")
+            explicitly_failed = (
+                isinstance(tool_use_result, dict)
+                and tool_use_result.get("success") is False
+            )
+            invocations[tool_id] = (
+                "successful"
+                if successful_role
+                and type(is_error) is bool
+                and is_error is False
+                and not explicitly_failed
+                else "failed"
+            )
+    return any(status == "successful" for status in invocations.values())
 
 
 def require_affirmative_brainstorming(
