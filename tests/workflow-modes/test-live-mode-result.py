@@ -382,6 +382,15 @@ def codex_command_lifecycle(
     ]
 
 
+def codex_todo_event(
+    event_type: str, item_id: str, items: list[dict[str, object]]
+) -> dict:
+    return {
+        "type": event_type,
+        "item": {"id": item_id, "type": "todo_list", "items": items},
+    }
+
+
 def codex_standard_contract_events() -> list[dict]:
     return [
         *codex_command_lifecycle("cat src/schema.js", "standard-inspection"),
@@ -768,7 +777,26 @@ class ValidatorTest(unittest.TestCase):
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "standard", pre_inspection_question)
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not seek approval or pause", result.stderr)
+
+        post_mutation_pause = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.", item_id="mode"
+            ),
+            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            codex_event(outline, item_id="outline"),
+            *codex_command_lifecycle("printf implementation", "mutation"),
+            codex_event(
+                "Should I continue and run the tests?", item_id="late-approval"
+            ),
+            codex_event("Tests passed.", item_id="result"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "standard", post_mutation_pause)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not seek approval or pause", result.stderr)
 
     def test_standard_accepts_natural_inline_outline_wording(self) -> None:
         outlines = (
@@ -828,13 +856,26 @@ class ValidatorTest(unittest.TestCase):
             claude_event("Tests passed and summary output verified."),
             {"type": "result", "subtype": "success", "result": "done"},
         ]
+        todo_started = [
+            {"text": "Inspect the CLI summary implementation", "completed": False},
+            {"text": "Implement and verify the summary command", "completed": False},
+        ]
+        todo_updated = [
+            {"text": "Inspect the CLI summary implementation", "completed": True},
+            {"text": "Implement and verify the summary command", "completed": False},
+        ]
+        todo_completed = [
+            {"text": "Inspect the CLI summary implementation", "completed": True},
+            {"text": "Implement and verify the summary command", "completed": True},
+        ]
         codex_events = [
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
                 "Mode: standard — bounded CLI behavior and coverage.", item_id="mode"
             ),
-            {"type": "item.started", "item": {"id": "tasks", "type": "todo_list"}},
+            codex_todo_event("item.started", "tasks", todo_started),
             *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            codex_todo_event("item.updated", "tasks", todo_updated),
             codex_event(outline, item_id="outline"),
             codex_event(
                 "src/cli.js",
@@ -845,7 +886,7 @@ class ValidatorTest(unittest.TestCase):
             codex_event(
                 "src/cli.js", item_type="file_change", item_id="mutation"
             ),
-            {"type": "item.completed", "item": {"id": "tasks", "type": "todo_list"}},
+            codex_todo_event("item.completed", "tasks", todo_completed),
             codex_event(
                 "Tests passed and summary output verified.", item_id="result"
             ),
@@ -855,6 +896,50 @@ class ValidatorTest(unittest.TestCase):
             with self.subTest(backend=backend):
                 result = self.run_validator(backend, "standard", events)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_standard_accepts_preserved_real_codex_todo_lifecycle(self) -> None:
+        task_texts = (
+            "Explore project context (files, docs, recent commits)",
+            "Offer the visual companion if a genuinely visual question arises",
+            "Ask clarifying questions one at a time",
+            "Propose 2–3 migration/API approaches with trade-offs",
+            "Present and validate the design section by section",
+            "Write and commit the approved design spec",
+            "Self-review the spec for placeholders, contradictions, scope, and ambiguity",
+            "Obtain user review of the written spec",
+            "Transition to a detailed implementation plan",
+        )
+        started_items = [
+            {"text": text, "completed": False} for text in task_texts
+        ]
+        updated_items = [
+            {"text": text, "completed": index == 0}
+            for index, text in enumerate(task_texts)
+        ]
+        outline = (
+            "Implementation outline:\n"
+            "- Approach: update the CLI summary calculation to total item prices.\n"
+            "- Affected files: src/cli.js and test/summary.test.js.\n"
+            "- Verification: run npm test and check the summary JSON count and total."
+        )
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded CLI behavior and coverage.", item_id="mode"
+            ),
+            codex_todo_event("item.started", "item_7", started_items),
+            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
+            codex_todo_event("item.updated", "item_7", updated_items),
+            codex_event(outline, item_id="outline"),
+            *codex_command_lifecycle("printf implementation", "mutation"),
+            codex_todo_event("item.completed", "item_7", updated_items),
+            codex_event("Tests passed and summary output verified.", item_id="result"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "standard", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_standard_rejects_invalid_auxiliary_workflow_lifecycles(self) -> None:
         outline = (
@@ -898,27 +983,123 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("claude", "standard", events)
                 self.assertNotEqual(result.returncode, 0)
 
-        malformed_todo = [
-            {"type": "thread.started", "thread_id": "thread"},
-            codex_event(
-                "Mode: standard — bounded CLI behavior and coverage.", item_id="mode"
+        valid_items = [{"text": "Inspect the CLI", "completed": False}]
+        malformed_codex_cases = (
+            (
+                "extra todo key",
+                [
+                    {
+                        "type": "item.started",
+                        "item": {
+                            "id": "tasks",
+                            "type": "todo_list",
+                            "items": valid_items,
+                            "status": "in_progress",
+                        },
+                    },
+                    codex_todo_event("item.completed", "tasks", valid_items),
+                ],
             ),
-            {
-                "type": "item.started",
-                "item": {"id": "tasks", "type": "todo_list", "items": "malformed"},
-            },
-            {
-                "type": "item.completed",
-                "item": {"id": "tasks", "type": "todo_list", "items": "malformed"},
-            },
-            *codex_command_lifecycle("cat src/cli.js items.json", "inspection"),
-            codex_event(outline, item_id="outline"),
-            *codex_command_lifecycle("printf implementation", "mutation"),
-            codex_event("Tests passed.", item_id="result"),
-            {"type": "turn.completed", "usage": {}},
-        ]
-        result = self.run_validator("codex", "standard", malformed_todo)
-        self.assertNotEqual(result.returncode, 0)
+            (
+                "items is not a list",
+                [
+                    {
+                        "type": "item.started",
+                        "item": {
+                            "id": "tasks",
+                            "type": "todo_list",
+                            "items": "malformed",
+                        },
+                    },
+                    {
+                        "type": "item.completed",
+                        "item": {
+                            "id": "tasks",
+                            "type": "todo_list",
+                            "items": "malformed",
+                        },
+                    },
+                ],
+            ),
+            (
+                "todo entry has extra key",
+                [
+                    codex_todo_event(
+                        "item.started",
+                        "tasks",
+                        [
+                            {
+                                "text": "Inspect the CLI",
+                                "completed": False,
+                                "priority": "high",
+                            }
+                        ],
+                    ),
+                    codex_todo_event("item.completed", "tasks", valid_items),
+                ],
+            ),
+            (
+                "todo entry completed is not boolean",
+                [
+                    codex_todo_event(
+                        "item.started",
+                        "tasks",
+                        [{"text": "Inspect the CLI", "completed": 0}],
+                    ),
+                    codex_todo_event("item.completed", "tasks", valid_items),
+                ],
+            ),
+            (
+                "unstable todo id",
+                [
+                    codex_todo_event("item.started", "tasks", valid_items),
+                    codex_todo_event("item.updated", "renamed-tasks", valid_items),
+                    codex_todo_event("item.completed", "tasks", valid_items),
+                ],
+            ),
+            (
+                "unstable todo type",
+                [
+                    codex_todo_event("item.started", "tasks", valid_items),
+                    {
+                        "type": "item.updated",
+                        "item": {
+                            "id": "tasks",
+                            "type": "task_list",
+                            "items": valid_items,
+                        },
+                    },
+                    codex_todo_event("item.completed", "tasks", valid_items),
+                ],
+            ),
+            (
+                "out-of-order todo update",
+                [
+                    codex_todo_event("item.updated", "tasks", valid_items),
+                    codex_todo_event("item.started", "tasks", valid_items),
+                    codex_todo_event("item.completed", "tasks", valid_items),
+                ],
+            ),
+        )
+        for label, todo_events in malformed_codex_cases:
+            with self.subTest(backend="codex", label=label):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded CLI behavior and coverage.",
+                        item_id="mode",
+                    ),
+                    *todo_events,
+                    *codex_command_lifecycle(
+                        "cat src/cli.js items.json", "inspection"
+                    ),
+                    codex_event(outline, item_id="outline"),
+                    *codex_command_lifecycle("printf implementation", "mutation"),
+                    codex_event("Tests passed.", item_id="result"),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "standard", events)
+                self.assertNotEqual(result.returncode, 0)
 
     def test_lean_accepts_an_evidence_heading_as_verification_reporting(self) -> None:
         events = [

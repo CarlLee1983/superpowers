@@ -1174,9 +1174,19 @@ def escalation_records(
             continue
         item_type = item.get("type")
         if item_type == "todo_list" and action_context == "standard":
+            items = item.get("items")
             if (
-                event.get("type") not in {"item.started", "item.completed"}
-                or set(item) != {"id", "type"}
+                event.get("type")
+                not in {"item.started", "item.updated", "item.completed"}
+                or set(item) != {"id", "type", "items"}
+                or not isinstance(items, list)
+                or any(
+                    not isinstance(todo, dict)
+                    or set(todo) != {"text", "completed"}
+                    or not isinstance(todo.get("text"), str)
+                    or type(todo.get("completed")) is not bool
+                    for todo in items
+                )
             ):
                 add(
                     "invalid",
@@ -1696,13 +1706,14 @@ def validate_standard_inline_design_order(
     inspection_seen = False
     pre_mutation_text: list[str] = []
     mutation_seen = False
-    for record in escalation_records(
+    records = escalation_records(
         backend,
         events,
         expected_plugin_root,
         expected_project_root,
         action_context="standard",
-    ):
+    )
+    for record in records:
         if record.kind == "invalid":
             raise ValidationError(record.value)
         if record.kind in {"inspection", "discovery"}:
@@ -1725,7 +1736,10 @@ def validate_standard_inline_design_order(
             "standard inline design lacks concrete approach, affected files/components, "
             f"and verification strategy{position}"
         )
-    if has_standard_approval_pause("\n\n".join(pre_mutation_text)):
+    assistant_text = "\n\n".join(
+        record.value for record in records if record.kind == "text"
+    )
+    if has_standard_approval_pause(assistant_text):
         raise ValidationError("standard inline design must not seek approval or pause")
 
 
