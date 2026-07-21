@@ -29,6 +29,8 @@ Do not reclassify the task here.
 A debugging-depth escalation does not change the active workflow mode.
 If investigation reveals materially higher task risk, invoke
 `selecting-workflow-mode`; only that selector may promote the active workflow mode.
+Re-enter the selector with the active state; do not restart task-entry selection
+or output another `Mode:` declaration.
 Do not use mode selection to justify guessing or symptom patching.
 Run reproduction and regression checks as standalone commands so each tool
 result exposes its actual exit status.

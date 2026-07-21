@@ -6,6 +6,7 @@ source "$ROOT/tests/workflow-modes/lib.sh"
 
 DOC="$ROOT/docs/workflow-modes.md"
 README="$ROOT/README.md"
+PORTING_DOC="$ROOT/docs/porting-to-a-new-harness.md"
 RUNNER="$ROOT/tests/workflow-modes/run-static-tests.sh"
 TARGET_VERSION="6.1.1-adaptive.1"
 TEST_TMP="$(mktemp -d)"
@@ -288,6 +289,21 @@ assert_contains "$README" "Relevant domain skills still apply" "README preserves
 assert_contains "$README" "Risk-proportionate TDD" "README documents risk-proportionate TDD"
 assert_contains "$README" "An explicit lean or standard override remains active if later inspection discovers strict risk; the agent warns instead of auto-promoting." "README preserves explicit non-strict overrides"
 assert_not_matches "$README" "upstream.*typo|typo.*upstream" "README makes no unsupported upstream typo claim"
+strict_workflow="$(section_text "$README" "## The Strict Workflow")"
+strict_spec_line="$(printf '%s\n' "$strict_workflow" | rg -n '^1\. \*\*brainstorming\*\*' | cut -d: -f1 || true)"
+strict_plan_line="$(printf '%s\n' "$strict_workflow" | rg -n '^2\. \*\*writing-plans\*\*' | cut -d: -f1 || true)"
+strict_isolation_line="$(printf '%s\n' "$strict_workflow" | rg -n '^3\. \*\*using-git-worktrees\*\*' | cut -d: -f1 || true)"
+strict_execution_line="$(printf '%s\n' "$strict_workflow" | rg -n '^4\. \*\*subagent-driven-development\*\* or \*\*executing-plans\*\*' | cut -d: -f1 || true)"
+if [[ -n "$strict_spec_line" && -n "$strict_plan_line" && -n "$strict_isolation_line" && -n "$strict_execution_line" &&
+  "$strict_spec_line" -lt "$strict_plan_line" && "$strict_plan_line" -lt "$strict_isolation_line" &&
+  "$strict_isolation_line" -lt "$strict_execution_line" ]]; then
+  pass "README strict workflow orders spec, plan, isolation, then execution"
+else
+  fail "README strict workflow orders spec, plan, isolation, then execution"
+fi
+assert_contains "$PORTING_DOC" "Codex is the exception: its task-entry contract uses three standalone" "porting guide documents the Codex manual-read exception"
+assert_contains "$PORTING_DOC" "manual reads to keep bootstrap evidence auditable." "porting guide explains the Codex manual-read purpose"
+assert_not_matches "$PORTING_DOC" 'using-superpowers/SKILL\.md` tells the model to \*never read skill files manually' "porting guide removes the stale universal manual-read ban"
 how_it_works="$(section_text "$README" "## How it works")"
 [[ "$how_it_works" == *"Every task starts with workflow-mode selection"* ]] \
   && pass "README starts every task with mode selection" \

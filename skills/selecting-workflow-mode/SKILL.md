@@ -18,7 +18,16 @@ and external effects. Never choose from a model name.
 Explicit user mode instructions are authoritative. Platform safety,
 permissions, and approvals remain authoritative outside this workflow.
 
-## Selection
+## Entry routes
+
+If an active workflow mode is already present, this is re-entry, not task entry.
+Do not output a new `Mode:` declaration on re-entry. Apply the override and promotion rules below to the existing state.
+Skip task-entry selection and declaration; the already loaded matrix and active
+state remain authoritative for this task.
+
+If no active workflow mode is present, follow task-entry selection.
+
+## Task-entry selection
 
 Read [references/risk-matrix.md](references/risk-matrix.md), then select:
 
@@ -82,6 +91,11 @@ Do not name a file in the promotion line unless that exact path was read literal
 Then pause before the first mutation and ask the human partner whether to
 proceed in strict mode. Do not mutate until they answer. Do not output another `Mode:` line:
 the promotion line changes the active state.
+
+If the active mode remains `standard`, complete its inline design contract
+before mutation. In `standard`, after project inspection and before the first mutation, output a short inline design and execution outline in a visible inline message.
+State the intended approach, files or components involved, and verification
+strategy. Continue without an approval pause unless a missing decision would materially alter the result.
 
 An explicitly requested process skill runs without silently promoting the
 rest of the task.

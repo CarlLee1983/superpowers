@@ -181,10 +181,10 @@ assert_command_output \
     bash "$HOOK_UNDER_TEST"
 
 assert_command_output \
-    "Claude Code requires structural inspection before promotion" \
+    "Claude Code uses platform-neutral read-only inspection before promotion" \
     "nested" \
-    "For pre-promotion inspection, use Read only; never use ToolSearch, Agent, or Bash" \
-    "" \
+    "For pre-promotion inspection, use dedicated Read when available; otherwise follow the selector's standalone shell fallback" \
+    "use Read only; never use ToolSearch, Agent, or Bash" \
     "$claude_home" \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash "$HOOK_UNDER_TEST"
