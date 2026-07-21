@@ -119,7 +119,10 @@ or `rg --line-number` under this closed grammar:
 
 All other `rg` flags are forbidden here, including command-bearing `--pre` and `--pre-glob`.
 Shell parameter expansion (`$name` or `${...}`), backticks, and unquoted brace, tilde, or glob expansion are forbidden.
-Regex or glob metacharacters in an `rg` search pattern or `-g`/`--glob` argument must be inside one single-quoted token.
+Regex or glob metacharacters in an `rg` search pattern or `-g`/`--glob` argument must be inside one shell-quoted token.
+Use single quotes, or double quotes only when the token contains no shell expansion syntax.
+A wildcard `-g` or `--glob` value must be shell-quoted.
+Both `rg -n 'amount|payment' .` and `rg -n "amount|payment" .` satisfy this quoting rule.
 Do not use shell chaining, pipelines, redirections, command substitution,
 command separators, or mix inspection with mutation outside that single closed
 exception. Discovery never counts as strict-promotion proof.
