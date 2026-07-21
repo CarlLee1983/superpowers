@@ -28,10 +28,10 @@ For every new user task:
 
 After the selector returns, the next task-specific assistant output is its exact
 `Mode:` declaration line. Task entry is incomplete until that line is output.
-Codex may emit one concise, generic bootstrap narration while loading the three
-required sources. That narration may only identify workflow loading and defer
-project work; it must not contain task analysis, a risk conclusion, a concrete
-project path, or a project finding.
+Codex may emit one bootstrap narration while loading the three required
+sources. If emitted, it must be this exact line and nothing else:
+
+`Loading workflow-selection sources before task analysis.`
 
 Do not invoke a general process skill before a mode is active.
 
@@ -52,7 +52,9 @@ After any project inspection, complete risk routing before mutation:
 
 - Explicit `lean` or `standard` plus strict evidence: visibly warn about the
   concrete risk and retain the override. If the immediate warning already
-  covered that evidence, do not repeat it.
+  covered that evidence, do not repeat it. Put the warning and override
+  retention in one assistant block. After that block, emit no assistant prose
+  before the first mutation; read-only inspection tools may still run.
 - Automatic `lean` or `standard` plus strict evidence: output the selector's
   canonical promotion line, then pause for approval without mutating.
 - Active `strict`: follow the strict skills and their approval gates without

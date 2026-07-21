@@ -104,6 +104,8 @@ digraph brainstorming {
 - Once you believe you understand what you're building, present the design
 - Scale each section to its complexity: a few sentences if straightforward, up to 200-300 words if nuanced
 - Ask after each section whether it looks right so far
+- When the final design asks for approval declaratively rather than as a
+  question, end with exactly: `Waiting on your approval before proceeding.`
 - Cover: architecture, components, data flow, error handling, testing
 - Be ready to go back and clarify if something doesn't make sense
 

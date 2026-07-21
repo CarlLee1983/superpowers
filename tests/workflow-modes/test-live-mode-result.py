@@ -2865,10 +2865,13 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_escalation_accepts_latest_f9a_codex_output(self) -> None:
-        preamble, declaration, promotion, pause = LATEST_F9A_CODEX_OUTPUTS
+        _preamble, declaration, promotion, pause = LATEST_F9A_CODEX_OUTPUTS
         events = [
             {"type": "thread.started", "thread_id": "thread"},
-            codex_event(preamble, item_id="preamble"),
+            codex_event(
+                "Loading workflow-selection sources before task analysis.",
+                item_id="preamble",
+            ),
             codex_event(declaration, item_id="declaration"),
             *codex_command_lifecycle("sed -n '1,240p' src/schema.js", "schema"),
             *codex_command_lifecycle("sed -n '1,240p' src/billing.js", "billing"),
@@ -3671,6 +3674,28 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "override", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_override_accepts_negated_switch_inside_initial_warning(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit authentication override.\n"
+                "Authentication is a strict security risk; I am not switching "
+                "the workflow mode to strict; I will remain lean.",
+                item_id="mode-warning",
+            ),
+            codex_event(
+                "src/auth.js",
+                item_type="file_change",
+                event_type="item.started",
+                item_id="mutation",
+            ),
+            codex_event("src/auth.js", item_type="file_change", item_id="mutation"),
+            codex_event("Verification: authentication tests pass.", item_id="verify"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "override", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_override_does_not_require_a_redundant_lean_continuity_sentence(self) -> None:
         events = [
             {"type": "thread.started", "thread_id": "thread"},
@@ -3808,6 +3833,32 @@ class ValidatorTest(unittest.TestCase):
                         item_id="verify",
                     ),
                 ],
+            ),
+            *(
+                (
+                    f"extra transition prose: {transition}",
+                    [
+                        declaration,
+                        warning,
+                        codex_event(
+                            transition,
+                            item_id=f"strict-transition-{number}",
+                        ),
+                        *mutation,
+                        codex_event(
+                            "Verification: authentication tests pass.",
+                            item_id="verify",
+                        ),
+                    ],
+                )
+                for number, transition in enumerate(
+                    (
+                        "I am now operating in strict mode.",
+                        "The active mode is strict now.",
+                        "I have adopted strict mode for the rest of this task.",
+                        "I will proceed in strict mode.",
+                    )
+                )
             ),
             ("no mutation", [declaration, warning, codex_event("Verification: tests pass.", item_id="verify")]),
             ("no verification", [declaration, warning, *mutation]),
@@ -4046,7 +4097,7 @@ class ValidatorTest(unittest.TestCase):
         generic = [
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
-                "I’m loading the required workflow-selection skills first.",
+                "Loading workflow-selection sources before task analysis.",
                 item_id="bootstrap-note",
             ),
             *codex_bootstrap_lifecycles(),
@@ -4119,11 +4170,38 @@ class ValidatorTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("assistant prose before mode declaration", result.stderr)
 
+        task_specific_bootstrap_variants = (
+            "I’m loading the workflow selector before correcting the login timeout defect.",
+            "I’m using workflow selection before updating user-session lifetime handling.",
+            "I’ll follow the workflow selector before changing greeting behavior.",
+        )
+        for number, narration in enumerate(task_specific_bootstrap_variants):
+            with self.subTest(narration=narration):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        narration,
+                        item_id=f"task-specific-bootstrap-{number}",
+                    ),
+                    *codex_bootstrap_lifecycles(),
+                    codex_event(
+                        "Mode: lean — localized typo correction.\n"
+                        "Verification passed.",
+                        item_id="mode",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator(
+                    "codex", "lean", events, inject_codex_bootstrap=False
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("assistant prose before mode declaration", result.stderr)
+
         late_generic = [
             {"type": "thread.started", "thread_id": "thread"},
             *codex_bootstrap_lifecycles(),
             codex_event(
-                "I’m loading the required workflow-selection skills first.",
+                "Loading workflow-selection sources before task analysis.",
                 item_id="late-bootstrap-note",
             ),
             codex_event(
@@ -4931,6 +5009,9 @@ class ValidatorTest(unittest.TestCase):
             "I am not waiting for your approval before proceeding.",
             "I am not currently waiting for your approval before proceeding.",
             "I am not actually waiting for your approval before proceeding.",
+            "I intend not to wait for your approval before proceeding.",
+            "I have no intention of waiting for your approval before proceeding.",
+            "I am unwilling to wait for your approval before proceeding.",
             "Without waiting for your approval before proceeding.",
             "I won't wait for your approval before proceeding.",
             "I refuse to wait for your approval before proceeding.",
@@ -5018,6 +5099,58 @@ class ValidatorTest(unittest.TestCase):
             {"type": "result", "subtype": "success", "result": "done"},
         ]
         result = self.run_validator("claude", "strict", false_success)
+        self.assertNotEqual(result.returncode, 0)
+
+        duplicate_tool_use = [
+            claude_init(),
+            claude_event(
+                "Mode: strict — production payment migration and public API risk."
+            ),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/missing.js")},
+                tool_id="missing-read",
+            ),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/missing-again.js")},
+                tool_id="missing-read",
+            ),
+            claude_tool_result(
+                "missing-read",
+                is_error=True,
+                content="File does not exist.",
+            ),
+            claude_event("Which rollback requirement applies to this migration?"),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "strict", duplicate_tool_use)
+        self.assertNotEqual(result.returncode, 0)
+
+        opposing_results = [
+            claude_init(),
+            claude_event(
+                "Mode: strict — production payment migration and public API risk."
+            ),
+            claude_tool_event(
+                "Read",
+                {"file_path": str(self.project / "src/missing.js")},
+                tool_id="missing-read",
+            ),
+            claude_tool_result(
+                "missing-read",
+                is_error=True,
+                content="File does not exist.",
+            ),
+            claude_tool_result(
+                "missing-read",
+                is_error=False,
+                content="Claimed success after the failure.",
+            ),
+            claude_event("Which rollback requirement applies to this migration?"),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "strict", opposing_results)
         self.assertNotEqual(result.returncode, 0)
 
     def test_strict_declarative_pause_allows_nonmutating_approval_tool(self) -> None:
@@ -5368,8 +5501,11 @@ class ValidatorTest(unittest.TestCase):
             "I applied the brainstorming skill, but I’m not applying it after all.",
             "I applied the brainstorming skill. I am no longer applying the brainstorming skill.",
             "I applied the brainstorming skill. I stopped applying the brainstorming skill.",
+            "I applied the brainstorming skill. I've stopped using the brainstorming skill.",
+            "I applied the brainstorming skill. I’ve stopped using the brainstorming skill.",
             "I applied the brainstorming skill. I am no longer currently applying the brainstorming skill.",
             "I applied the brainstorming skill. I ceased applying the brainstorming skill.",
+            "I applied the brainstorming skill. We've ceased applying the brainstorming skill.",
             "I applied the brainstorming skill. Without applying the brainstorming skill now.",
             "I applied the brainstorming skill. We aren't using the brainstorming skill anymore.",
         )
@@ -5581,9 +5717,7 @@ class ValidatorTest(unittest.TestCase):
         codex_events = [
             {"type": "thread.started", "thread_id": "thread"},
             codex_event(
-                "I’m using the `superpowers:brainstorming` skill because you "
-                "explicitly requested design exploration. I’ll keep this read-only "
-                "and compare exactly two naming options.",
+                "Loading workflow-selection sources before task analysis.",
                 item_id="intro",
             ),
             codex_event(

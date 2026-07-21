@@ -759,29 +759,10 @@ def is_safe_discovery_command(
 
 def is_generic_codex_bootstrap_narration(text: str) -> bool:
     """Allow only platform-facing workflow narration before Codex's Mode line."""
-    stripped = text.strip()
-    if (
-        not stripped
-        or len(stripped) > 400
-        or DECLARATION.search(stripped)
-        or re.search(r"(?:^|\s)(?:[A-Za-z0-9_.-]+/)+[A-Za-z0-9_.-]+", stripped)
-        or re.search(
-            r"\b(?:auth\w*|authoriz\w*|credentials?|security|secrets?|tokens?|"
-            r"expir\w*|payments?|billing|finance|production|migrations?|schema|"
-            r"APIs?|compatib\w*|destructive|irreversible|bugs?|fix\w*|typos?|"
-            r"features?|renam\w*|fields?|consumers?|CLI|amount)\b",
-            stripped,
-            re.IGNORECASE,
-        )
-    ):
-        return False
-    return re.search(
-        r"\b(?:load|read|use|using|invoke|follow)\w*\b.{0,160}"
-        r"\b(?:superpowers|workflow|selector|selection\s+skills?|"
-        r"workflow-selection|mode\s+selection)\b",
-        stripped,
-        re.IGNORECASE,
-    ) is not None
+    return (
+        text.strip()
+        == "Loading workflow-selection sources before task analysis."
+    )
 
 
 def validate_declaration_order(
@@ -1280,27 +1261,18 @@ def require_strict_pause(text: str) -> None:
 
 def has_strict_design_approval_pause(text: str) -> bool:
     pause = re.search(
-        r"\b(?:I(?:['’]m|\s+am)\s+)?(?:wait(?:ing)?|stop(?:ping)?|paus(?:e|ing))\s+"
-        r"(?:here\s+)?(?:(?:for|on)\s+)?your\s+approval\s+before\s+"
-        r"(?:proceeding|writing|implementing|coding|making\s+(?:the\s+)?first\s+change)\b",
+        r"(?mi)^[ \t]*(?:"
+        r"Waiting\s+on\s+your\s+approval\s+before\s+proceeding|"
+        r"I(?:\s+am|['’]m)\s+waiting\s+(?:for|on)\s+your\s+approval\s+"
+        r"before\s+proceeding|"
+        r"I(?:\s+am|['’]m)\s+stopping\s+for\s+your\s+approval\s+"
+        r"before\s+proceeding|"
+        r"I(?:\s+am|['’]m)\s+pausing\s+here\s+for\s+your\s+approval\s+"
+        r"before\s+proceeding"
+        r")\.[ \t]*$",
         text,
-        re.IGNORECASE,
     )
     if pause is None:
-        return False
-    clause_start = max(
-        text.rfind(separator, 0, pause.start()) for separator in (".", ";", "\n")
-    )
-    pause_prefix = text[clause_start + 1 : pause.start()]
-    if re.search(
-        r"\b(?:won['’]t|will\s+not|refus\w*\s+to|"
-        r"do(?:es)?\s+not\s+(?:plan|intend)\s+to|"
-        r"don['’]t\s+(?:plan|intend)\s+to|not\s+going\s+to|"
-        r"not|never|without|no\s+longer)"
-        r"(?:\s+(?:currently|actually|really|now|still)){0,3}\s*$",
-        pause_prefix,
-        re.IGNORECASE,
-    ):
         return False
     if re.search(
         r"\bapproaches?\s+considered\b|\bdesign\s+options?\b",
@@ -1387,6 +1359,8 @@ def strict_transcript_has_mutation(
     expected_plugin_root: Path | None,
 ) -> bool:
     pending_read_probes: set[str] = set()
+    completed_read_probes: set[str] = set()
+    seen_tool_ids: set[str] = set()
     for event in events:
         item = event.get("item")
         if (
@@ -1418,17 +1392,30 @@ def strict_transcript_has_mutation(
                 if not isinstance(block, dict) or block.get("type") != "tool_result":
                     continue
                 tool_id = block.get("tool_use_id")
-                if not isinstance(tool_id, str) or tool_id not in pending_read_probes:
+                if not isinstance(tool_id, str) or not tool_id:
+                    return True
+                if tool_id in completed_read_probes:
+                    return True
+                if tool_id not in pending_read_probes:
                     continue
                 pending_read_probes.remove(tool_id)
                 if block.get("is_error") is not True:
                     return True
+                completed_read_probes.add(tool_id)
             continue
         if event.get("type") != "assistant":
             continue
         for block in content:
             if not isinstance(block, dict) or block.get("type") != "tool_use":
                 continue
+            tool_id = block.get("id")
+            if (
+                not isinstance(tool_id, str)
+                or not tool_id
+                or tool_id in seen_tool_ids
+            ):
+                return True
+            seen_tool_ids.add(tool_id)
             name = block.get("name")
             tool_input = block.get("input")
             if is_claude_bootstrap(block, expected_plugin_root):
@@ -1444,9 +1431,6 @@ def strict_transcript_has_mutation(
             if name == "Read" and safe_claude_read_probe(
                 tool_input, expected_project_root
             ):
-                tool_id = block.get("id")
-                if not isinstance(tool_id, str) or not tool_id:
-                    return True
                 pending_read_probes.add(tool_id)
                 continue
             if (
@@ -2452,18 +2436,6 @@ def has_override_warning(text: str) -> bool:
     return risk_seen and retention_seen
 
 
-def has_strict_override_transition(text: str) -> bool:
-    patterns = (
-        r"\b(?:switch(?:ing)?|escalat(?:e|ing)|chang(?:e|ing)|"
-        r"mov(?:e|ing)|promot(?:e|ing))\b.{0,60}"
-        r"\b(?:mode\b.{0,20})?(?:to|into)\s+strict\b",
-        r"\bstrict\s+mode\s+(?:is\s+)?(?:now\s+)?active\b",
-        r"\b(?:proceed|continu)(?:e|ing)\s+(?:in|under|with)\s+"
-        r"strict(?:\s+mode)?\b",
-    )
-    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
-
-
 def has_positive_verification(text: str) -> bool:
     status = False
     for clause in re.split(r"[\n.;]+", text):
@@ -2531,24 +2503,32 @@ def validate_override_order(
                 if declaration is None:
                     continue
                 mode_seen = True
-            if has_strict_override_transition(record.value):
-                raise ValidationError(
-                    "explicit non-strict override must not promote to strict"
-                )
             warning_text = re.sub(
                 r"(?im)^\s*Mode:\s*lean\b[^\n]*(?:\n|$)",
                 "",
                 record.value,
                 count=1,
             )
-            if not warning_seen and has_override_warning(warning_text):
-                warning_seen = True
-            elif not warning_seen and warning_text.strip():
+            if not warning_seen:
+                if has_override_warning(warning_text):
+                    warning_seen = True
+                elif warning_text.strip():
+                    raise ValidationError(
+                        "high-risk override warning must be the first assistant "
+                        "content after the Mode line"
+                    )
+                continue
+            if not mutation_seen and record.value.strip():
                 raise ValidationError(
-                    "high-risk override warning must be the first assistant "
-                    "content after the Mode line"
+                    "explicit non-strict override permits no extra assistant "
+                    "prose between its warning and first mutation"
                 )
-            if mutation_seen and has_positive_verification(record.value):
+            if mutation_seen:
+                if not has_positive_verification(record.value):
+                    raise ValidationError(
+                        "override assistant prose after mutation must provide "
+                        "positive verification evidence"
+                    )
                 verification_seen = True
             continue
         if record.kind in {"inspection", "discovery", "mutation"}:
@@ -2941,10 +2921,10 @@ def require_affirmative_brainstorming(
         r"(?:currently\s+|actually\s+|now\s+)?"
         r"(?:using|invoking|running|applying|use|invoke|run|apply)\s+"
         r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
-        r"\b(?:I|we)\s+(?:have\s+)?stopped\s+"
+        r"\b(?:I|we)(?:\s+have|['’]ve)?\s+stopped\s+"
         r"(?:using|invoking|running|applying)\s+"
         r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
-        r"\b(?:I|we)\s+(?:have\s+)?ceased\s+"
+        r"\b(?:I|we)(?:\s+have|['’]ve)?\s+ceased\s+"
         r"(?:using|invoking|running|applying)\s+"
         r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
         r"\bwithout\s+(?:currently\s+|actually\s+|now\s+)?"

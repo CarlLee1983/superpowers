@@ -45,8 +45,8 @@ Read [references/risk-matrix.md](references/risk-matrix.md), then select:
 
 After reading the matrix, the next task-specific assistant output is exactly one
 declaration line, before any task-specific tool call. Codex's generic bootstrap
-narration exception is defined by `using-superpowers` and ends when the matrix
-read completes:
+narration exception is the exact line defined by `using-superpowers` and ends
+when the matrix read completes:
 
 `Mode: <lean|standard|strict> — <one-sentence reason>.`
 
@@ -85,7 +85,10 @@ First complete risk routing:
 
 - Explicit `lean` or `standard` plus strict evidence: warn about the concrete
   risk and retain the override. An immediate request-text warning fulfills this
-  branch unless inspection finds a materially different strict risk.
+  branch unless inspection finds a materially different strict risk. Put the
+  risk warning and retained override in one assistant block, then emit no
+  assistant prose before the first mutation. Read-only inspection tools remain
+  allowed during that interval.
 - Automatic `lean` or `standard` plus strict evidence: emit the canonical
   promotion below and pause for approval.
 - Active `strict`: follow its strict skills and approval gates without a
