@@ -1534,18 +1534,74 @@ def explicit_shell_payload(command: str) -> str | None:
     return command
 
 
-def explicit_read_only_segment(segment: str, expected_project_root: Path) -> bool:
+def explicit_read_only_segment(
+    segment: str,
+    expected_project_root: Path,
+    *,
+    allow_stdin: bool = False,
+) -> bool:
     try:
         arguments = shlex.split(segment, posix=True)
     except ValueError:
         return False
     if not arguments:
         return False
+    if is_read_only_inspection_command(
+        segment, None, expected_project_root, require_files=not allow_stdin
+    ):
+        return True
     if arguments[0] == "ls":
         operands = [argument for argument in arguments[1:] if not argument.startswith("-")]
         return bool(operands) and all(
             project_path(operand, expected_project_root) is not None
             for operand in operands
+        )
+    if arguments[0] == "grep":
+        positional: list[str] = []
+        for argument in arguments[1:]:
+            if re.fullmatch(r"-[rnil]+", argument):
+                continue
+            if re.fullmatch(
+                r"--(?:include|exclude|exclude-dir)=[A-Za-z0-9._*?/-]+",
+                argument,
+            ):
+                continue
+            if argument.startswith("-"):
+                return False
+            positional.append(argument)
+        if not positional:
+            return False
+        operands = positional[1:]
+        return (allow_stdin or bool(operands)) and all(
+            project_path(operand, expected_project_root) is not None
+            for operand in operands
+        )
+    if arguments[:2] == ["rg", "--files"]:
+        options = arguments[2:]
+        while options:
+            if (
+                len(options) < 2
+                or options[0] != "-g"
+                or re.fullmatch(r"!?[A-Za-z0-9._/-]+", options[1]) is None
+            ):
+                return False
+            options = options[2:]
+        return True
+    if arguments[0] == "sed":
+        if (
+            len(arguments) < 3
+            or arguments[1] != "-n"
+            or re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", arguments[2])
+            is None
+        ):
+            return False
+        operands = arguments[3:]
+        return (allow_stdin and not operands) or (
+            bool(operands)
+            and project_operand_paths(
+                operands, expected_project_root, require_file=True
+            )
+            is not None
         )
     if arguments[0] == "git":
         git_arguments = arguments[1:]
@@ -1556,11 +1612,18 @@ def explicit_read_only_segment(segment: str, expected_project_root: Path) -> boo
             if root != expected_project_root.resolve(strict=True):
                 return False
             git_arguments = git_arguments[2:]
-        return bool(git_arguments) and git_arguments[0] == "log" and all(
-            argument in {"--oneline", "--decorate"}
-            or re.fullmatch(r"-\d+", argument) is not None
-            for argument in git_arguments[1:]
-        )
+        if not git_arguments:
+            return False
+        if git_arguments[0] == "log":
+            return all(
+                argument in {"--oneline", "--decorate"}
+                or re.fullmatch(r"-\d+", argument) is not None
+                for argument in git_arguments[1:]
+            )
+        return tuple(git_arguments) in {
+            ("status", "--short"),
+            ("status", "--porcelain"),
+        }
     return False
 
 
@@ -1606,38 +1669,23 @@ def is_explicit_read_only_command(
         return False
     if "||" in payload or re.search(r"(?<!&)&(?!&)", payload):
         return False
-    if "|" in payload and "&&" not in payload:
-        pipeline = payload.split("|")
-        if len(pipeline) != 2:
+    compound_groups = payload.split("&&")
+    if any(not group.strip() for group in compound_groups):
+        return False
+    for group in compound_groups:
+        pipeline = group.split("|")
+        if any(not segment.strip() for segment in pipeline):
             return False
-        try:
-            producer = shlex.split(pipeline[0], posix=True)
-            consumer = shlex.split(pipeline[1], posix=True)
-        except ValueError:
+        if not all(
+            explicit_read_only_segment(
+                segment,
+                expected_project_root,
+                allow_stdin=index > 0,
+            )
+            for index, segment in enumerate(pipeline)
+        ):
             return False
-        valid_producer = producer[:2] == ["rg", "--files"]
-        producer_options = producer[2:]
-        while valid_producer and producer_options:
-            if (
-                len(producer_options) < 2
-                or producer_options[0] != "-g"
-                or re.fullmatch(r"!?[A-Za-z0-9._/-]+", producer_options[1]) is None
-            ):
-                valid_producer = False
-                break
-            producer_options = producer_options[2:]
-        return (
-            valid_producer
-            and len(consumer) == 3
-            and consumer[:2] == ["sed", "-n"]
-            and re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", consumer[2])
-            is not None
-        )
-    segments = payload.split("&&")
-    return all(
-        explicit_read_only_segment(segment, expected_project_root)
-        for segment in segments
-    )
+    return True
 
 
 def validate_explicit_skill_actions(
@@ -1724,6 +1772,12 @@ def require_affirmative_brainstorming(
         )
     clauses = re.split(r"[.;\n]+|\bbut\b", text, flags=re.IGNORECASE)
     affirmative_patterns = (
+        r"\b(?:I[’']m|we[’']re)\s+"
+        r"(?:using|invoking|running)\s+(?:the\s+)?"
+        r"`?superpowers:brainstorming`?\s+skill\b",
+        r"\b(?:I|we)\s+(?:am|are|'m|'re|have|will|'ll)?\s*"
+        r"(?:using|invoking|running|used|invoked|ran|use|invoke|run)\s+"
+        r"(?:the\s+)?`?superpowers:brainstorming`?\s+skill\b",
         r"\b(?:I|we)\s+(?:am|are|'m|'re|have|will|'ll)?\s*"
         r"(?:using|invoking|running|used|invoked|ran|use|invoke|run)\s+"
         r"(?:the\s+)?brainstorming(?:\s+skill)?\b",

@@ -3741,6 +3741,131 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("claude", "explicit-skill", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_explicit_skill_accepts_final_matrix_read_only_shell_composition(self) -> None:
+        (self.project / "src/greeting.js").write_text(
+            "export const greet = name => `Hello ${name}`;\n"
+        )
+
+        # Exact visible output and action shape from /tmp/superpowers-mode-evals/
+        # task1-final-full-a409482/claude/claude-fable-5/explicit-skill/
+        # 20260721T082625Z-85911-31690/{assistant.txt,transcript.jsonl}
+        claude_events = [
+            claude_init(),
+            claude_event(
+                "Mode: lean — Explicit user instruction selecting lean for a small, "
+                "exploratory naming discussion with no file changes.\n\n"
+                "The brainstorming skill was explicitly requested, so it runs under "
+                "this mode. Invoking it now."
+            ),
+            claude_tool_event(
+                "Skill",
+                {
+                    "skill": "superpowers:brainstorming",
+                    "args": "Explore two possible names for the greeting function; "
+                    "no file changes.",
+                },
+                tool_id="brainstorming",
+            ),
+            claude_tool_result("brainstorming"),
+            claude_event(
+                "Announcing: the brainstorming skill is active. First step is "
+                "read-only project context — let me find the greeting function."
+            ),
+            claude_tool_event(
+                "Bash",
+                {
+                    "command": f'ls -la {self.project} && grep -rn -i "greet" '
+                    f'{self.project} --include="*" -l',
+                    "description": "List project files and find greeting references",
+                },
+                tool_id="shell-inspection",
+            ),
+            claude_tool_result("shell-inspection"),
+            *claude_read_lifecycle(self.project, "src/greeting.js", "greeting"),
+            claude_event(
+                "The project has one file, `src/greeting.js:1`, containing "
+                "`export const greet = name => `Hello ${name}`;`. You asked for two "
+                "name options, so here they are with trade-offs — no files touched.\n\n"
+                "**Option 1: `greet` (keep the current name)** — A verb, which "
+                "matches convention for functions that perform an action and return "
+                "a result. It's short, already exported, and renaming would touch "
+                "any consumers for no behavioral gain. Slight downside: it doesn't "
+                "hint at what the greeting contains or that it returns a string "
+                "rather than printing.\n\n"
+                "**Option 2: `greetByName`** — More descriptive: it signals the "
+                "function takes a name and builds a personalized greeting, which "
+                "reads well at call sites like `greetByName(\"Ada\")`. Downside: "
+                "it's longer, and in a module already called `greeting.js` the extra "
+                "specificity is mostly redundant — the file context already tells "
+                "you what `greet` does.\n\n"
+                "**My recommendation is Option 1, `greet`.** In a module named "
+                "`greeting.js` with a single-argument signature, the short verb is "
+                "unambiguous, idiomatic, and avoids a rename with no functional "
+                "benefit.\n\n"
+                "One question to converge: do you want to keep `greet`, or should "
+                "we go with `greetByName` (or another direction, like a noun-returning "
+                "style such as `makeGreeting`)? Per the brainstorming flow I'll "
+                "treat your pick as the design decision — and since you said not to "
+                "change files yet, nothing will be modified until you say so."
+            ),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+
+        # Exact visible output and post-declaration action shapes from the latest
+        # Codex run at /tmp/superpowers-mode-evals/task1-final-full-a409482/codex/
+        # gpt-5.6-sol/explicit-skill/20260721T083216Z-95613-27695/.
+        codex_events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "I’m using the `superpowers:brainstorming` skill because you "
+                "explicitly requested design exploration. I’ll keep this read-only "
+                "and compare exactly two naming options.",
+                item_id="intro",
+            ),
+            codex_event(
+                "Mode: lean — you explicitly requested lean mode for a read-only, "
+                "reversible naming exploration.",
+                item_id="declaration",
+            ),
+            codex_event(
+                "I’m now applying the brainstorming workflow’s read-only context "
+                "check so the two names fit the project’s existing naming style. "
+                "No files will be changed.",
+                item_id="inspection-intro",
+            ),
+            *codex_command_lifecycle(
+                "/bin/zsh -lc 'git log -5 --oneline'", "git-log"
+            ),
+            *codex_command_lifecycle(
+                "/bin/zsh -lc \"rg --files -g '!node_modules' -g '!vendor' "
+                "| sed -n '1,160p'\"",
+                "rg-pipeline",
+            ),
+            *codex_command_lifecycle(
+                "/bin/zsh -lc 'git status --short'", "git-status"
+            ),
+            *codex_command_lifecycle(
+                "/bin/zsh -lc \"sed -n '1,240p' src/greeting.js\"",
+                "greeting",
+            ),
+            codex_event(
+                "Two options:\n\n"
+                "1. `formatGreeting` — recommended. Clearly signals a pure function "
+                "that returns a formatted string without displaying or sending it.\n"
+                "2. `greet` — concise and friendly, but could imply performing an "
+                "action rather than returning text.\n\n"
+                "Given the current implementation, I’d choose `formatGreeting`. "
+                "Which name do you prefer? No files changed.",
+                item_id="options",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        for backend, events in (("claude", claude_events), ("codex", codex_events)):
+            with self.subTest(backend=backend):
+                result = self.run_validator(backend, "explicit-skill", events)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_claude_exact_skill_tool_use_is_affirmative_evidence(self) -> None:
         options = claude_event(
             "Mode: lean — explicit read-only naming exploration.\n"
@@ -3987,6 +4112,50 @@ class ValidatorTest(unittest.TestCase):
                     "codex", "explicit-skill", read_only_codex
                 )
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_explicit_skill_rejects_unsafe_shell_composition_segments(self) -> None:
+        visible = (
+            "Mode: lean — explicit read-only naming exploration.\n"
+            "I am using the brainstorming skill.\n"
+            "Option 1: `greet`\nOption 2: `formatGreeting`"
+        )
+        unsafe_commands = (
+            f"ls -la {self.project} && touch {self.project / 'new.js'}",
+            "rg --files | sed -n '1,20p' > inventory.txt",
+            "rg --files | python3 -c 'print(1)'",
+            "git status --short && git restore src/schema.js",
+            "ls $(touch new.js)",
+            "ls -la . && opaque-reader .",
+        )
+        for backend in ("claude", "codex"):
+            for index, command in enumerate(unsafe_commands):
+                with self.subTest(backend=backend, command=command):
+                    if backend == "claude":
+                        events = [
+                            claude_init(),
+                            claude_event(visible),
+                            claude_tool_event(
+                                "Skill",
+                                {"skill": "superpowers:brainstorming"},
+                                tool_id="brainstorming",
+                            ),
+                            claude_tool_result("brainstorming"),
+                            claude_tool_event(
+                                "Bash", {"command": command}, tool_id=f"unsafe-{index}"
+                            ),
+                            claude_tool_result(f"unsafe-{index}"),
+                            {"type": "result", "subtype": "success", "result": "done"},
+                        ]
+                    else:
+                        events = [
+                            {"type": "thread.started", "thread_id": "thread"},
+                            codex_event(visible, item_id="declaration"),
+                            *codex_command_lifecycle(command, f"unsafe-{index}"),
+                            {"type": "turn.completed", "usage": {}},
+                        ]
+                    result = self.run_validator(backend, "explicit-skill", events)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("explicit-skill action", result.stderr)
 
     def test_explicit_skill_uses_final_invocation_polarity(self) -> None:
         negations = (
