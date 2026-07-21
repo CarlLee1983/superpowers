@@ -664,6 +664,24 @@ def has_relevant_pause(text: str) -> bool:
     for sentence in sentences:
         if any(re.search(pattern, sentence, re.IGNORECASE) for pattern in decision_forms):
             return True
+        if "?" not in sentence:
+            continue
+        if re.search(r"\bstrict\s+mode\b", sentence, re.IGNORECASE) is None:
+            continue
+        if re.search(
+            r"\b(?:should|shall|proceed|which|confirm|approve)\b|"
+            r"\bdo\s+you\s+want\b",
+            sentence,
+            re.IGNORECASE,
+        ) is None:
+            continue
+        if re.search(
+            r"\b(?:rename|amountcents|compatibility|schema|api)\b|"
+            r"\bpublic\s+response\b|\bresponse\s+field\b",
+            sentence,
+            re.IGNORECASE,
+        ) is not None:
+            return True
     return False
 
 
@@ -1127,6 +1145,7 @@ def has_affirmative_consequence_impact(consequence: str) -> bool:
         (r"\bresponse\b", r"\b(?:shape|contract|field)\b"),
         (r"\b(?:clients?|consumers?)\b",),
         (r"\bapi\b", r"\bchange\b"),
+        (r"\bchange\b", r"\b(?:compatibility|contract)\b"),
     )
     for clause in clauses:
         if re.search(
@@ -1141,6 +1160,36 @@ def has_affirmative_consequence_impact(consequence: str) -> bool:
                 for pattern in signals
             )
             for signals in signal_sets
+        ):
+            return True
+    return False
+
+
+def has_affirmative_breaking_consequence(consequence: str) -> bool:
+    clauses = re.split(
+        r"[.;,]+|\b(?:but|though|although|however)\b",
+        consequence,
+        flags=re.IGNORECASE,
+    )
+    for clause in clauses:
+        if re.search(
+            r"\b(?:no|never|without|not(?!\s+only\b))\b",
+            clause,
+            re.IGNORECASE,
+        ) is not None:
+            continue
+        if re.search(r"\b(?:would|will)\b", clause, re.IGNORECASE) is None:
+            continue
+        if re.search(r"\bbreak(?:ing)?\b", clause, re.IGNORECASE) is not None:
+            return True
+        if (
+            re.search(r"\bchange\b", clause, re.IGNORECASE) is not None
+            and re.search(
+                r"\b(?:compatibility|contract)\b",
+                clause,
+                re.IGNORECASE,
+            )
+            is not None
         ):
             return True
     return False
@@ -1213,11 +1262,7 @@ def has_structured_promotion_relation(reason: str) -> bool:
         if not has_affirmative_surface_relation(surface_relation):
             return False
 
-    if re.search(
-        r"\b(?:would|will)\b.*\bbreak(?:ing)?\b",
-        consequence,
-        re.IGNORECASE,
-    ) is None:
+    if not has_affirmative_breaking_consequence(consequence):
         return False
 
     return has_affirmative_consequence_impact(consequence)
