@@ -1948,6 +1948,9 @@ class ValidatorTest(unittest.TestCase):
             "inspection found src/schema.js defines amount consumed by "
             "src/billing.js as part of the public ledger API response surface; "
             "renaming it would break compatibility.",
+            "inspection found src/schema.js defines amount consumed by "
+            "src/billing.js but never as part of the public billing API; "
+            "renaming it would break compatibility.",
         )
         for reason in reasons:
             with self.subTest(reason=reason):

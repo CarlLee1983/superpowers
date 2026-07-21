@@ -1088,6 +1088,31 @@ def has_affirmative_surface_relation(reason: str) -> bool:
     return False
 
 
+def has_affirmative_public_api_relation(reason: str) -> bool:
+    clauses = re.split(
+        r"[.;,]+|\b(?:but|though|although|however)\b",
+        reason,
+        flags=re.IGNORECASE,
+    )
+    for clause in clauses:
+        if not all(
+            re.search(pattern, clause, re.IGNORECASE) is not None
+            for pattern in (
+                r"\bpublic\b",
+                r"\b(?:billing|payments?)\b",
+                r"\bapi\b",
+            )
+        ):
+            continue
+        if re.search(
+            r"\b(?:no|never|without|not(?!\s+only\b))\b",
+            clause,
+            re.IGNORECASE,
+        ) is None:
+            return True
+    return False
+
+
 def has_structured_promotion_relation(reason: str) -> bool:
     if not has_valid_promotion_formatting(reason):
         return False
@@ -1148,14 +1173,7 @@ def has_structured_promotion_relation(reason: str) -> bool:
         return False
 
     public_relation_tail = after_source[consumer.end() :]
-    if not all(
-        re.search(pattern, public_relation_tail, re.IGNORECASE) is not None
-        for pattern in (
-            r"\bpublic\b",
-            r"\b(?:billing|payments?)\b",
-            r"\bapi\b",
-        )
-    ):
+    if not has_affirmative_public_api_relation(public_relation_tail):
         return False
     surface_relation = f"{public_relation_tail} {consequence}"
     if re.search(r"\b(?:surface|response)\b", surface_relation, re.IGNORECASE):
