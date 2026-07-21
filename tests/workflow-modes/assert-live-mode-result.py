@@ -221,6 +221,48 @@ def split_read_command(command: str) -> list[str] | None:
     return arguments
 
 
+def shell_pipeline_arguments(command: str) -> list[list[str]] | None:
+    """Parse a closed shell pipeline without evaluating shell syntax."""
+    try:
+        outer = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    if (
+        len(outer) == 3
+        and outer[0] in {"/bin/zsh", "/bin/bash", "/bin/sh"}
+        and outer[1] == "-lc"
+    ):
+        payload = outer[2]
+    else:
+        payload = command
+    if "\n" in payload or "`" in payload or "$(" in payload or "\x00" in payload:
+        return None
+    try:
+        lexer = shlex.shlex(payload, posix=True, punctuation_chars="|;&<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    if not tokens or any(
+        token in {";", "&", "&&", "||", "<", ">", ">>"} for token in tokens
+    ):
+        return None
+    if tokens.count("|") > 1:
+        return None
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token == "|":
+            if not segments[-1]:
+                return None
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    if any(not segment for segment in segments):
+        return None
+    return segments
+
+
 def exact_bootstrap_path(argument: str, expected_root: Path) -> bool:
     candidate = Path(argument)
     if not candidate.is_absolute():
@@ -460,6 +502,86 @@ def inspection_command_uses_glob(command: str) -> bool:
     else:
         return False
     return any("*" in operand for operand in operands)
+
+
+def safe_rg_glob(pattern: str) -> bool:
+    lexical = Path(pattern.removeprefix("!"))
+    return (
+        bool(pattern)
+        and not lexical.is_absolute()
+        and ".." not in lexical.parts
+        and re.fullmatch(r"!?[A-Za-z0-9_./*+-]+", pattern) is not None
+    )
+
+
+def valid_rg_discovery_arguments(
+    arguments: list[str], expected_project_root: Path
+) -> bool:
+    if arguments[:2] == ["rg", "--files"]:
+        remainder = arguments[2:]
+        operands: list[str] = []
+        while remainder:
+            if remainder[0] in {"-g", "--glob"}:
+                if len(remainder) < 2 or not safe_rg_glob(remainder[1]):
+                    return False
+                remainder = remainder[2:]
+                continue
+            if remainder[0].startswith("-"):
+                return False
+            operands.append(remainder[0])
+            remainder = remainder[1:]
+        return all(
+            project_path(operand, expected_project_root) is not None
+            for operand in operands
+        )
+    if len(arguments) < 3 or arguments[0] != "rg" or arguments[1] not in {
+        "-n",
+        "--line-number",
+    }:
+        return False
+    remainder = arguments[2:]
+    pattern: str | None = None
+    operands: list[str] = []
+    while remainder:
+        token = remainder[0]
+        if token in {"-g", "--glob"}:
+            if len(remainder) < 2 or not safe_rg_glob(remainder[1]):
+                return False
+            remainder = remainder[2:]
+            continue
+        if token in {"--hidden", "--no-heading", "--color=never"}:
+            remainder = remainder[1:]
+            continue
+        if token.startswith("-"):
+            return False
+        if pattern is None:
+            pattern = token
+        else:
+            operands.append(token)
+        remainder = remainder[1:]
+    return pattern is not None and "\x00" not in pattern and all(
+        project_path(operand, expected_project_root) is not None
+        for operand in operands
+    )
+
+
+def is_safe_discovery_command(
+    command: str, expected_project_root: Path
+) -> bool:
+    pipeline = shell_pipeline_arguments(command)
+    if pipeline is None or not valid_rg_discovery_arguments(
+        pipeline[0], expected_project_root
+    ):
+        return False
+    if len(pipeline) == 1:
+        return True
+    return (
+        len(pipeline) == 2
+        and len(pipeline[1]) == 3
+        and pipeline[1][:2] == ["sed", "-n"]
+        and re.fullmatch(r"[1-9]\d*(?:,[1-9]\d*)?p", pipeline[1][2])
+        is not None
+    )
 
 
 def validate_declaration_order(
@@ -707,6 +829,22 @@ def has_relevant_pause(text: str) -> bool:
             re.IGNORECASE,
         ) is not None:
             return True
+    contextual_strict_update = re.search(
+        r"(?mi)\bshould\s+(?:I|we)\s+proceed\s+in\s+strict\s+mode\s+and\s+"
+        r"update\s+(?:the\s+)?schema\b[^?]*\bconsumer\w*\b[^?]*\?\s*$",
+        text,
+    )
+    if contextual_strict_update is not None:
+        context_signals = (
+            r"\b(?:payment|billing)\b",
+            r"\b(?:public\s+API|compatibility|breaking)\b",
+            r"\b(?:rename|amountCents|response)\b",
+        )
+        if all(
+            re.search(pattern, text, re.IGNORECASE) is not None
+            for pattern in context_signals
+        ):
+            return True
     return False
 
 
@@ -859,11 +997,142 @@ def has_concrete_discovery_pause(text: str) -> bool:
 
 
 def require_strict_pause(text: str) -> None:
-    if has_relevant_pause(text) or has_concrete_discovery_pause(text):
+    if (
+        has_relevant_pause(text)
+        or has_concrete_discovery_pause(text)
+        or has_strict_design_approval_pause(text)
+    ):
         return
     raise ValidationError(
         "assistant-visible text lacks relevant clarification/approval pause"
     )
+
+
+def has_strict_design_approval_pause(text: str) -> bool:
+    pause = re.search(
+        r"\b(?:I(?:['’]m|\s+am)\s+)?(?:wait(?:ing)?|stop(?:ping)?|paus(?:e|ing))\s+"
+        r"(?:here\s+)?(?:(?:for|on)\s+)?your\s+approval\s+before\s+"
+        r"(?:proceeding|writing|implementing|coding|making\s+(?:the\s+)?first\s+change)\b",
+        text,
+        re.IGNORECASE,
+    )
+    if pause is None:
+        return False
+    if re.search(
+        r"\bapproaches?\s+considered\b|\bdesign\s+options?\b",
+        text,
+        re.IGNORECASE,
+    ) is None:
+        return False
+    if re.search(
+        r"\brecommended\s+design\b|\brecommend(?:ed|ation)\b",
+        text,
+        re.IGNORECASE,
+    ) is None:
+        return False
+    option_markers = re.findall(
+        r"(?m)^\s*[-*]\s+(?:\*\*)?(?:[A-Z]|\d+)[.)]",
+        text,
+    )
+    if len(option_markers) < 2:
+        return False
+    risk_families = (
+        r"\b(?:payment|billing|financial)\b",
+        r"\b(?:production\s+data|data\s+migration|schema|backfill|migration)\b",
+        r"\b(?:public\s+API|breaking|compatibility|external\s+consumer)\b",
+        r"\b(?:irreversible|rollback|zero[- ]downtime)\b",
+    )
+    return sum(
+        re.search(pattern, text, re.IGNORECASE) is not None
+        for pattern in risk_families
+    ) >= 2
+
+
+def is_strict_read_only_shell_command(
+    command: str, expected_project_root: Path
+) -> bool:
+    if is_read_only_inspection_command(
+        command, None, expected_project_root, require_files=False
+    ) or is_safe_discovery_command(command, expected_project_root):
+        return True
+    pipeline = shell_pipeline_arguments(command)
+    if pipeline is None or len(pipeline) not in {1, 2}:
+        return False
+    arguments = pipeline[0]
+    if len(arguments) != 7 or arguments[0] != "find":
+        return False
+    root = project_path(
+        arguments[1], expected_project_root, require_directory=True
+    )
+    if root != expected_project_root.resolve(strict=True) or arguments[2:] != [
+        "-type",
+        "f",
+        "-not",
+        "-path",
+        "*/.git/*",
+    ]:
+        return False
+    if len(pipeline) == 1:
+        return True
+    return pipeline[1] in (["head", "-50"], ["head", "-n", "50"])
+
+
+def strict_transcript_has_mutation(
+    events: list[dict[str, Any]], expected_project_root: Path,
+    expected_plugin_root: Path | None,
+) -> bool:
+    for event in events:
+        item = event.get("item")
+        if (
+            isinstance(item, dict)
+            and event.get("type") == "item.started"
+            and item.get("type") == "file_change"
+        ):
+            return True
+        if (
+            isinstance(item, dict)
+            and event.get("type") == "item.started"
+            and item.get("type") == "command_execution"
+        ):
+            command = item.get("command")
+            if isinstance(command, str) and is_codex_bootstrap(
+                command, expected_plugin_root
+            ):
+                continue
+            if not isinstance(command, str) or not is_strict_read_only_shell_command(
+                command, expected_project_root
+            ):
+                return True
+        message = event.get("message")
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list) or event.get("type") != "assistant":
+            continue
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                continue
+            name = block.get("name")
+            tool_input = block.get("input")
+            if is_claude_bootstrap(block, expected_plugin_root):
+                continue
+            if name == "Skill":
+                continue
+            if name == "AskUserQuestion" and isinstance(tool_input, dict):
+                continue
+            if name in {"Read", "Glob", "Grep"} and valid_claude_inspection(
+                name, tool_input, expected_project_root
+            ):
+                continue
+            if (
+                name == "Bash"
+                and isinstance(tool_input, dict)
+                and isinstance(tool_input.get("command"), str)
+                and is_strict_read_only_shell_command(
+                    tool_input["command"], expected_project_root
+                )
+            ):
+                continue
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -1215,6 +1484,8 @@ def escalation_records(
                 require_files=False,
             ):
                 continue
+            elif is_safe_discovery_command(command, expected_project_root):
+                continue
             else:
                 add("mutation", command, event_index)
         elif event.get("type") == "item.completed" and item_type == "command_execution":
@@ -1249,6 +1520,18 @@ def escalation_records(
                     add(
                         "invalid",
                         "Codex inspection claimed success for an invalid project operand",
+                        event_index,
+                    )
+            elif isinstance(command, str) and is_safe_discovery_command(
+                command, expected_project_root
+            ):
+                exit_code = item.get("exit_code")
+                if exit_code == 0:
+                    add("discovery", command, event_index)
+                elif exit_code is None:
+                    add(
+                        "invalid",
+                        "Codex command lacks a completed discovery exit code",
                         event_index,
                     )
         elif event.get("type") == "item.started" and item_type == "file_change":
@@ -1532,8 +1815,9 @@ def validate_escalation_order(
     ):
         if record.kind == "invalid":
             raise ValidationError(record.value)
-        if record.kind == "inspection":
-            inspected_project_paths.add(record.value)
+        if record.kind in {"inspection", "discovery"}:
+            if record.kind == "inspection":
+                inspected_project_paths.add(record.value)
             continue
         if record.kind == "mutation":
             if not promotion_seen or not pause_seen:
@@ -1689,7 +1973,7 @@ def has_standard_inline_design(text: str) -> bool:
         r"\b(?:I|we)\s*(?:['’]ll|will)\s+"
         r"(?:run|check|assert|compare|exercise|invoke|verify)\w*\b"
         r"[^\n]{0,100}\b(?:npm\s+test|tests?|JSON|output|fixture|command|CLI)\b|"
-        r"(?:^|[;.]\s*)(?:run|check|assert|compare|exercise|invoke|verify)\w*\b"
+        r"(?:^|[;.]\s*|\bthen\s+)(?:run|check|assert|compare|exercise|invoke|verify)\w*\b"
         r"[^\n]{0,100}\b(?:npm\s+test|tests?|JSON|output|fixture|command|CLI)\b",
         text,
         re.IGNORECASE,
@@ -2080,15 +2364,19 @@ def require_affirmative_brainstorming(
         )
     clauses = re.split(r"[.;\n]+|\bbut\b", text, flags=re.IGNORECASE)
     affirmative_patterns = (
+        r"\b(?:I[’']m|we[’']re)\s+(?:now\s+)?"
+        r"(?:using|invoking|running|applying|used|invoked|ran|applied)\s+"
+        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
         r"\b(?:I[’']m|we[’']re)\s+"
-        r"(?:using|invoking|running)\s+(?:the\s+)?"
+        r"(?:now\s+)?(?:using|invoking|running|applying)\s+"
+        r"(?:the\s+)?(?:requested\s+)?"
         r"`?superpowers:brainstorming`?\s+skill\b",
-        r"\b(?:I|we)\s+(?:am|are|'m|'re|have|will|'ll)?\s*"
-        r"(?:using|invoking|running|used|invoked|ran|use|invoke|run)\s+"
-        r"(?:the\s+)?`?superpowers:brainstorming`?\s+skill\b",
-        r"\b(?:I|we)\s+(?:am|are|'m|'re|have|will|'ll)?\s*"
-        r"(?:using|invoking|running|used|invoked|ran|use|invoke|run)\s+"
-        r"(?:the\s+)?brainstorming(?:\s+skill)?\b",
+        r"\b(?:I|we)\s+(?:am|are|'m|'re|have|will|'ll)?\s*(?:now\s+)?"
+        r"(?:using|invoking|running|applying|used|invoked|ran|applied|use|invoke|run|apply)\s+"
+        r"(?:the\s+)?(?:requested\s+)?`?superpowers:brainstorming`?\s+skill\b",
+        r"\b(?:I|we)\s+(?:am|are|'m|'re|have|will|'ll)?\s*(?:now\s+)?"
+        r"(?:using|invoking|running|applying|used|invoked|ran|applied|use|invoke|run|apply)\s+"
+        r"(?:the\s+)?(?:requested\s+)?brainstorming(?:\s+skill)?\b",
         r"\bbrainstorming\s+skill\s+(?:is|was)\s+"
         r"(?:active|loaded|invoked|running|used)\b",
         r"\bbrainstorming\s+skill\s+(?:now\s+)?guides\b",
@@ -2098,23 +2386,25 @@ def require_affirmative_brainstorming(
     negative_patterns = (
         r"\b(?:I|we)\s+(?:(?:am|are|was|were|have|has|had|do|does|did|"
         r"will|would|can|could|'m|'re|'ve|'ll)\s+)?(?:not|never)\s+"
-        r"(?:actually\s+)?(?:using|invoking|running|used|invoked|ran|use|"
-        r"invoke|run)\s+(?:the\s+)?brainstorming(?:\s+skill)?\b",
-        r"\b(?:I|we)\s+(?:won't|wouldn't|can't|couldn't|don't|doesn't|didn't)\s+"
-        r"(?:actually\s+)?(?:use|invoke|run)\s+(?:the\s+)?"
+        r"(?:actually\s+)?(?:using|invoking|running|applying|used|invoked|ran|"
+        r"applied|use|invoke|run|apply)\s+(?:the\s+)?(?:requested\s+)?"
         r"brainstorming(?:\s+skill)?\b",
-        r"\b(?:not|never)\s+(?:actually\s+)?(?:using|invoking|running|used|"
-        r"invoked|run)\s*,?\s*(?:the\s+)?brainstorming(?:\s+skill)?\b",
+        r"\b(?:I|we)\s+(?:won't|wouldn't|can't|couldn't|don't|doesn't|didn't)\s+"
+        r"(?:actually\s+)?(?:use|invoke|run|apply)\s+(?:the\s+)?"
+        r"brainstorming(?:\s+skill)?\b",
+        r"\b(?:not|never)\s+(?:actually\s+)?(?:using|invoking|running|applying|"
+        r"used|invoked|applied|run|apply)\s*,?\s*(?:the\s+)?"
+        r"(?:requested\s+)?brainstorming(?:\s+skill)?\b",
         r"\bbrainstorming\s+skill\s+(?:is|was|will\s+be)\s+not\s+"
-        r"(?:used|invoked|run|running)\b",
+        r"(?:used|invoked|run|running|applied)\b",
         r"\b(?:I|we)\s+(?:(?:am|are|was|were)\s+)?(?:not|no\s+longer)\s+"
-        r"(?:actually\s+)?(?:using|invoking|running|use|invoke|run)\s+"
+        r"(?:actually\s+)?(?:using|invoking|running|applying|use|invoke|run|apply)\s+"
         r"(?:it|that\s+skill|the\s+skill)\b",
         r"\b(?:I|we)\s+(?:won't|wouldn't|can't|couldn't|don't|doesn't|didn't)\s+"
-        r"(?:actually\s+)?(?:use|invoke|run)\s+"
+        r"(?:actually\s+)?(?:use|invoke|run|apply)\s+"
         r"(?:it|that\s+skill|the\s+skill)\b",
         r"\b(?:not|no\s+longer)\s+(?:actually\s+)?"
-        r"(?:using|invoking|running|use|invoke|run)\s+"
+        r"(?:using|invoking|running|applying|use|invoke|run|apply)\s+"
         r"(?:it|that\s+skill|the\s+skill)\b",
     )
     affirmative_seen = structured_invocation_status == "successful"
@@ -2304,6 +2594,14 @@ def validate(
             expected_plugin_root,
             transcript.parent / "project",
         )
+    if (
+        case == "strict"
+        and has_strict_design_approval_pause(visible)
+        and strict_transcript_has_mutation(
+            events, transcript.parent / "project", expected_plugin_root
+        )
+    ):
+        raise ValidationError("strict declarative approval pause followed project mutation")
     validate_case(
         case,
         visible,
