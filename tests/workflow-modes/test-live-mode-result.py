@@ -1371,6 +1371,60 @@ class ValidatorTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("structured promotion relation", result.stderr)
 
+    def test_escalation_promotion_rejects_noncanonical_characters_and_terminal(
+        self,
+    ) -> None:
+        invalid_reasons = (
+            CANONICAL_PROMOTION_REASON.removesuffix(".") + "?",
+            CANONICAL_PROMOTION_REASON.removesuffix(".") + " 2.",
+            CANONICAL_PROMOTION_REASON.removesuffix(".") + " 補充.",
+            CANONICAL_PROMOTION_REASON.removesuffix(".") + " 🔥.",
+            CANONICAL_PROMOTION_REASON.replace(
+                "public payment API", "public payment 2 API response surface"
+            ),
+            CANONICAL_PROMOTION_REASON.replace(
+                "public payment API", "public payment 補充 API response surface"
+            ),
+        )
+        for reason in invalid_reasons:
+            with self.subTest(reason=reason):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *codex_command_lifecycle(
+                        "cat src/schema.js src/billing.js", "inspection"
+                    ),
+                    codex_event(
+                        f"Promoting to strict — {reason}\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("structured promotion relation", result.stderr)
+
+        ascii_separator_events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
+            codex_event(
+                f"Promoting to strict - {CANONICAL_PROMOTION_REASON}\n"
+                "Should we retain the compatibility alias during migration?",
+                item_id="promotion",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", ascii_separator_events)
+        self.assertNotEqual(result.returncode, 0)
+
     def test_escalation_accepts_structured_real_promotion_relations(self) -> None:
         reasons = (
             REAL_CLAUDE_PROMOTION_REASON,

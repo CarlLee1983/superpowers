@@ -22,7 +22,7 @@ EXPECTED_MODE = {
 }
 DECLARATION = re.compile(r"(?im)^\s*Mode:\s*(lean|standard|strict)\b")
 PROMOTION = re.compile(
-    r"(?i)^Promoting\s+to\s+(lean|standard|strict)\s+[—-]\s*([^\n]+)$"
+    r"(?i)^Promoting\s+to\s+(lean|standard|strict)\s+—\s*([^\n]+)$"
 )
 WORKFLOW_TRANSITION = re.compile(
     r"\b(?P<verb>promot(?:e|es|ed|ing)|escalat(?:e|es|ed|ing)|"
@@ -991,6 +991,11 @@ def escalation_records(
 
 
 def has_structured_promotion_relation(reason: str) -> bool:
+    if not reason.endswith("."):
+        return False
+    if re.fullmatch(r"[A-Za-z `/_.'(){}:,;\-]+", reason) is None:
+        return False
+
     normalized = re.sub(r"`+", "", reason)
     normalized = re.sub(r"\s+", " ", normalized).strip()
     if re.search(
