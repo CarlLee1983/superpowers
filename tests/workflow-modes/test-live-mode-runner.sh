@@ -66,7 +66,7 @@ elif "authentication sample" in prompt:
     text = "Mode: lean — explicit override.\nWarning: authentication is security-sensitive; I will remain lean as requested. Verification passed."
 elif "Rename the amount field" in prompt:
     case = "escalation"
-    text = "Promoting to strict — repository inspection found a public API breaking compatibility risk in payment billing.\nShould we retain the compatibility alias for existing API clients?"
+    text = "Promoting to strict — repository inspection found the schema field is part of the public payment API, so renaming it would break compatibility.\nShould we retain the compatibility alias for existing API clients?"
 elif "brainstorming skill" in prompt:
     case = "explicit-skill"
     text = "Mode: lean — explicit override.\nI am using the brainstorming skill. Two options are welcomeUser and greetUser."

@@ -23,10 +23,6 @@ DECLARATION = re.compile(r"(?im)^\s*Mode:\s*(lean|standard|strict)\b")
 PROMOTION = re.compile(
     r"(?im)^\s*Promoting\s+to\s+(lean|standard|strict)\s+[—-]\s*([^\n]+)"
 )
-SUBSTANTIVE_PROMOTION_TRIGGER = re.compile(
-    r"\bpayment\b|\bpublic\s+API\b|\bbreaking\b.{0,50}\bcompatib\w*\b",
-    re.IGNORECASE,
-)
 DISCOVERED_RISK = re.compile(
     r"\b(?:finds?|found|discover(?:s|ed)?|reveal(?:s|ed)?|identif(?:y|ies|ied)|"
     r"expos(?:e|es|ed)|show(?:s|ed)?|confirm(?:s|ed)?)\b",
@@ -36,17 +32,29 @@ NEGATED_RISK = re.compile(
     r"\b(?:no|not|without|never|none|harmless|safe|doesn't|doesn’t|isn't|isn’t)\b",
     re.IGNORECASE,
 )
-SEMANTIC_PROMOTION = re.compile(
-    r"\b(?:promot(?:e|es|ed|ing)|escalat(?:e|es|ed|ing)|"
-    r"rais(?:e|es|ed|ing)|switch(?:es|ed|ing)|mov(?:e|es|ed|ing))"
-    r"(?:\s+(?:the\s+)?(?:workflow|mode))?\s+to\s+strict\b",
+INSPECTED_EVIDENCE = re.compile(
+    r"\b(?:source\s+)?(?:code|schema(?:\s+field)?|consumer(?:\s+code)?|"
+    r"client(?:\s+code)?|field)\b",
     re.IGNORECASE,
 )
-AUTOMATIC_DEMOTION = re.compile(
-    r"\b(?:demot(?:e|es|ed|ing)|lower(?:s|ed|ing)?|"
-    r"switch(?:es|ed|ing)|mov(?:e|es|ed|ing))"
-    r"(?:\s+(?:the\s+)?(?:workflow|mode))?\s+(?:back\s+)?to\s+"
-    r"(?:lean|standard)\b",
+CONCRETE_RISK_CONSEQUENCE = re.compile(
+    r"(?:\b(?:schema\s+)?field\b.{0,80}\b(?:is|forms?|serves?)\b.{0,30}"
+    r"\b(?:part\s+of|used\s+by)\b.{0,80}\bpublic\s+payment\s+API\b|"
+    r"\b(?:renam|remov|chang)\w*\b.{0,100}\b(?:would|will|can)\b"
+    r".{0,40}\bbreak\w*\b.{0,50}\bcompatib\w*\b|"
+    r"\b(?:renam|remov|chang)\w*\b.{0,100}\brequires?\b.{0,40}"
+    r"\b(?:payment|data)\s+migration\b)",
+    re.IGNORECASE,
+)
+WORKFLOW_TRANSITION = re.compile(
+    r"\b(?P<verb>promot(?:e|es|ed|ing)|escalat(?:e|es|ed|ing)|"
+    r"rais(?:e|es|ed|ing)|upgrad(?:e|es|ed|ing)|"
+    r"demot(?:e|es|ed|ing)|lower(?:s|ed|ing)?|"
+    r"downgrad(?:e|es|ed|ing)|switch(?:es|ed|ing)|"
+    r"mov(?:e|es|ed|ing)|transition(?:s|ed|ing)?)"
+    r"(?:\s+(?:the\s+)?(?:workflow|mode))?\s+"
+    r"(?:(?:from\s+(?:lean|standard|strict)\s+)?(?:back\s+)?(?:to|into))\s+"
+    r"(?P<mode>lean|standard|strict)\b",
     re.IGNORECASE,
 )
 BOOTSTRAP_PATHS = (
@@ -231,6 +239,15 @@ def split_read_command(command: str) -> list[str] | None:
     return arguments
 
 
+def split_direct_command(command: str) -> list[str] | None:
+    if re.search(r"[;&|<>\n`]|\$\(", command):
+        return None
+    try:
+        return shlex.split(command, posix=True)
+    except ValueError:
+        return None
+
+
 def exact_bootstrap_path(argument: str, expected_root: Path) -> bool:
     candidate = Path(argument)
     if not candidate.is_absolute():
@@ -279,6 +296,24 @@ def project_path(
     candidate = raw if raw.is_absolute() else expected_project_root / raw
     try:
         root = expected_project_root.resolve(strict=True)
+        lexical_root = expected_project_root.absolute()
+        absolute_candidate = candidate.absolute()
+        relative = None
+        path_root = None
+        for allowed_root in (lexical_root, root):
+            try:
+                relative = absolute_candidate.relative_to(allowed_root)
+                path_root = allowed_root
+                break
+            except ValueError:
+                continue
+        if relative is None or path_root is None:
+            return None
+        current = path_root
+        for part in relative.parts:
+            current /= part
+            if current.is_symlink():
+                return None
         resolved = candidate.resolve(strict=require_file or require_directory)
         resolved.relative_to(root)
     except (OSError, ValueError):
@@ -315,7 +350,11 @@ def valid_claude_inspection(
 
 def project_operands(arguments: list[str], expected_project_root: Path) -> bool:
     return bool(arguments) and all(
-        project_path(argument, expected_project_root) is not None
+        project_path(
+            argument,
+            expected_project_root,
+            require_file=True,
+        ) is not None
         for argument in arguments
     )
 
@@ -327,14 +366,12 @@ def is_read_only_inspection_command(
 ) -> bool:
     if expected_root is not None and is_codex_bootstrap(command, expected_root):
         return False
-    arguments = split_read_command(command)
+    arguments = split_direct_command(command)
     if not arguments:
         return False
-    executable = Path(arguments[0]).name
+    executable = arguments[0]
     if executable == "cat":
         operands = arguments[1:]
-        if operands[:1] == ["--"]:
-            operands = operands[1:]
         return (
             bool(operands)
             and not any(operand.startswith("-") for operand in operands)
@@ -347,41 +384,8 @@ def is_read_only_inspection_command(
             and arguments[1] == "-n"
             and re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", arguments[2])
             is not None
+            and not any(operand.startswith("-") for operand in operands)
             and project_operands(operands, expected_project_root)
-        )
-    if executable in {"rg", "grep"}:
-        operands = arguments[1:]
-        allowed_flags = {
-            "-n", "--line-number", "-i", "--ignore-case", "-F",
-            "--fixed-strings", "-l", "--files-with-matches",
-        }
-        if executable == "rg" and operands[:1] == ["--files"]:
-            paths = operands[1:] or ["."]
-            return project_operands(paths, expected_project_root)
-        while operands and operands[0] in allowed_flags:
-            operands = operands[1:]
-        return (
-            len(operands) >= 2
-            and bool(operands[0])
-            and project_operands(operands[1:], expected_project_root)
-        )
-    if executable == "ls":
-        operands = arguments[1:]
-        while operands and re.fullmatch(r"-[A-Za-z]+", operands[0]):
-            if set(operands[0][1:]) - set("alh"):
-                return False
-            operands = operands[1:]
-        return project_operands(operands or ["."], expected_project_root)
-    if executable == "pwd":
-        return len(arguments) == 1
-    if executable == "git" and len(arguments) > 1:
-        return (
-            arguments[1] in {"status", "diff", "log", "show", "ls-files", "grep"}
-            and not any(
-                argument in {"--output", "--exec", "-o"}
-                or argument.startswith(("--output=", "--exec="))
-                for argument in arguments[2:]
-            )
         )
     return False
 
@@ -604,6 +608,7 @@ def escalation_records(
     if backend == "claude":
         tool_uses: dict[str, str] = {}
         completed_tool_uses: set[str] = set()
+        observed_tool_results: set[str] = set()
         for event in events:
             message = event.get("message")
             content = message.get("content") if isinstance(message, dict) else None
@@ -664,6 +669,17 @@ def escalation_records(
                 if block_type != "tool_result":
                     continue
                 tool_id = block.get("tool_use_id")
+                if isinstance(tool_id, str):
+                    observed_tool_results.add(tool_id)
+                if not (
+                    event.get("type") == "user"
+                    and isinstance(message, dict)
+                    and message.get("role") == "user"
+                ):
+                    records.append(
+                        ("invalid", "Claude inspection requires a user-role tool result")
+                    )
+                    continue
                 if not isinstance(tool_id, str) or tool_id not in tool_uses:
                     records.append(("invalid", "tool result lacks matching tool_use id"))
                     continue
@@ -681,7 +697,7 @@ def escalation_records(
         missing_results = [
             tool_id
             for tool_id, kind in tool_uses.items()
-            if kind == "inspection" and tool_id not in completed_tool_uses
+            if kind == "inspection" and tool_id not in observed_tool_results
         ]
         if missing_results:
             records.insert(
@@ -742,9 +758,14 @@ def escalation_records(
 
 
 def affirmative_promotion_reason(reason: str) -> bool:
+    discovery = DISCOVERED_RISK.search(reason)
+    evidence = INSPECTED_EVIDENCE.search(reason)
+    consequence = CONCRETE_RISK_CONSEQUENCE.search(reason)
     return bool(
-        DISCOVERED_RISK.search(reason)
-        and SUBSTANTIVE_PROMOTION_TRIGGER.search(reason)
+        discovery
+        and evidence
+        and consequence
+        and discovery.start() < evidence.start() < consequence.end()
         and not NEGATED_RISK.search(reason)
     )
 
@@ -759,7 +780,8 @@ def validate_escalation_order(
     promotion_seen = False
     pause_seen = False
     canonical_promotion_count = 0
-    semantic_promotion_count = 0
+    transition_count = 0
+    transition_targets: list[str] = []
     for kind, value in escalation_records(
         backend, events, expected_plugin_root, expected_project_root
     ):
@@ -775,17 +797,11 @@ def validate_escalation_order(
                 )
             continue
 
-        if promotion_seen and AUTOMATIC_DEMOTION.search(value):
-            raise ValidationError("escalation attempted automatic demotion after promotion")
-
-        semantic_matches = list(SEMANTIC_PROMOTION.finditer(value))
-        for _match in semantic_matches:
-            semantic_promotion_count += 1
-            if semantic_promotion_count > 1:
-                raise ValidationError(
-                    "escalation requires exactly one semantic promotion to strict"
-                )
-            if not inspection_seen:
+        transitions = list(WORKFLOW_TRANSITION.finditer(value))
+        for transition in transitions:
+            transition_count += 1
+            transition_targets.append(transition.group("mode").lower())
+            if transition.group("mode").lower() == "strict" and not inspection_seen:
                 raise ValidationError(
                     "strict promotion occurred before project inspection"
                 )
@@ -802,18 +818,13 @@ def validate_escalation_order(
                     raise ValidationError("escalation requires promotion to strict")
                 if not affirmative_promotion_reason(match.group(2)):
                     raise ValidationError(
-                        "strict promotion lacks affirmative discovered risk with a "
-                        "payment/public API/breaking compatibility trigger"
+                        "strict promotion lacks a concrete inspected risk consequence"
                     )
                 if not inspection_seen:
                     raise ValidationError(
                         "strict promotion occurred before project inspection"
                     )
                 promotion_seen = True
-                if AUTOMATIC_DEMOTION.search(value[match.end() :]):
-                    raise ValidationError(
-                        "escalation attempted automatic demotion after promotion"
-                    )
                 if has_relevant_pause(value[match.end() :]):
                     pause_seen = True
         elif promotion_seen and has_relevant_pause(value):
@@ -823,10 +834,12 @@ def validate_escalation_order(
         raise ValidationError(
             "escalation lacks project inspection after initial declaration"
         )
+    if transition_count != 1:
+        raise ValidationError("escalation requires exactly one workflow transition")
+    if transition_targets != ["strict"]:
+        raise ValidationError("escalation attempted automatic demotion")
     if canonical_promotion_count != 1 or not promotion_seen:
         raise ValidationError("escalation lacks exactly one canonical promotion to strict")
-    if semantic_promotion_count != 1:
-        raise ValidationError("escalation requires exactly one semantic promotion to strict")
     if not pause_seen:
         raise ValidationError(
             "assistant-visible text lacks relevant clarification/approval pause"
