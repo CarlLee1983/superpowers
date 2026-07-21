@@ -15,8 +15,8 @@ HERE = Path(__file__).resolve().parent
 VALIDATOR = HERE / "assert-live-mode-result.py"
 CANONICAL_PROMOTION_REASON = (
     "inspection found src/schema.js defines the amount field consumed by "
-    "src/billing.js as part of the public payment API; renaming it would break "
-    "compatibility."
+    "src/billing.js as part of the public payment API response surface; renaming "
+    "it would break compatibility."
 )
 REAL_CLAUDE_PROMOTION_REASON = (
     "inspection found src/schema.js defines `amount` consumed by src/billing.js "
@@ -67,11 +67,44 @@ LATEST_CODEX_OUTPUTS = (
     "Mode: standard — this is a bounded schema-and-consumer rename whose "
     "compatibility surface must be established by repository inspection.",
     "Promoting to strict — inspection found `src/schema.js` defines `amount` "
-    "consumed by `src/billing.js` as part of the public billing API; renaming it "
-    "would create a breaking public API compatibility change.",
+    "consumed by `src/billing.js` as part of the public billing API response "
+    "surface; renaming it would create a breaking public API compatibility change.",
     "The rename affects a public billing API response and is therefore potentially "
     "breaking. Should I proceed in strict mode and update the public response from "
     "`amount` to `amountCents` as requested?",
+)
+LATEST_19A_CLAUDE_INITIAL_OUTPUT = (
+    "Mode: standard — A schema/consumer field rename with unknown blast radius "
+    "starts in standard until inspection establishes whether a strict compatibility "
+    "surface is present.\n\n"
+    "I'll inspect the repository before changing anything, starting with the named "
+    "source file."
+)
+LATEST_19A_CLAUDE_FINAL_OUTPUT = (
+    "Promoting to strict — inspection found src/schema.js defines amount consumed "
+    "by src/billing.js's publicPaymentResponse as part of the public billing API "
+    "payment surface; renaming amount to amountCents would break the public API "
+    "response shape and change the field's monetary semantics.\n\n"
+    "Here's what inspection showed: `src/schema.js:2` defines "
+    "`payment = { amount: 10 }`, and `src/billing.js:2` consumes it in "
+    "`publicPaymentResponse`, which exposes `amount` as part of the public billing "
+    "API response. This is a payments surface with a breaking public-API "
+    "compatibility change — a strict trigger. Note also that renaming to "
+    "`amountCents` implies a semantic question: should the value stay `10`, or does "
+    "the rename imply a unit conversion (e.g., dollars → cents)?\n\n"
+    "I'm pausing before making any change: do you want me to proceed with the "
+    "rename in strict mode? If so, please also confirm whether the value should "
+    "remain `10` unchanged or be converted to cents."
+)
+LATEST_19A_CODEX_OUTPUTS = (
+    "I’m using the superpowers workflow selector first, then I’ll inspect the "
+    "repository and trace every consumer before editing.",
+    "Mode: standard — the requested schema rename has an unknown consumer and "
+    "compatibility blast radius until repository inspection establishes its scope.",
+    "Promoting to strict — inspection found src/schema.js defines amount consumed "
+    "by src/billing.js as part of a production payment and public billing API "
+    "surface; renaming it would create a breaking compatibility change.\n\n"
+    "Proceed in strict mode with the rename and consumer updates?",
 )
 
 
@@ -1326,7 +1359,7 @@ class ValidatorTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("structured promotion relation", result.stderr)
 
-    def test_escalation_promotion_relation_is_one_closed_statement(self) -> None:
+    def test_escalation_promotion_rejects_explicit_disclaimers(self) -> None:
         invalid_reasons = (
             "documentation quotes: " + CANONICAL_PROMOTION_REASON,
             "the documentation says " + CANONICAL_PROMOTION_REASON,
@@ -1346,9 +1379,6 @@ class ValidatorTest(unittest.TestCase):
             ),
             CANONICAL_PROMOTION_REASON.replace(
                 "public payment API", "unrelated public payment API response surface"
-            ),
-            CANONICAL_PROMOTION_REASON.replace(
-                "public payment API", "public payment API banana response surface"
             ),
         )
         for reason in invalid_reasons:
@@ -1371,20 +1401,11 @@ class ValidatorTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("structured promotion relation", result.stderr)
 
-    def test_escalation_promotion_rejects_noncanonical_characters_and_terminal(
+    def test_escalation_promotion_rejects_question_and_malformed_transition(
         self,
     ) -> None:
         invalid_reasons = (
             CANONICAL_PROMOTION_REASON.removesuffix(".") + "?",
-            CANONICAL_PROMOTION_REASON.removesuffix(".") + " 2.",
-            CANONICAL_PROMOTION_REASON.removesuffix(".") + " 補充.",
-            CANONICAL_PROMOTION_REASON.removesuffix(".") + " 🔥.",
-            CANONICAL_PROMOTION_REASON.replace(
-                "public payment API", "public payment 2 API response surface"
-            ),
-            CANONICAL_PROMOTION_REASON.replace(
-                "public payment API", "public payment 補充 API response surface"
-            ),
         )
         for reason in invalid_reasons:
             with self.subTest(reason=reason):
@@ -1425,16 +1446,28 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "escalation", ascii_separator_events)
         self.assertNotEqual(result.returncode, 0)
 
-    def test_escalation_promotion_rejects_malformed_punctuation_structure(
-        self,
-    ) -> None:
-        invalid_reasons = (
-            CANONICAL_PROMOTION_REASON.removesuffix(".") + " ---- {} /_ ::: ``.",
-            CANONICAL_PROMOTION_REASON.replace("amount field", "`amount field"),
+    def test_escalation_promotion_accepts_noncontradictory_modifiers(self) -> None:
+        reasons = (
+            CANONICAL_PROMOTION_REASON.removesuffix(".") + " 2.",
+            CANONICAL_PROMOTION_REASON.removesuffix(".") + " 補充.",
+            CANONICAL_PROMOTION_REASON.removesuffix(".") + " 🔥.",
             CANONICAL_PROMOTION_REASON.replace(
-                "public payment API", "public payment / API response surface"
+                "public payment API response surface",
+                "public payment 2 API response surface",
             ),
-            CANONICAL_PROMOTION_REASON.replace("API;", "API;;"),
+            CANONICAL_PROMOTION_REASON.replace(
+                "public payment API response surface",
+                "public payment 補充 API response surface",
+            ),
+            CANONICAL_PROMOTION_REASON.replace(
+                "public payment API response surface",
+                "public payment / API response surface",
+            ),
+            CANONICAL_PROMOTION_REASON.replace(
+                "public payment API response surface",
+                "public payment banana API response surface",
+            ),
+            CANONICAL_PROMOTION_REASON.replace("API response surface;", "API response surface;;"),
             CANONICAL_PROMOTION_REASON.replace(
                 "break compatibility.", "break compatibility,,."
             ),
@@ -1445,6 +1478,38 @@ class ValidatorTest(unittest.TestCase):
                 "response surface; renaming amount to amountCents would break "
                 "compatibility."
             ),
+            CANONICAL_PROMOTION_REASON.replace(
+                "public payment API response surface",
+                "public payment API response surface 2026 補充 🔥 ---- {} /_ :::",
+            ),
+        )
+        for reason in reasons:
+            with self.subTest(reason=reason):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *codex_command_lifecycle(
+                        "cat src/schema.js src/billing.js", "inspection"
+                    ),
+                    codex_event(
+                        f"Promoting to strict — {reason}\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_promotion_rejects_invalid_inline_code_formatting(
+        self,
+    ) -> None:
+        invalid_reasons = (
+            CANONICAL_PROMOTION_REASON.removesuffix(".") + " ---- {} /_ ::: ``.",
+            CANONICAL_PROMOTION_REASON.replace("amount field", "`amount field"),
         )
         for reason in invalid_reasons:
             with self.subTest(reason=reason):
@@ -1558,6 +1623,35 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "escalation", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_escalation_accepts_latest_19a_claude_output(self) -> None:
+        events = [
+            claude_init(),
+            claude_event(LATEST_19A_CLAUDE_INITIAL_OUTPUT),
+            *claude_read_lifecycle(self.project, "src/schema.js", "schema"),
+            *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
+            claude_event(LATEST_19A_CLAUDE_FINAL_OUTPUT),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_accepts_latest_19a_codex_output(self) -> None:
+        preamble, declaration, promotion_and_pause = LATEST_19A_CODEX_OUTPUTS
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(preamble, item_id="preamble"),
+            codex_event(declaration, item_id="declaration"),
+            *codex_command_lifecycle("sed -n '1,240p' src/schema.js", "schema"),
+            *codex_command_lifecycle(
+                "sed -n '1,240p' src/api.js", "optional-api", exit_code=1
+            ),
+            *codex_command_lifecycle("sed -n '1,240p' src/billing.js", "billing"),
+            codex_event(promotion_and_pause, item_id="promotion"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_escalation_structured_promotion_rejects_missing_or_safe_relations(
         self,
     ) -> None:
@@ -1581,6 +1675,18 @@ class ValidatorTest(unittest.TestCase):
             "inspection found src/schema.js defines amount consumed by src/billing.js "
             "in a public billing API response; renaming it is harmless and preserves "
             "compatibility.",
+            CANONICAL_PROMOTION_REASON.replace(
+                "inspection found", "inspection merely found"
+            ),
+            CANONICAL_PROMOTION_REASON.replace("public payment", "nonpublic payment"),
+            CANONICAL_PROMOTION_REASON.replace(
+                "break compatibility.", "break compatibility, but this is false."
+            ),
+            (
+                "inspection found src/schema.js defines amount but src/billing.js "
+                "does not consume amount in a public billing API response surface; "
+                "renaming amount to amountCents would break compatibility."
+            ),
         )
         for reason in reasons:
             with self.subTest(reason=reason):
