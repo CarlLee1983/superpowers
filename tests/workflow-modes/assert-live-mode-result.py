@@ -1043,10 +1043,20 @@ def has_structured_promotion_relation(reason: str) -> bool:
 
     normalized = re.sub(r"`+", "", reason)
     normalized = re.sub(r"\s+", " ", normalized).strip()
+    if re.fullmatch(
+        r"inspection\s+found\s+(?:'.+'|‘.+’|«.+»)\s*\.",
+        normalized,
+        re.IGNORECASE,
+    ):
+        return False
     if re.search(
         r"\b(?:no|not|without|harmless|unrelated|merely|documentation|docs?|"
         r"examples?|quotations?|quotes?|false|nonpublic|private)\b|"
-        r"\bdoes\s+not\s+consume\b",
+        r"\bdoes\s+not\s+consume\b|"
+        r"\bnever\s+(?:uses?|consumes?|consumed)\b|"
+        r"\bbut\b[^.]*\b(?:actually\s+)?preserv(?:e|es|ed|ing)\s+"
+        r"compatibility\b|"
+        r"\b(?:claim|statement|relation)\s+is\s+incorrect\b",
         normalized,
         re.IGNORECASE,
     ):

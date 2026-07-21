@@ -1401,6 +1401,52 @@ class ValidatorTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("structured promotion relation", result.stderr)
 
+    def test_escalation_promotion_rejects_opposing_and_quoted_claims(self) -> None:
+        claimed_relation = CANONICAL_PROMOTION_REASON.removesuffix(".")
+        invalid_reasons = (
+            CANONICAL_PROMOTION_REASON.replace(
+                "consumed by", "never consumed by"
+            ),
+            CANONICAL_PROMOTION_REASON.replace(
+                "would break compatibility.",
+                "would break compatibility, but actually preserve compatibility.",
+            ),
+            claimed_relation + ", though that claim is incorrect.",
+            claimed_relation.replace(
+                "inspection found ", "inspection found '"
+            )
+            + "'.",
+            claimed_relation.replace(
+                "inspection found ", "inspection found ‘"
+            )
+            + "’.",
+            claimed_relation.replace(
+                "inspection found ", "inspection found «"
+            )
+            + "».",
+        )
+        for reason in invalid_reasons:
+            with self.subTest(reason=reason):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *codex_command_lifecycle(
+                        "cat src/schema.js src/billing.js", "inspection"
+                    ),
+                    codex_event(
+                        f"Promoting to strict — {reason}\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("structured promotion relation", result.stderr)
+
     def test_escalation_promotion_rejects_question_and_malformed_transition(
         self,
     ) -> None:
