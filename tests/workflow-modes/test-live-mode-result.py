@@ -81,6 +81,17 @@ def claude_tool_result(
     }
 
 
+def claude_read_lifecycle(project: Path, path: str, tool_id: str) -> list[dict]:
+    return [
+        claude_tool_event(
+            "Read",
+            {"file_path": str(project / path)},
+            tool_id=tool_id,
+        ),
+        claude_tool_result(tool_id),
+    ]
+
+
 def claude_init(
     *,
     model: str = "test-model",
@@ -150,6 +161,9 @@ class ValidatorTest(unittest.TestCase):
         self.project = self.root / "project"
         (self.project / "src").mkdir(parents=True)
         (self.project / "src/schema.js").write_text("export const amount = 1;\n")
+        (self.project / "src/billing.js").write_text(
+            "export const response = payment => ({ amount: payment.amount });\n"
+        )
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -340,7 +354,7 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: standard — bounded rename pending repository inspection.",
                 item_id="declaration",
             ),
-            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
             codex_event(
                 f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                 "Should we retain the compatibility alias during migration?",
@@ -357,12 +371,8 @@ class ValidatorTest(unittest.TestCase):
             claude_event(
                 "Mode: standard — bounded rename pending repository inspection."
             ),
-            claude_tool_event(
-                "Read",
-                {"file_path": str(self.project / "src/schema.js")},
-                tool_id="inspect",
-            ),
-            claude_tool_result("inspect"),
+            *claude_read_lifecycle(self.project, "src/schema.js", "schema"),
+            *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
             claude_event(
                 f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                 "Should we retain the compatibility alias during migration?"
@@ -372,7 +382,7 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("claude", "escalation", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
-    def test_escalation_claude_accepts_successful_project_glob_and_grep_results(self) -> None:
+    def test_escalation_claude_allows_project_glob_and_grep_before_exact_reads(self) -> None:
         for name, tool_input in (
             ("Glob", {"path": str(self.project), "pattern": "src/*.js"}),
             ("Grep", {"path": str(self.project), "pattern": "amount"}),
@@ -385,6 +395,8 @@ class ValidatorTest(unittest.TestCase):
                     ),
                     claude_tool_event(name, tool_input, tool_id="inspect"),
                     claude_tool_result("inspect"),
+                    *claude_read_lifecycle(self.project, "src/schema.js", "schema"),
+                    *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
                     claude_event(
                         f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                         "Should we retain the compatibility alias during migration?"
@@ -406,7 +418,7 @@ class ValidatorTest(unittest.TestCase):
             (
                 "error",
                 [claude_tool_result("inspect", is_error=True)],
-                "before project inspection",
+                "schema.js and src/billing.js",
             ),
         )
         for label, result_events, expected_error in invalid_results:
@@ -416,6 +428,7 @@ class ValidatorTest(unittest.TestCase):
                     claude_event(
                         "Mode: standard — bounded rename pending repository inspection."
                     ),
+                    *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
                     read,
                     *result_events,
                     claude_event(
@@ -488,6 +501,125 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("claude", "escalation", no_success)
         self.assertNotEqual(result.returncode, 0)
 
+    def test_escalation_requires_successful_schema_and_billing_reads(self) -> None:
+        (self.project / "src/billing.js").write_text(
+            "export const response = payment => ({ amount: payment.amount });\n"
+        )
+        promotion_text = (
+            f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
+            "Should we retain the compatibility alias during migration?"
+        )
+
+        def claude_read(path: str, tool_id: str, *, failed: bool = False) -> list[dict]:
+            return [
+                claude_tool_event(
+                    "Read",
+                    {"file_path": str(self.project / path)},
+                    tool_id=tool_id,
+                ),
+                claude_tool_result(tool_id, is_error=failed),
+            ]
+
+        def codex_read(
+            path: str, tool_id: str, *, wrapped: bool, failed: bool = False
+        ) -> list[dict]:
+            command = f"sed -n '1,20p' {path}"
+            if wrapped:
+                command = f'/bin/zsh -lc "{command}"'
+            return codex_command_lifecycle(
+                command,
+                tool_id,
+                exit_code=1 if failed else 0,
+            )
+
+        claude_cases = (
+            ("schema only", claude_read("src/schema.js", "schema"), False),
+            ("billing only", claude_read("src/billing.js", "billing"), False),
+            (
+                "failed billing",
+                [
+                    *claude_read("src/schema.js", "schema"),
+                    *claude_read("src/billing.js", "billing", failed=True),
+                ],
+                False,
+            ),
+            (
+                "both success",
+                [
+                    *claude_read("src/schema.js", "schema"),
+                    *claude_read("src/billing.js", "billing"),
+                ],
+                True,
+            ),
+        )
+        for label, reads, accepted in claude_cases:
+            with self.subTest(backend="claude", case=label):
+                events = [
+                    claude_init(),
+                    claude_event(
+                        "Mode: standard — bounded rename pending repository inspection."
+                    ),
+                    *reads,
+                    claude_event(promotion_text),
+                    {"type": "result", "subtype": "success", "result": "done"},
+                ]
+                result = self.run_validator("claude", "escalation", events)
+                if accepted:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("schema.js and src/billing.js", result.stderr)
+
+        for wrapped in (False, True):
+            codex_cases = (
+                (
+                    "schema only",
+                    codex_read("src/schema.js", "schema", wrapped=wrapped),
+                    False,
+                ),
+                (
+                    "billing only",
+                    codex_read("src/billing.js", "billing", wrapped=wrapped),
+                    False,
+                ),
+                (
+                    "failed billing",
+                    [
+                        *codex_read("src/schema.js", "schema", wrapped=wrapped),
+                        *codex_read(
+                            "src/billing.js", "billing", wrapped=wrapped, failed=True
+                        ),
+                    ],
+                    False,
+                ),
+                (
+                    "both success",
+                    [
+                        *codex_read("src/schema.js", "schema", wrapped=wrapped),
+                        *codex_read("src/billing.js", "billing", wrapped=wrapped),
+                    ],
+                    True,
+                ),
+            )
+            for label, reads, accepted in codex_cases:
+                with self.subTest(backend="codex", wrapped=wrapped, case=label):
+                    events = [
+                        {"type": "thread.started", "thread_id": "thread"},
+                        codex_event(
+                            "Mode: standard — bounded rename pending repository inspection.",
+                            item_id="declaration",
+                        ),
+                        *reads,
+                        codex_event(promotion_text, item_id="promotion"),
+                        {"type": "turn.completed", "usage": {}},
+                    ]
+                    result = self.run_validator("codex", "escalation", events)
+                    if accepted:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn("schema.js and src/billing.js", result.stderr)
+
     def test_escalation_claude_rejects_assistant_authored_tool_result(self) -> None:
         assistant_result = {
             "type": "assistant",
@@ -535,7 +667,7 @@ class ValidatorTest(unittest.TestCase):
             (
                 "true",
                 claude_tool_result("inspect", is_error=True),
-                "before project inspection",
+                "schema.js and src/billing.js",
             ),
             ("string", claude_tool_result("inspect", is_error="false"), "is_error"),
             ("zero", claude_tool_result("inspect", is_error=0), "is_error"),
@@ -551,6 +683,7 @@ class ValidatorTest(unittest.TestCase):
                 claude_event(
                     "Mode: standard — bounded rename pending repository inspection."
                 ),
+                *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
                 claude_tool_event(
                     "Read",
                     {"file_path": str(self.project / "src/schema.js")},
@@ -611,12 +744,8 @@ class ValidatorTest(unittest.TestCase):
             "Mode: standard — bounded rename pending repository inspection."
         )
         inspection = [
-            claude_tool_event(
-                "Read",
-                {"file_path": str(self.project / "src/schema.js")},
-                tool_id="inspect",
-            ),
-            claude_tool_result("inspect"),
+            *claude_read_lifecycle(self.project, "src/schema.js", "schema"),
+            *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
         ]
         promotion = claude_event(
             f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
@@ -648,14 +777,14 @@ class ValidatorTest(unittest.TestCase):
             (
                 "failed",
                 codex_command_lifecycle(
-                    "cat src/schema.js", "inspection", exit_code=1
+                    "cat src/schema.js src/billing.js", "inspection", exit_code=1
                 ),
-                "before project inspection",
+                "schema.js and src/billing.js",
             ),
             (
                 "missing exit code",
                 codex_command_lifecycle(
-                    "cat src/schema.js", "inspection", exit_code=None
+                    "cat src/schema.js src/billing.js", "inspection", exit_code=None
                 ),
                 "completed inspection exit code",
             ),
@@ -664,7 +793,7 @@ class ValidatorTest(unittest.TestCase):
                 codex_command_lifecycle(
                     "cat src/missing-schema.js", "inspection", exit_code=1
                 ),
-                "before project inspection",
+                "schema.js and src/billing.js",
             ),
             (
                 "claimed exit zero for missing file",
@@ -798,7 +927,7 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: standard — bounded rename pending repository inspection.",
                 item_id="declaration",
             ),
-            *codex_command_lifecycle("sed -n '1,20p' src/schema.js", "inspection"),
+            *codex_command_lifecycle("sed -n '1,20p' src/schema.js src/billing.js", "inspection"),
             codex_event(
                 f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                 "Should we retain the compatibility alias during migration?",
@@ -882,7 +1011,7 @@ class ValidatorTest(unittest.TestCase):
             ),
         ]
         promotion = [
-            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
             codex_event(
                 f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                 "Should we retain the compatibility alias during migration?",
@@ -927,7 +1056,7 @@ class ValidatorTest(unittest.TestCase):
                         "Mode: standard — bounded rename pending repository inspection.",
                         item_id="declaration",
                     ),
-                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
                     codex_event(
                         f"Promoting to strict — {reason}.\n"
                         "Should we retain the compatibility alias during migration?",
@@ -953,7 +1082,7 @@ class ValidatorTest(unittest.TestCase):
                         "Mode: standard — bounded rename pending repository inspection.",
                         item_id="declaration",
                     ),
-                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
                     codex_event(
                         f"Promoting to strict — {reason}.\n"
                         "Should we retain the compatibility alias during migration?",
@@ -985,7 +1114,7 @@ class ValidatorTest(unittest.TestCase):
                         "Mode: standard — bounded rename pending repository inspection.",
                         item_id="declaration",
                     ),
-                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
                     codex_event(
                         f"Promoting to strict — {reason}\n"
                         "Should we retain the compatibility alias during migration?",
@@ -1001,6 +1130,11 @@ class ValidatorTest(unittest.TestCase):
         reasons = (
             REAL_CLAUDE_PROMOTION_REASON,
             REAL_CODEX_PROMOTION_REASON,
+            "inspection found src/schema.js defines `amount` consumed by "
+            "src/billing.js (`publicPaymentResponse` returns "
+            "`{amount : payment . amount}`) as part of the public billing API "
+            "payment surface; renaming amount to amountCents would break the "
+            "public billing API response shape for external consumers.",
             "inspection found src/schema.js defines the amount field and "
             "src/billing.js uses it in the public payment API response surface; "
             "renaming amount to amountCents would cause a breaking public API "
@@ -1014,7 +1148,7 @@ class ValidatorTest(unittest.TestCase):
                         "Mode: standard — bounded rename pending repository inspection.",
                         item_id="declaration",
                     ),
-                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
                     codex_event(
                         f"Promoting to strict — {reason}\n"
                         "Should we retain the compatibility alias during migration?",
@@ -1057,7 +1191,7 @@ class ValidatorTest(unittest.TestCase):
                         "Mode: standard — bounded rename pending repository inspection.",
                         item_id="declaration",
                     ),
-                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
                     codex_event(
                         f"Promoting to strict — {reason}\n"
                         "Should we retain the compatibility alias during migration?",
@@ -1067,6 +1201,44 @@ class ValidatorTest(unittest.TestCase):
                 ]
                 result = self.run_validator("codex", "escalation", events)
                 self.assertNotEqual(result.returncode, 0)
+
+    def test_escalation_structured_parenthetical_is_only_observed_alias_relation(
+        self,
+    ) -> None:
+        (self.project / "src/billing.js").write_text(
+            "export const response = payment => ({ amount: payment.amount });\n"
+        )
+        invalid_reasons = (
+            "inspection found src/schema.js defines amount consumed by src/billing.js "
+            "(documentation quotes `publicPaymentResponse` returns "
+            "`{ amount: payment.amount }`) as part of the public billing API payment "
+            "surface; renaming amount to amountCents would break the public billing "
+            "API response shape for external consumers.",
+            "inspection found src/schema.js defines amount consumed by src/billing.js "
+            "(`publicPaymentResponse` does not consume amount) as part of the public "
+            "billing API payment surface; renaming amount to amountCents would break "
+            "the public billing API response shape for external consumers.",
+        )
+        for reason in invalid_reasons:
+            with self.subTest(reason=reason):
+                events = [
+                    {"type": "thread.started", "thread_id": "thread"},
+                    codex_event(
+                        "Mode: standard — bounded rename pending repository inspection.",
+                        item_id="declaration",
+                    ),
+                    *codex_command_lifecycle("cat src/schema.js", "schema"),
+                    *codex_command_lifecycle("cat src/billing.js", "billing"),
+                    codex_event(
+                        f"Promoting to strict — {reason}\n"
+                        "Should we retain the compatibility alias during migration?",
+                        item_id="promotion",
+                    ),
+                    {"type": "turn.completed", "usage": {}},
+                ]
+                result = self.run_validator("codex", "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("structured promotion relation", result.stderr)
 
     def test_escalation_promotion_must_be_real_prose_in_a_closed_block(self) -> None:
         canonical = f"Promoting to strict — {CANONICAL_PROMOTION_REASON}"
@@ -1088,7 +1260,7 @@ class ValidatorTest(unittest.TestCase):
                         "Mode: standard — bounded rename pending repository inspection.",
                         item_id="declaration",
                     ),
-                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
                     codex_event(block, item_id="promotion"),
                     {"type": "turn.completed", "usage": {}},
                 ]
@@ -1102,7 +1274,7 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: standard — bounded rename pending repository inspection.",
                 item_id="declaration",
             ),
-            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
             codex_event(
                 f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n\n"
                 "Should we retain the compatibility alias during migration?",
@@ -1124,7 +1296,7 @@ class ValidatorTest(unittest.TestCase):
                     "Mode: standard — bounded rename pending repository inspection.",
                     item_id="declaration",
                 ),
-                *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
                 *(
                     codex_event(text, item_id=f"text-{number}")
                     for number, text in enumerate(texts)
@@ -1138,12 +1310,8 @@ class ValidatorTest(unittest.TestCase):
                 claude_event(
                     "Mode: standard — bounded rename pending repository inspection."
                 ),
-                claude_tool_event(
-                    "Read",
-                    {"file_path": str(self.project / "src/schema.js")},
-                    tool_id="inspect",
-                ),
-                claude_tool_result("inspect"),
+                *claude_read_lifecycle(self.project, "src/schema.js", "schema"),
+                *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
                 {
                     "type": "assistant",
                     "message": {
@@ -1198,7 +1366,7 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: standard — bounded rename pending repository inspection.",
                 item_id="declaration",
             ),
-            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
             codex_event(canonical, item_id="promotion"),
             codex_event(pause, item_id="pause"),
             {"type": "turn.completed", "usage": {}},
@@ -1217,7 +1385,7 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: standard — bounded rename pending repository inspection.",
                 item_id="declaration",
             ),
-            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
             codex_event(canonical, item_id="promotion"),
             codex_event(pause, item_id="pause"),
         ]
@@ -1243,12 +1411,8 @@ class ValidatorTest(unittest.TestCase):
             claude_event(
                 "Mode: standard — bounded rename pending repository inspection."
             ),
-            claude_tool_event(
-                "Read",
-                {"file_path": str(self.project / "src/schema.js")},
-                tool_id="inspect",
-            ),
-            claude_tool_result("inspect"),
+            *claude_read_lifecycle(self.project, "src/schema.js", "schema"),
+            *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
             {
                 "type": "assistant",
                 "message": {
@@ -1283,7 +1447,7 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: standard — bounded rename pending repository inspection.",
                 item_id="declaration",
             ),
-            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
             codex_event(canonical, item_id="promotion"),
             codex_event(pause, item_id="pause"),
         ]
@@ -1309,7 +1473,7 @@ class ValidatorTest(unittest.TestCase):
                     "Mode: standard — bounded rename pending repository inspection.",
                     item_id="declaration",
                 ),
-                *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
                 codex_event(canonical, item_id="promotion"),
                 codex_event(pause, item_id="pause"),
                 *(
@@ -1349,7 +1513,7 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: standard — bounded rename pending repository inspection.",
                 item_id="declaration",
             ),
-            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
             *(
                 codex_event(text, item_id=f"text-{number}")
                 for number, text in enumerate(texts)
@@ -1376,7 +1540,7 @@ class ValidatorTest(unittest.TestCase):
                         "Mode: standard — bounded rename pending repository inspection.",
                         item_id="declaration",
                     ),
-                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
                     codex_event(
                         f"Promoting to strict — {CANONICAL_PROMOTION_REASON}",
                         item_id="promotion",
@@ -1399,7 +1563,7 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: standard — bounded rename pending repository inspection.",
                 item_id="declaration",
             ),
-            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
             codex_event(
                 "Escalating to strict because inspection found a public API breaking "
                 "compatibility risk in payment billing.\n"
@@ -1427,7 +1591,7 @@ class ValidatorTest(unittest.TestCase):
                         "Mode: standard — bounded rename pending repository inspection.",
                         item_id="declaration",
                     ),
-                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
                     codex_event(
                         f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                         "Should we retain the compatibility alias during migration?",
@@ -1453,7 +1617,7 @@ class ValidatorTest(unittest.TestCase):
                         + transition,
                         item_id="declaration",
                     ),
-                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
                     codex_event(
                         f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                         "Should we retain the compatibility alias "
@@ -1480,7 +1644,7 @@ class ValidatorTest(unittest.TestCase):
                         "Mode: standard — bounded rename pending repository inspection.",
                         item_id="declaration",
                     ),
-                    *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                    *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
                     codex_event(
                         f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                         "Should we retain the compatibility alias during migration?",
@@ -1500,7 +1664,7 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: standard — bounded rename pending repository inspection.",
                 item_id="declaration",
             ),
-            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
             codex_event(
                 f"Promoting to strict — {CANONICAL_PROMOTION_REASON}\n"
                 "Should we retain the compatibility alias during migration?",
@@ -1524,7 +1688,7 @@ class ValidatorTest(unittest.TestCase):
             "Mode: strict — payment API risk assumed before inspection.",
             item_id="declaration",
         )
-        inspection = codex_command_lifecycle("cat src/schema.js", "inspection")
+        inspection = codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection")
         mutation = codex_command_lifecycle(
             "python3 -c 'open(\"src/schema.js\", \"w\").write(\"changed\")'",
             "mutation",
@@ -1543,7 +1707,7 @@ class ValidatorTest(unittest.TestCase):
             (
                 "promotion before inspection",
                 [declaration, promotion, *inspection],
-                "before project inspection",
+                "schema.js and src/billing.js",
             ),
             (
                 "mutation before promotion",
@@ -2128,7 +2292,7 @@ class ValidatorTest(unittest.TestCase):
                 "Mode: standard — bounded rename pending repository inspection.",
                 item_id="declaration",
             ),
-            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            *codex_command_lifecycle("cat src/schema.js src/billing.js", "inspection"),
             codex_event(
                 f"Promoting to strict — {CANONICAL_PROMOTION_REASON}",
                 item_id="promotion",

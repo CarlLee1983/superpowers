@@ -41,6 +41,9 @@ BOOTSTRAP_PATHS = (
     "skills/selecting-workflow-mode/SKILL.md",
     "skills/selecting-workflow-mode/references/risk-matrix.md",
 )
+REQUIRED_ESCALATION_INSPECTIONS = {"src/schema.js", "src/billing.js"}
+
+
 class ValidationError(Exception):
     pass
 
@@ -324,20 +327,66 @@ def safe_claude_read_probe(tool_input: object, expected_project_root: Path) -> b
     ) is not None
 
 
-def project_operands(
+def project_operand_paths(
     arguments: list[str],
     expected_project_root: Path,
     *,
     require_file: bool,
-) -> bool:
-    return bool(arguments) and all(
-        project_path(
+) -> tuple[str, ...] | None:
+    if not arguments:
+        return None
+    root = expected_project_root.resolve(strict=True)
+    paths: list[str] = []
+    for argument in arguments:
+        resolved = project_path(
             argument,
             expected_project_root,
             require_file=require_file,
-        ) is not None
-        for argument in arguments
-    )
+        )
+        if resolved is None:
+            return None
+        paths.append(resolved.relative_to(root).as_posix())
+    return tuple(paths)
+
+
+def inspection_command_paths(
+    command: str,
+    expected_root: Path | None,
+    expected_project_root: Path,
+    *,
+    require_files: bool = True,
+) -> tuple[str, ...] | None:
+    if expected_root is not None and is_codex_bootstrap(command, expected_root):
+        return None
+    arguments = split_read_command(command)
+    if not arguments:
+        return None
+    executable = arguments[0]
+    if executable == "cat":
+        operands = arguments[1:]
+        if any(operand.startswith("-") for operand in operands):
+            return None
+        return project_operand_paths(
+            operands,
+            expected_project_root,
+            require_file=require_files,
+        )
+    if executable == "sed":
+        operands = arguments[3:]
+        if (
+            len(arguments) < 4
+            or arguments[1] != "-n"
+            or re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", arguments[2])
+            is None
+            or any(operand.startswith("-") for operand in operands)
+        ):
+            return None
+        return project_operand_paths(
+            operands,
+            expected_project_root,
+            require_file=require_files,
+        )
+    return None
 
 
 def is_read_only_inspection_command(
@@ -347,38 +396,12 @@ def is_read_only_inspection_command(
     *,
     require_files: bool = True,
 ) -> bool:
-    if expected_root is not None and is_codex_bootstrap(command, expected_root):
-        return False
-    arguments = split_read_command(command)
-    if not arguments:
-        return False
-    executable = arguments[0]
-    if executable == "cat":
-        operands = arguments[1:]
-        return (
-            bool(operands)
-            and not any(operand.startswith("-") for operand in operands)
-            and project_operands(
-                operands,
-                expected_project_root,
-                require_file=require_files,
-            )
-        )
-    if executable == "sed":
-        operands = arguments[3:]
-        return bool(operands) and (
-            len(arguments) >= 4
-            and arguments[1] == "-n"
-            and re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", arguments[2])
-            is not None
-            and not any(operand.startswith("-") for operand in operands)
-            and project_operands(
-                operands,
-                expected_project_root,
-                require_file=require_files,
-            )
-        )
-    return False
+    return inspection_command_paths(
+        command,
+        expected_root,
+        expected_project_root,
+        require_files=require_files,
+    ) is not None
 
 
 def validate_declaration_order(
@@ -704,7 +727,7 @@ def escalation_records(
         record_order += 1
 
     if backend == "claude":
-        tool_uses: dict[str, str] = {}
+        tool_uses: dict[str, tuple[str, tuple[str, ...]]] = {}
         completed_tool_uses: set[str] = set()
         observed_tool_results: set[str] = set()
         for event_index, event in enumerate(events):
@@ -730,7 +753,7 @@ def escalation_records(
                         add("invalid", f"Claude tool_use reused id {tool_id!r}", event_index)
                         continue
                     if is_claude_bootstrap(block, expected_plugin_root):
-                        tool_uses[tool_id] = "bootstrap"
+                        tool_uses[tool_id] = ("bootstrap", ())
                         continue
                     name = block.get("name")
                     tool_input = block.get("input")
@@ -738,13 +761,26 @@ def escalation_records(
                         if valid_claude_inspection(
                             name, tool_input, expected_project_root
                         ):
-                            tool_uses[tool_id] = "inspection"
+                            paths: tuple[str, ...] = ()
+                            if name == "Read" and isinstance(tool_input, dict):
+                                resolved = project_path(
+                                    tool_input.get("file_path"),
+                                    expected_project_root,
+                                    require_file=True,
+                                )
+                                if resolved is not None:
+                                    paths = (
+                                        resolved.relative_to(
+                                            expected_project_root.resolve(strict=True)
+                                        ).as_posix(),
+                                    )
+                            tool_uses[tool_id] = ("inspection", paths)
                         elif name == "Read" and safe_claude_read_probe(
                             tool_input, expected_project_root
                         ):
-                            tool_uses[tool_id] = "inspection_probe"
+                            tool_uses[tool_id] = ("inspection_probe", ())
                         else:
-                            tool_uses[tool_id] = "invalid"
+                            tool_uses[tool_id] = ("invalid", ())
                             add("invalid", f"invalid project inspection: {name}", event_index)
                     elif name == "Bash" and isinstance(tool_input, dict):
                         command = tool_input.get("command")
@@ -753,15 +789,20 @@ def escalation_records(
                             expected_plugin_root,
                             expected_project_root,
                         ):
-                            tool_uses[tool_id] = "inspection"
+                            paths = inspection_command_paths(
+                                command,
+                                expected_plugin_root,
+                                expected_project_root,
+                            )
+                            tool_uses[tool_id] = ("inspection", paths or ())
                         else:
-                            tool_uses[tool_id] = "mutation"
+                            tool_uses[tool_id] = ("mutation", ())
                             add("mutation", str(name), event_index)
                     elif name in {"Edit", "Write", "NotebookEdit"}:
-                        tool_uses[tool_id] = "mutation"
+                        tool_uses[tool_id] = ("mutation", ())
                         add("mutation", str(name), event_index)
                     else:
-                        tool_uses[tool_id] = "invalid"
+                        tool_uses[tool_id] = ("invalid", ())
                         add(
                             "invalid",
                             f"unrecognized escalation action: {name!r}",
@@ -791,7 +832,8 @@ def escalation_records(
                     add("invalid", f"duplicate tool result for {tool_id!r}", event_index)
                     continue
                 completed_tool_uses.add(tool_id)
-                if tool_uses[tool_id] in {"inspection", "inspection_probe"}:
+                tool_kind, inspection_paths = tool_uses[tool_id]
+                if tool_kind in {"inspection", "inspection_probe"}:
                     if "is_error" in block and type(block["is_error"]) is not bool:
                         add(
                             "invalid",
@@ -800,8 +842,9 @@ def escalation_records(
                         )
                     elif block.get("is_error") is True:
                         continue
-                    elif tool_uses[tool_id] == "inspection":
-                        add("inspection", tool_id, event_index)
+                    elif tool_kind == "inspection":
+                        for path in inspection_paths:
+                            add("inspection", path, event_index)
                     else:
                         add(
                             "invalid",
@@ -810,7 +853,7 @@ def escalation_records(
                         )
         missing_results = [
             tool_id
-            for tool_id, kind in tool_uses.items()
+            for tool_id, (kind, _) in tool_uses.items()
             if kind in {"inspection", "inspection_probe"}
             and tool_id not in observed_tool_results
         ]
@@ -865,11 +908,12 @@ def escalation_records(
                 require_files=False,
             ):
                 exit_code = item.get("exit_code")
-                complete_inspection = is_read_only_inspection_command(
+                completed_paths = inspection_command_paths(
                     command, expected_plugin_root, expected_project_root
                 )
-                if exit_code == 0 and complete_inspection:
-                    add("inspection", command, event_index)
+                if exit_code == 0 and completed_paths is not None:
+                    for path in completed_paths:
+                        add("inspection", path, event_index)
                 elif exit_code is None:
                     add(
                         "invalid",
@@ -900,13 +944,17 @@ def has_structured_promotion_relation(reason: str) -> bool:
     normalized = re.sub(r"`+", "", reason)
     normalized = re.sub(r"\s+", " ", normalized).strip()
     identifier = r"[A-Za-z_$][\w$]*"
+    observed_alias_relation = (
+        r"\(\s*publicPaymentResponse\s+returns\s+"
+        r"\{\s*amount\s*:\s*payment\s*\.\s*amount\s*\}\s*\)"
+    )
     source = r"src/schema\.js\s+defines\s+(?:the\s+)?amount(?:\s+field)?"
     consumer = (
         rf"(?:,?\s+(?:is\s+)?(?:used|consumed)\s+by\s+"
         rf"(?:(?:{identifier})\s+in\s+)?src/billing\.js"
-        rf"(?:'s\s+{identifier}|\s+\([^;]+\))?|"
+        rf"(?:'s\s+{identifier}|\s+{observed_alias_relation})?|"
         rf"\s+(?:and\s+)?src/billing\.js"
-        rf"(?:'s\s+{identifier}|\s+\([^;]+\))?\s+"
+        rf"(?:'s\s+{identifier}|\s+{observed_alias_relation})?\s+"
         rf"(?:uses|consumes)\s+(?:the\s+)?(?:amount|it)(?:\s+field)?)"
     )
     public_surface = (
@@ -947,7 +995,7 @@ def validate_escalation_order(
     expected_plugin_root: Path | None,
     expected_project_root: Path,
 ) -> None:
-    inspection_seen = False
+    inspected_project_paths: set[str] = set()
     promotion_seen = False
     pause_seen = False
     canonical_promotion_count = 0
@@ -963,7 +1011,7 @@ def validate_escalation_order(
         if record.kind == "invalid":
             raise ValidationError(record.value)
         if record.kind == "inspection":
-            inspection_seen = True
+            inspected_project_paths.add(record.value)
             continue
         if record.kind == "mutation":
             if not promotion_seen or not pause_seen:
@@ -986,9 +1034,15 @@ def validate_escalation_order(
             for transition in transitions:
                 transition_count += 1
                 transition_targets.append(transition.group("mode").lower())
-                if transition.group("mode").lower() == "strict" and not inspection_seen:
+                if (
+                    transition.group("mode").lower() == "strict"
+                    and not REQUIRED_ESCALATION_INSPECTIONS.issubset(
+                        inspected_project_paths
+                    )
+                ):
                     raise ValidationError(
-                        "strict promotion occurred before project inspection"
+                        "strict promotion requires successful inspection of "
+                        "src/schema.js and src/billing.js"
                     )
 
             match = PROMOTION.fullmatch(line.text)
@@ -1004,9 +1058,12 @@ def validate_escalation_order(
                     raise ValidationError(
                         "strict promotion lacks a closed structured promotion relation"
                     )
-                if not inspection_seen:
+                if not REQUIRED_ESCALATION_INSPECTIONS.issubset(
+                    inspected_project_paths
+                ):
                     raise ValidationError(
-                        "strict promotion occurred before project inspection"
+                        "strict promotion requires successful inspection of "
+                        "src/schema.js and src/billing.js"
                     )
                 promotion_seen = True
                 promotion_record_order = line.record_order
@@ -1023,9 +1080,10 @@ def validate_escalation_order(
             if line.record_order == promotion_record_order:
                 promotion_context_invalid = True
 
-    if not inspection_seen:
+    if not REQUIRED_ESCALATION_INSPECTIONS.issubset(inspected_project_paths):
         raise ValidationError(
-            "escalation lacks project inspection after initial declaration"
+            "escalation requires successful inspection of src/schema.js and "
+            "src/billing.js after initial declaration"
         )
     if transition_count != 1:
         raise ValidationError("escalation requires exactly one workflow transition")

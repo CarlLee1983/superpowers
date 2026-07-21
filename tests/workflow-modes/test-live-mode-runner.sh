@@ -105,6 +105,18 @@ if case == "escalation":
             "is_error": False,
             "content": "schema inspected",
         }]}},
+        {"type": "assistant", "message": {"role": "assistant", "content": [{
+            "type": "tool_use",
+            "id": "billing-inspection",
+            "name": "Read",
+            "input": {"file_path": str(project / "src/billing.js")},
+        }]}},
+        {"type": "user", "message": {"role": "user", "content": [{
+            "type": "tool_result",
+            "tool_use_id": "billing-inspection",
+            "is_error": False,
+            "content": "billing consumer inspected",
+        }]}},
         {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}},
     ]
     if os.environ.get("STUB_ESCALATION_MUTATION") == "1":
