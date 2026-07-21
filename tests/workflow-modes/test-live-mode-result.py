@@ -151,6 +151,47 @@ LATEST_F9A_CODEX_OUTPUTS = (
     "expecting `amount`. Should I proceed in strict mode with the breaking rename "
     "to `amountCents`?",
 )
+LATEST_F1B_CLAUDE_INITIAL_OUTPUT = (
+    "Mode: standard — schema/consumer rename with unknown blast radius starts "
+    "in standard until inspection establishes whether a strict compatibility "
+    "surface is present.\n\n"
+    "Inspecting the named source first, read-only:"
+)
+LATEST_F1B_CLAUDE_FINAL_OUTPUT = (
+    "Inspection found real consumer evidence: `src/billing.js:2` imports the "
+    "schema and exposes `amount` in `publicPaymentResponse`, the public billing "
+    "API response shape. That hits two strict triggers — payments/billing and a "
+    "breaking public API field rename.\n\n"
+    "Promoting to strict — inspection found src/schema.js defines amount consumed "
+    "by src/billing.js's publicPaymentResponse as part of the public billing API "
+    "payment surface; renaming amount to amountCents would break the public API "
+    "response contract for billing clients.\n\n"
+    "Before making any change, I need your call: should I proceed in strict mode "
+    "with the rename? Two things to decide:\n\n"
+    "1. **Proceed at all?** Renaming `amount` → `amountCents` in the schema, if "
+    "propagated into `publicPaymentResponse`, changes the field name external "
+    "billing clients receive — a breaking API change.\n"
+    "2. **If yes, how far does the rename propagate?** Options: (a) rename "
+    "everywhere including the public response field, (b) rename internally but "
+    "keep the public response emitting `amount` (mapping `amount: "
+    "payment.amountCents`) to preserve the contract, or (c) emit both fields "
+    "during a deprecation window.\n\n"
+    "Also worth noting: the current value is `amount: 10` — if the semantic "
+    "intent is cents, confirm whether the value itself should change (e.g. `10` "
+    "dollars → `1000` cents) or stay as-is. I won't mutate anything until you "
+    "answer."
+)
+LATEST_F1B_CODEX_OUTPUTS = (
+    "I’m using the required workflow-selection skills first; then I’ll inspect "
+    "the repository and trace every consumer before editing.",
+    "Mode: standard — this is a bounded schema-and-consumer rename whose "
+    "compatibility impact needs repository inspection.",
+    "Promoting to strict — inspection found `src/schema.js` defines `amount` "
+    "consumed by `src/billing.js` as part of a public production payment API; "
+    "renaming it would create a breaking billing compatibility change.\n\n"
+    "Should I proceed in strict mode with the rename and update all repository "
+    "consumers?",
+)
 
 
 def claude_event(text: str, *, block_type: str = "text") -> dict:
@@ -1805,6 +1846,35 @@ class ValidatorTest(unittest.TestCase):
             *codex_command_lifecycle("sed -n '1,240p' src/billing.js", "billing"),
             codex_event(promotion, item_id="promotion"),
             codex_event(pause, item_id="pause"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_accepts_latest_f1b_claude_output(self) -> None:
+        events = [
+            claude_init(),
+            claude_event(LATEST_F1B_CLAUDE_INITIAL_OUTPUT),
+            *claude_read_lifecycle(self.project, "src/schema.js", "schema"),
+            *claude_read_lifecycle(self.project, "src/billing.js", "billing"),
+            claude_event(LATEST_F1B_CLAUDE_FINAL_OUTPUT),
+            {"type": "result", "subtype": "success", "result": "done"},
+        ]
+        result = self.run_validator("claude", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_accepts_latest_f1b_codex_output(self) -> None:
+        preamble, declaration, promotion_and_pause = LATEST_F1B_CODEX_OUTPUTS
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(preamble, item_id="preamble"),
+            codex_event(declaration, item_id="declaration"),
+            *codex_command_lifecycle("sed -n '1,240p' src/schema.js", "schema"),
+            *codex_command_lifecycle(
+                "sed -n '1,240p' src/api.js", "optional-api", exit_code=1
+            ),
+            *codex_command_lifecycle("sed -n '1,240p' src/billing.js", "billing"),
+            codex_event(promotion_and_pause, item_id="promotion"),
             {"type": "turn.completed", "usage": {}},
         ]
         result = self.run_validator("codex", "escalation", events)

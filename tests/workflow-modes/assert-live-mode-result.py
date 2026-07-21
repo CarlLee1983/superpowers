@@ -642,7 +642,8 @@ def has_relevant_pause(text: str) -> bool:
         r"^\s*should\s+(?:the\s+)?old\s+amount\s+key\b[^?]*\bor\b[^?]*"
         r"\bcompatibility\s+alias\b[^?]*\?\s*$",
         rf"^\s*should\s+{decision_target}[^?]*\bor\b[^?]*\?\s*$",
-        r"^\s*should\s+(?:I|we)\s+proceed\s+in\s+strict\s+mode\b"
+        r"^\s*(?:before\s+making\s+any\s+change,\s+i\s+need\s+your\s+"
+        r"call:\s*)?should\s+(?:I|we)\s+proceed\s+in\s+strict\s+mode\b"
         r"(?=[^?]*\b(?:rename|public\s+response|amountCents)\b)[^?]*\?\s*$",
         r"^\s*(?:before\s+the\s+first\s+mutation,\s+i\s+need\s+your\s+"
         r"decision:\s*)?should\s+(?:I|we)\s+proceed\s+with\s+"
@@ -1156,10 +1157,10 @@ def has_structured_promotion_relation(reason: str) -> bool:
         )
     ):
         return False
-    if not has_affirmative_surface_relation(
-        f"{public_relation_tail} {consequence}"
-    ):
-        return False
+    surface_relation = f"{public_relation_tail} {consequence}"
+    if re.search(r"\b(?:surface|response)\b", surface_relation, re.IGNORECASE):
+        if not has_affirmative_surface_relation(surface_relation):
+            return False
 
     if re.search(
         r"\b(?:would|will)\b.*\bbreak(?:ing)?\b",
@@ -1173,6 +1174,7 @@ def has_structured_promotion_relation(reason: str) -> bool:
         for pattern in (
             r"\bcompatibility\b",
             r"\bapi\b.*\bresponse\s+shape\b",
+            r"\bapi\b.*\bresponse\s+contract\b",
             r"\bexternal\b.*\bapi\b.*\b(?:consumers?|clients?)\b",
             r"\bapi\b.*\bchange\b",
             r"\bresponse\s+shape\b.*\bexternal\b.*\b(?:consumers?|clients?)\b",
