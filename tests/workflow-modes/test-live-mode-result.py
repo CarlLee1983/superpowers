@@ -3574,6 +3574,45 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("codex", "explicit-skill", events)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_explicit_skill_accepts_targeted_ordered_backticked_names(self) -> None:
+        # Preserved from /tmp/superpowers-mode-evals/task1-followup-targeted-0a49b1c/
+        # codex/gpt-5.6-sol/explicit-skill/20260721T075013Z-57212-15118/assistant.txt
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — the user explicitly requested a read-only, tightly "
+                "scoped naming exploration.\n\n"
+                "The brainstorming skill now guides the naming comparison; this "
+                "is the point where it shapes the work, and no files will be touched.\n\n"
+                "Two good options:\n\n"
+                "1. `greet` — concise and natural. Best if the function remains a "
+                "tiny, obvious helper.\n"
+                "2. `formatGreeting` — explicitly signals that it returns text "
+                "rather than displaying or sending anything, but is more verbose.\n\n"
+                "Should the name optimize for brevity (`greet`) or explicit return "
+                "behavior (`formatGreeting`)? No files changed."
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "explicit-skill", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        conceptual_bullets = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: lean — explicit read-only naming exploration.\n"
+                "I am using the brainstorming skill.\n"
+                "1. action of greeting — concise\n"
+                "2. returned string — explicit"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator(
+            "codex", "explicit-skill", conceptual_bullets
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("two distinct positive options", result.stderr)
+
     def test_claude_accepts_full_matrix_explicit_skill_invocation(self) -> None:
         events = [
             claude_init(),

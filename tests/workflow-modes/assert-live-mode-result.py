@@ -1743,6 +1743,9 @@ def require_affirmative_brainstorming(
         r"([A-Za-z_][A-Za-z0-9_-]*)(?=\s*(?:\*\*)?\s*(?:$|[:—–-])))",
         re.IGNORECASE,
     )
+    ordered_backticked_label = re.compile(
+        r"^\s*\d+[.)]\s+`([A-Za-z_][A-Za-z0-9_-]*)`\s*(?=$|[:—–-])"
+    )
     group = re.compile(
         r"\b(?:two|2)?\s*(?:options|candidates)\s*(?:are|:)\s*([^.;\n]+)",
         re.IGNORECASE,
@@ -1794,12 +1797,14 @@ def require_affirmative_brainstorming(
                 continue
             if negative_candidate(unit):
                 continue
+            ordered_match = ordered_backticked_label.search(unit)
             label_match = label.search(unit)
-            identifier = (
-                label_match.group(1) or label_match.group(2)
-                if label_match
-                else None
-            )
+            if ordered_match:
+                identifier = ordered_match.group(1)
+            elif label_match:
+                identifier = label_match.group(1) or label_match.group(2)
+            else:
+                identifier = None
             if not identifier or negative_candidate(unit, identifier):
                 continue
             candidates.add(identifier)
