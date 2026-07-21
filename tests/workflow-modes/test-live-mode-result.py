@@ -843,6 +843,160 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "escalation", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_escalation_multirecord_context_rejects_reviewer_mutations(self) -> None:
+        canonical = f"Promoting to strict — {CANONICAL_PROMOTION_REASON}"
+        pause = "Should we retain the compatibility alias during migration?"
+
+        def codex_events(texts: tuple[str, ...]) -> list[dict]:
+            return [
+                {"type": "thread.started", "thread_id": "thread"},
+                codex_event(
+                    "Mode: standard — bounded rename pending repository inspection.",
+                    item_id="declaration",
+                ),
+                *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                *(
+                    codex_event(text, item_id=f"text-{number}")
+                    for number, text in enumerate(texts)
+                ),
+                {"type": "turn.completed", "usage": {}},
+            ]
+
+        def claude_events(texts: tuple[str, ...]) -> list[dict]:
+            return [
+                claude_init(),
+                claude_event(
+                    "Mode: standard — bounded rename pending repository inspection."
+                ),
+                claude_tool_event(
+                    "Read",
+                    {"file_path": str(self.project / "src/schema.js")},
+                    tool_id="inspect",
+                ),
+                claude_tool_result("inspect"),
+                {
+                    "type": "assistant",
+                    "message": {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "text", "text": text} for text in texts
+                        ],
+                    },
+                },
+                {"type": "result", "subtype": "success", "result": "done"},
+            ]
+
+        mutations = (
+            (
+                "codex-backtick-fence",
+                "codex",
+                codex_events(("```text", canonical, "```", pause)),
+            ),
+            (
+                "claude-tilde-fence",
+                "claude",
+                claude_events(("~~~transcript", canonical, "~~~", pause)),
+            ),
+            (
+                "codex-leading-documentation-qualifier",
+                "codex",
+                codex_events(("Documentation example:", canonical, pause)),
+            ),
+            (
+                "claude-trailing-quotation-qualifier",
+                "claude",
+                claude_events(
+                    (
+                        canonical,
+                        "The preceding statement is only a quotation example.",
+                        pause,
+                    )
+                ),
+            ),
+        )
+        for name, backend, events in mutations:
+            with self.subTest(name=name):
+                result = self.run_validator(backend, "escalation", events)
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_escalation_accepts_multirecord_canonical_promotion_then_pause(self) -> None:
+        canonical = f"Promoting to strict — {CANONICAL_PROMOTION_REASON}"
+        pause = "Should we retain the compatibility alias during migration?"
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            codex_event(canonical, item_id="promotion"),
+            codex_event(pause, item_id="pause"),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_escalation_split_fences_ignore_examples_but_real_demotion_rejects(self) -> None:
+        canonical = f"Promoting to strict — {CANONICAL_PROMOTION_REASON}"
+        pause = "Should we retain the compatibility alias during migration?"
+
+        def events_with_tail(tail: tuple[str, ...]) -> list[dict]:
+            return [
+                {"type": "thread.started", "thread_id": "thread"},
+                codex_event(
+                    "Mode: standard — bounded rename pending repository inspection.",
+                    item_id="declaration",
+                ),
+                *codex_command_lifecycle("cat src/schema.js", "inspection"),
+                codex_event(canonical, item_id="promotion"),
+                codex_event(pause, item_id="pause"),
+                *(
+                    codex_event(text, item_id=f"tail-{number}")
+                    for number, text in enumerate(tail)
+                ),
+                {"type": "turn.completed", "usage": {}},
+            ]
+
+        fenced = events_with_tail(
+            ("```text", "Demoting to standard automatically.", "```")
+        )
+        result = self.run_validator("codex", "escalation", fenced)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        real = events_with_tail(("Demoting to standard automatically.",))
+        result = self.run_validator("codex", "escalation", real)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exactly one workflow transition", result.stderr)
+
+    def test_escalation_split_fence_closure_supports_multiple_fences(self) -> None:
+        canonical = f"Promoting to strict — {CANONICAL_PROMOTION_REASON}"
+        pause = "Should we retain the compatibility alias during migration?"
+        texts = (
+            "```text",
+            canonical,
+            "```",
+            "~~~ transcript",
+            "Demoting to standard automatically.",
+            "~~~~",
+            canonical,
+            pause,
+        )
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: standard — bounded rename pending repository inspection.",
+                item_id="declaration",
+            ),
+            *codex_command_lifecycle("cat src/schema.js", "inspection"),
+            *(
+                codex_event(text, item_id=f"text-{number}")
+                for number, text in enumerate(texts)
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+        result = self.run_validator("codex", "escalation", events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_escalation_rejects_semantic_duplicate_promotions(self) -> None:
         duplicates = (
             "Escalating to strict because the API is breaking.",

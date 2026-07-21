@@ -7,6 +7,7 @@ import json
 import re
 import shlex
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -581,36 +582,104 @@ def require_relevant_pause(text: str) -> None:
     )
 
 
-def markdown_prose_lines(text: str) -> list[str]:
-    prose: list[str] = []
-    fence_character: str | None = None
-    fence_length = 0
-    fence = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-    for line in text.splitlines():
-        marker = fence.match(line)
-        if fence_character is not None:
+@dataclass(frozen=True)
+class EscalationRecord:
+    kind: str
+    value: str
+    event_index: int
+    record_order: int
+
+
+@dataclass(frozen=True)
+class ProseLine:
+    text: str
+    event_index: int
+    record_order: int
+    line_index: int
+    contextual: bool = False
+    qualifier: bool = False
+
+
+class MarkdownProseStream:
+    FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+    LEADING_QUALIFIER = re.compile(
+        r"(?i)^\s*(?:(?:documentation|docs?)\s+)?(?:example|quotation|quote)"
+        r"(?:\s+from\s+a\s+transcript)?\s*:\s*$|"
+        r"^\s*(?:documentation|docs?)\s+example\s*:\s*$",
+        re.IGNORECASE,
+    )
+    TRAILING_QUALIFIER = re.compile(
+        r"(?i)^\s*the\s+(?:preceding|previous|above)\s+"
+        r"(?:statement|line|promotion(?:\s+statement)?)\s+is\s+"
+        r"(?:only\s+)?(?:a\s+)?(?:documentation\s+)?"
+        r"(?:example|quotation|quote)(?:\s+example)?[.!]?\s*$"
+    )
+
+    def __init__(self) -> None:
+        self.fence_character: str | None = None
+        self.fence_length = 0
+        self.pending_qualifier = False
+
+    def consume(self, record: EscalationRecord) -> list[ProseLine]:
+        prose: list[ProseLine] = []
+        for line_index, line in enumerate(record.value.splitlines()):
+            marker = self.FENCE.match(line)
+            if self.fence_character is not None:
+                if marker:
+                    run = marker.group(1)
+                    suffix = marker.group(2)
+                    if (
+                        run[0] == self.fence_character
+                        and len(run) >= self.fence_length
+                        and not suffix.strip()
+                    ):
+                        self.fence_character = None
+                        self.fence_length = 0
+                continue
             if marker:
                 run = marker.group(1)
-                suffix = marker.group(2)
-                if (
-                    run[0] == fence_character
-                    and len(run) >= fence_length
-                    and not suffix.strip()
-                ):
-                    fence_character = None
-                    fence_length = 0
-            continue
-        if marker:
-            run = marker.group(1)
-            fence_character = run[0]
-            fence_length = len(run)
-            continue
-        if line.startswith(("    ", "\t")):
-            continue
-        if re.match(r"^ {0,3}>", line):
-            continue
-        prose.append(line)
-    return prose
+                self.fence_character = run[0]
+                self.fence_length = len(run)
+                continue
+            if line.startswith(("    ", "\t")):
+                continue
+            if re.match(r"^ {0,3}>", line):
+                continue
+            if not line.strip():
+                prose.append(
+                    ProseLine(
+                        line,
+                        record.event_index,
+                        record.record_order,
+                        line_index,
+                    )
+                )
+                continue
+            if self.LEADING_QUALIFIER.fullmatch(line):
+                self.pending_qualifier = True
+                prose.append(
+                    ProseLine(
+                        line,
+                        record.event_index,
+                        record.record_order,
+                        line_index,
+                        qualifier=True,
+                    )
+                )
+                continue
+            trailing_qualifier = self.TRAILING_QUALIFIER.fullmatch(line) is not None
+            prose.append(
+                ProseLine(
+                    line,
+                    record.event_index,
+                    record.record_order,
+                    line_index,
+                    contextual=self.pending_qualifier,
+                    qualifier=trailing_qualifier,
+                )
+            )
+            self.pending_qualifier = False
+        return prose
 
 
 def escalation_records(
@@ -618,13 +687,20 @@ def escalation_records(
     events: list[dict[str, Any]],
     expected_plugin_root: Path | None,
     expected_project_root: Path,
-) -> list[tuple[str, str]]:
-    records: list[tuple[str, str]] = []
+) -> list[EscalationRecord]:
+    records: list[EscalationRecord] = []
+    record_order = 0
+
+    def add(kind: str, value: str, event_index: int) -> None:
+        nonlocal record_order
+        records.append(EscalationRecord(kind, value, event_index, record_order))
+        record_order += 1
+
     if backend == "claude":
         tool_uses: dict[str, str] = {}
         completed_tool_uses: set[str] = set()
         observed_tool_results: set[str] = set()
-        for event in events:
+        for event_index, event in enumerate(events):
             message = event.get("message")
             content = message.get("content") if isinstance(message, dict) else None
             if not isinstance(content, list):
@@ -636,15 +712,15 @@ def escalation_records(
                 if event.get("type") == "assistant" and block_type == "text":
                     value = block.get("text")
                     if isinstance(value, str):
-                        records.append(("text", value))
+                        add("text", value, event_index)
                     continue
                 if event.get("type") == "assistant" and block_type == "tool_use":
                     tool_id = block.get("id")
                     if not isinstance(tool_id, str) or not tool_id:
-                        records.append(("invalid", "Claude tool_use lacks stable id"))
+                        add("invalid", "Claude tool_use lacks stable id", event_index)
                         continue
                     if tool_id in tool_uses:
-                        records.append(("invalid", f"Claude tool_use reused id {tool_id!r}"))
+                        add("invalid", f"Claude tool_use reused id {tool_id!r}", event_index)
                         continue
                     if is_claude_bootstrap(block, expected_plugin_root):
                         tool_uses[tool_id] = "bootstrap"
@@ -658,9 +734,7 @@ def escalation_records(
                             tool_uses[tool_id] = "inspection"
                         else:
                             tool_uses[tool_id] = "invalid"
-                            records.append(
-                                ("invalid", f"invalid project inspection: {name}")
-                            )
+                            add("invalid", f"invalid project inspection: {name}", event_index)
                     elif name == "Bash" and isinstance(tool_input, dict):
                         command = tool_input.get("command")
                         if isinstance(command, str) and is_read_only_inspection_command(
@@ -671,14 +745,16 @@ def escalation_records(
                             tool_uses[tool_id] = "inspection"
                         else:
                             tool_uses[tool_id] = "mutation"
-                            records.append(("mutation", str(name)))
+                            add("mutation", str(name), event_index)
                     elif name in {"Edit", "Write", "NotebookEdit"}:
                         tool_uses[tool_id] = "mutation"
-                        records.append(("mutation", str(name)))
+                        add("mutation", str(name), event_index)
                     else:
                         tool_uses[tool_id] = "invalid"
-                        records.append(
-                            ("invalid", f"unrecognized escalation action: {name!r}")
+                        add(
+                            "invalid",
+                            f"unrecognized escalation action: {name!r}",
+                            event_index,
                         )
                     continue
                 if block_type != "tool_result":
@@ -691,34 +767,34 @@ def escalation_records(
                     and isinstance(message, dict)
                     and message.get("role") == "user"
                 ):
-                    records.append(
-                        ("invalid", "Claude inspection requires a user-role tool result")
+                    add(
+                        "invalid",
+                        "Claude inspection requires a user-role tool result",
+                        event_index,
                     )
                     continue
                 if not isinstance(tool_id, str) or tool_id not in tool_uses:
-                    records.append(("invalid", "tool result lacks matching tool_use id"))
+                    add("invalid", "tool result lacks matching tool_use id", event_index)
                     continue
                 if tool_id in completed_tool_uses:
-                    records.append(("invalid", f"duplicate tool result for {tool_id!r}"))
+                    add("invalid", f"duplicate tool result for {tool_id!r}", event_index)
                     continue
                 completed_tool_uses.add(tool_id)
                 if tool_uses[tool_id] == "inspection":
                     if "is_error" in block and type(block["is_error"]) is not bool:
-                        records.append(
-                            (
-                                "invalid",
-                                "inspection tool result is_error must be a JSON boolean",
-                            )
+                        add(
+                            "invalid",
+                            "inspection tool result is_error must be a JSON boolean",
+                            event_index,
                         )
                     elif block.get("is_error") is True:
-                        records.append(
-                            (
-                                "invalid",
-                                f"inspection tool result is_error=true for {tool_id!r}",
-                            )
+                        add(
+                            "invalid",
+                            f"inspection tool result is_error=true for {tool_id!r}",
+                            event_index,
                         )
                     else:
-                        records.append(("inspection", tool_id))
+                        add("inspection", tool_id, event_index)
         missing_results = [
             tool_id
             for tool_id, kind in tool_uses.items()
@@ -727,14 +803,16 @@ def escalation_records(
         if missing_results:
             records.insert(
                 0,
-                (
+                EscalationRecord(
                     "invalid",
                     f"inspection tool result missing for {missing_results[0]!r}",
+                    -1,
+                    -1,
                 ),
             )
         return records
 
-    for event in events:
+    for event_index, event in enumerate(events):
         item = event.get("item")
         if not isinstance(item, dict):
             continue
@@ -742,11 +820,15 @@ def escalation_records(
         if event.get("type") == "item.completed" and item_type == "agent_message":
             value = item.get("text")
             if isinstance(value, str):
-                records.append(("text", value))
+                add("text", value, event_index)
         elif event.get("type") == "item.started" and item_type == "command_execution":
             command = item.get("command")
             if not isinstance(command, str):
-                records.append(("invalid", "unrecognized escalation action: command_execution"))
+                add(
+                    "invalid",
+                    "unrecognized escalation action: command_execution",
+                    event_index,
+                )
             elif is_codex_bootstrap(command, expected_plugin_root):
                 continue
             elif is_read_only_inspection_command(
@@ -754,7 +836,7 @@ def escalation_records(
             ):
                 continue
             else:
-                records.append(("mutation", command))
+                add("mutation", command, event_index)
         elif event.get("type") == "item.completed" and item_type == "command_execution":
             command = item.get("command")
             if (
@@ -765,19 +847,23 @@ def escalation_records(
                 )
             ):
                 if item.get("exit_code") == 0:
-                    records.append(("inspection", command))
+                    add("inspection", command, event_index)
                 else:
-                    records.append(
-                        ("invalid", "Codex command lacks successful completed inspection")
+                    add(
+                        "invalid",
+                        "Codex command lacks successful completed inspection",
+                        event_index,
                     )
         elif event.get("type") == "item.started" and item_type == "file_change":
-            records.append(("mutation", str(item_type)))
+            add("mutation", str(item_type), event_index)
         elif (
             event.get("type") == "item.started"
             and item_type not in {"agent_message", "reasoning"}
         ):
-            records.append(
-                ("invalid", f"unrecognized escalation action: {item_type!r}")
+            add(
+                "invalid",
+                f"unrecognized escalation action: {item_type!r}",
+                event_index,
             )
     return records
 
@@ -798,39 +884,46 @@ def validate_escalation_order(
     canonical_promotion_count = 0
     transition_count = 0
     transition_targets: list[str] = []
-    for kind, value in escalation_records(
+    prose_stream = MarkdownProseStream()
+    promotion_record_order: int | None = None
+    awaiting_pause = False
+    promotion_context_invalid = False
+    for record in escalation_records(
         backend, events, expected_plugin_root, expected_project_root
     ):
-        if kind == "invalid":
-            raise ValidationError(value)
-        if kind == "inspection":
+        if record.kind == "invalid":
+            raise ValidationError(record.value)
+        if record.kind == "inspection":
             inspection_seen = True
             continue
-        if kind == "mutation":
+        if record.kind == "mutation":
             if not promotion_seen or not pause_seen:
                 raise ValidationError(
                     "escalation mutation before strict promotion/approval pause"
                 )
             continue
 
-        prose_lines = markdown_prose_lines(value)
-        prose_text = "\n".join(prose_lines)
-        transitions = list(WORKFLOW_TRANSITION.finditer(prose_text))
-        for transition in transitions:
-            transition_count += 1
-            transition_targets.append(transition.group("mode").lower())
-            if transition.group("mode").lower() == "strict" and not inspection_seen:
-                raise ValidationError(
-                    "strict promotion occurred before project inspection"
-                )
+        for line in prose_stream.consume(record):
+            if not line.text.strip():
+                continue
+            if line.qualifier:
+                if awaiting_pause or line.record_order == promotion_record_order:
+                    promotion_context_invalid = True
+                continue
+            if line.contextual:
+                continue
 
-        matches = [
-            (line_number, match)
-            for line_number, line in enumerate(prose_lines)
-            if (match := PROMOTION.fullmatch(line)) is not None
-        ]
-        if matches:
-            for line_number, match in matches:
+            transitions = list(WORKFLOW_TRANSITION.finditer(line.text))
+            for transition in transitions:
+                transition_count += 1
+                transition_targets.append(transition.group("mode").lower())
+                if transition.group("mode").lower() == "strict" and not inspection_seen:
+                    raise ValidationError(
+                        "strict promotion occurred before project inspection"
+                    )
+
+            match = PROMOTION.fullmatch(line.text)
+            if match is not None:
                 canonical_promotion_count += 1
                 if canonical_promotion_count > 1:
                     raise ValidationError(
@@ -846,23 +939,20 @@ def validate_escalation_order(
                     raise ValidationError(
                         "strict promotion occurred before project inspection"
                     )
-                other_prose = [
-                    line
-                    for other_number, line in enumerate(prose_lines)
-                    if other_number != line_number and line.strip()
-                ]
-                if any(not has_relevant_pause(line) for line in other_prose):
-                    raise ValidationError(
-                        "canonical promotion block contains non-workflow prose"
-                    )
                 promotion_seen = True
-                if any(
-                    other_number > line_number and has_relevant_pause(line)
-                    for other_number, line in enumerate(prose_lines)
-                ):
+                promotion_record_order = line.record_order
+                awaiting_pause = True
+                continue
+
+            if awaiting_pause:
+                if has_relevant_pause(line.text):
                     pause_seen = True
-        elif promotion_seen and has_relevant_pause(prose_text):
-            pause_seen = True
+                    awaiting_pause = False
+                    continue
+                promotion_context_invalid = True
+                continue
+            if line.record_order == promotion_record_order:
+                promotion_context_invalid = True
 
     if not inspection_seen:
         raise ValidationError(
@@ -874,6 +964,8 @@ def validate_escalation_order(
         raise ValidationError("escalation attempted automatic demotion")
     if canonical_promotion_count != 1 or not promotion_seen:
         raise ValidationError("escalation lacks exactly one canonical promotion to strict")
+    if promotion_context_invalid:
+        raise ValidationError("canonical promotion block contains non-workflow prose")
     if not pause_seen:
         raise ValidationError(
             "assistant-visible text lacks relevant clarification/approval pause"
