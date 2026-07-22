@@ -136,6 +136,7 @@ echo "Codex package archive tests"
 metadata_source="$TEST_ROOT/metadata-source"
 archive="$TEST_ROOT/superpowers"
 tar_archive="$TEST_ROOT/superpowers.tar.gz"
+gnu_tar_archive="$TEST_ROOT/superpowers-gnu.tar.gz"
 extracted="$TEST_ROOT/extracted"
 tar_extracted="$TEST_ROOT/tar-extracted"
 write_metadata_fixture "$metadata_source"
@@ -219,6 +220,59 @@ with tarfile.open(sys.argv[1], "r:gz") as archive:
 PY
 )"
 assert_equals "$tar_metadata_times" "0" "tar.gz archive normalizes entry timestamps"
+
+gnu_bin="$TEST_ROOT/gnu-bin"
+mkdir -p "$gnu_bin"
+cat >"$gnu_bin/tar" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${REAL_TAR:?}"
+
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'tar (GNU tar) 1.34\n'
+  exit 0
+fi
+
+translated=()
+for argument in "$@"; do
+  case "$argument" in
+    --owner=0)
+      translated+=(--uid 0 --uname '')
+      ;;
+    --group=0)
+      translated+=(--gid 0 --gname '')
+      ;;
+    --numeric-owner)
+      ;;
+    --uid|--gid|--uname|--gname)
+      printf 'tar: unrecognized option %s\n' "$argument" >&2
+      exit 64
+      ;;
+    *)
+      translated+=("$argument")
+      ;;
+  esac
+done
+
+exec "$REAL_TAR" "${translated[@]}"
+EOF
+chmod +x "$gnu_bin/tar"
+
+if gnu_output="$(
+  REAL_TAR="$(command -v tar)" PATH="$gnu_bin:$PATH" \
+    "$SCRIPT_UNDER_TEST" \
+    --allow-dirty \
+    --metadata-source "$metadata_source" \
+    --format tar.gz \
+    --output "$gnu_tar_archive" 2>&1
+)"; then
+  pass "package script supports GNU tar owner flags"
+else
+  fail "package script supports GNU tar owner flags"
+  printf '%s\n' "$gnu_output" | sed 's/^/      /'
+fi
+assert_contains "$gnu_output" "Format:  tar.gz" "GNU tar package reports tar.gz format"
 
 metadata_archive="$TEST_ROOT/metadata-source.tar.gz"
 metadata_zip="$TEST_ROOT/metadata-source.zip"

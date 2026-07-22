@@ -300,10 +300,15 @@ case "$FORMAT" in
   tar.gz)
     # Match the prior official archive's deterministic tar entry metadata.
     TZ=UTC find "$STAGE" -exec touch -t 197001010000 {} +
+    if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+      tar_owner_args=(--owner=0 --group=0 --numeric-owner)
+    else
+      tar_owner_args=(--uid 0 --gid 0 --uname '' --gname '')
+    fi
     (
       cd "$STAGE"
       rm -f "$OUTPUT"
-      COPYFILE_DISABLE=1 tar -cf - --no-recursion --format ustar --uid 0 --gid 0 --uname '' --gname '' -T "$ARCHIVE_LIST" |
+      COPYFILE_DISABLE=1 tar -cf - --no-recursion --format ustar "${tar_owner_args[@]}" -T "$ARCHIVE_LIST" |
         gzip -9n >"$OUTPUT"
     )
     ;;
