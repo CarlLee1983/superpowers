@@ -70,7 +70,14 @@ tag and full commit. Set every version manifest to
 
 ## Validation
 
-Run from narrowest to broadest and keep every failing command's raw status:
+Use the repository gate before every pull request and release candidate:
+
+```bash
+scripts/validate-adaptive-release.sh
+```
+
+It runs from narrowest to broadest and keeps every failing command's raw
+status. Its layers are:
 
 ```bash
 scripts/validate-adaptive-base.py
@@ -78,6 +85,7 @@ tests/adaptive-maintenance/run-tests.sh
 tests/workflow-modes/run-static-tests.sh
 tests/codex/test-marketplace-manifest.sh
 tests/codex/test-package-codex-plugin.sh
+scripts/smoke-codex-install.sh
 tests/hooks/test-session-start.sh
 ```
 
@@ -108,20 +116,33 @@ is reproduced on unchanged `origin/main` and recorded in the pull request.
    compatibility exception, and include fresh command and live-evaluation
    evidence.
 4. Obtain human review, merge to `origin/main`, and verify the merge commit.
-5. Create an annotated immutable tag and release:
+5. Create an annotated immutable tag locally, verify that it resolves to the
+   tested commit, and run an ephemeral clean-install session with the current
+   Codex model:
 
    ```bash
    git switch main
    git pull --ff-only origin main
    VERSION="$(jq -r '.version' .codex-plugin/plugin.json)"
    git tag -a "v${VERSION}" -m "Adaptive Superpowers ${VERSION}"
+   scripts/validate-adaptive-release.sh --release-tag "v${VERSION}"
+   scripts/smoke-codex-install.sh --session CURRENT_CODEX_MODEL
+   ```
+
+6. Push the tested tag and publish the GitHub release:
+
+   ```bash
    git push origin "v${VERSION}"
    gh release create "v${VERSION}" --verify-tag --generate-notes
    ```
 
-6. Pin the Codex marketplace to the new tag, reinstall the plugin, verify the
+7. Pin the Codex marketplace to the new tag, reinstall the plugin, verify the
    enabled version and cache, and run an ephemeral new session that declares
    the expected mode and loads the Adaptive bootstrap.
+
+The weekly `Adaptive upstream watch` GitHub workflow reports a newer stable
+upstream tag and its grouped diff in the job summary. It never creates a
+branch, issue, pull request, merge, tag, or release.
 
 Published tags and releases are never rewritten.
 

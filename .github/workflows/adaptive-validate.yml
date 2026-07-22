@@ -1,0 +1,33 @@
+name: Adaptive validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch stable upstream tags
+        run: |
+          git remote add upstream https://github.com/obra/superpowers.git
+          git fetch upstream --tags --force
+
+      - name: Install validation tools
+        run: |
+          if ! command -v jq >/dev/null; then sudo apt-get update && sudo apt-get install -y jq; fi
+          if ! command -v rg >/dev/null; then sudo apt-get update && sudo apt-get install -y ripgrep; fi
+          npm install --global @openai/codex
+
+      - name: Run Adaptive release gate
+        run: scripts/validate-adaptive-release.sh
