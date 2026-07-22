@@ -6648,6 +6648,7 @@ class ValidatorTest(unittest.TestCase):
             "Mode: strict — migration design is complete. Please confirm API.",
             "Mode: strict — migration design is complete. What seems nicest about this API migration approach?",
             "Mode: strict — migration design is complete. Which migration approach do you like?",
+            "Mode: strict — migration design is complete. Which approach should the design target?",
             "Mode: strict — migration design is complete. Which scopeCreep should we discuss for lunch?",
             "Mode: strict — migration design is complete. Which API contractLunch should I choose?",
             "Mode: strict — migration design is complete. I approve this API design.",
@@ -7649,6 +7650,31 @@ class ValidatorTest(unittest.TestCase):
                 "- PostgreSQL + GraphQL API\n"
                 "- A technology-neutral migration/runbook\n"
                 "- Another stack you specify"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_live_split_api_transition_question(self) -> None:
+        # Preserved from the reviewed adaptive.4 live Codex transcript at
+        # codex/gpt-5.6-sol/strict/20260722T045122Z-44852-22879/assistant.txt.
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — production payment migration and a breaking "
+                "public API change are high-risk compatibility work.\n\n"
+                "Should the public API transition be:\n\n"
+                "1. **Versioned rollout (recommended):** keep the dollar-based "
+                "API temporarily, add a cents-based version, migrate clients, "
+                "then retire the old version.\n"
+                "2. **Flag-day breaking change:** switch all clients and stored "
+                "data in one coordinated deployment.\n"
+                "3. **Same endpoint, compatibility window:** accept both formats "
+                "temporarily with explicit version/header discrimination.\n\n"
+                "Which approach should the design target?"
             ),
             {"type": "turn.completed", "usage": {}},
         ]

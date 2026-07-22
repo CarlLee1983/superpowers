@@ -1287,6 +1287,42 @@ def has_relevant_pause(text: str) -> bool:
             for pattern in requirement_signals
         ):
             return True
+    split_design_target = re.search(
+        r"(?mi)^\s*which\s+approach\s+should\s+(?:the\s+)?design\s+"
+        r"target\s*\?\s*\Z",
+        text,
+    )
+    if split_design_target is not None:
+        context = text[: split_design_target.start()]
+        decision_intro = re.search(
+            r"(?i)\b(?:public\s+API|API|migration|rollout|compatibility)\s+"
+            r"(?:transition|approach|strategy|plan|contract|change)\s+be\s*:",
+            context,
+        )
+        option_lines = re.findall(
+            r"(?m)^\s*(?:[-*]|[1-9][0-9]*[.)])\s+(.+)$", context
+        )
+        concrete_option = re.compile(
+            r"\b(?:API|version|client|data|deployment|endpoint|format|header|"
+            r"migration|rollout|compatibility|breaking|database|runbook)\b",
+            re.IGNORECASE,
+        )
+        high_risk_signals = (
+            r"\b(?:payment|billing|finance|amount|dollars?|cents?)\b",
+            r"\b(?:production|data\s+migration|schema|migration|backfill)\b",
+            r"\b(?:public\s+API|compatibility|breaking|API\s+versioning?)\b",
+        )
+        if (
+            decision_intro is not None
+            and len(option_lines) >= 2
+            and all(concrete_option.search(option) for option in option_lines)
+            and sum(
+                re.search(pattern, text, re.IGNORECASE) is not None
+                for pattern in high_risk_signals
+            )
+            >= 2
+        ):
+            return True
     decision_object_body = (
         r"(?:requirements?|scope|production\s+stack|rollback\s+requirements?|"
         r"migration\s+(?:approach|plan|strategy|options?)|"
