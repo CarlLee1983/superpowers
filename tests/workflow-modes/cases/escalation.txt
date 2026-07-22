@@ -1,0 +1,1 @@
+Rename the amount field in src/schema.js to amountCents and update its consumers. Inspect the repository before changing anything.

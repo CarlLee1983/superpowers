@@ -1,0 +1,1 @@
+Fix the typo "teh" to "the" in README.md. Make the change, verify it, and report the evidence.

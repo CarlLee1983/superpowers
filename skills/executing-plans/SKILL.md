@@ -1,6 +1,6 @@
 ---
 name: executing-plans
-description: Use when you have a written implementation plan to execute in a separate session with review checkpoints
+description: Use when strict mode executes a written plan in a separate session, or when the human partner explicitly requests inline plan execution
 ---
 
 # Executing Plans
@@ -8,6 +8,12 @@ description: Use when you have a written implementation plan to execute in a sep
 ## Overview
 
 Load plan, review critically, execute all tasks, report when complete.
+
+<WORKFLOW-MODE-GATE>
+Run when explicitly requested. Otherwise, run only in `strict`. Standard and
+lean execute their current task directly unless a durable written plan was
+explicitly selected. If no mode is active, invoke `selecting-workflow-mode`.
+</WORKFLOW-MODE-GATE>
 
 **Announce at start:** "I'm using the executing-plans skill to implement this plan."
 

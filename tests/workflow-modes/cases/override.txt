@@ -1,0 +1,1 @@
+Mode: lean. Change the authentication sample so expired tokens are rejected, add a regression check, and verify it.

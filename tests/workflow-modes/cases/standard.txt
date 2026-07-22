@@ -1,0 +1,1 @@
+Add a JSON summary command to this small CLI. It must read items.json and print the item count and numeric total. Implement it, add coverage, and verify it.

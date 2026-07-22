@@ -1,16 +1,33 @@
 ---
 name: brainstorming
-description: "You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation."
+description: Use when the active workflow mode is strict and the task creates or changes behavior, or when the human partner explicitly requests design exploration
 ---
 
 # Brainstorming Ideas Into Designs
 
 Help turn ideas into fully formed designs and specs through natural collaborative dialogue.
 
+<WORKFLOW-MODE-GATE>
+If brainstorming was explicitly requested, run the full skill. Otherwise:
+
+- `strict`: run the full skill unchanged.
+- `standard` or `lean`: return control without asking questions or creating a
+  spec. Standard's inline design is owned by the selector contract.
+- no active mode: invoke `selecting-workflow-mode` before continuing.
+
+Do not reclassify the task here.
+</WORKFLOW-MODE-GATE>
+
 Start by understanding the current project context, then ask questions one at a time to refine the idea. Once you understand what you're building, present the design and get user approval.
 
 <HARD-GATE>
 Do NOT invoke any implementation skill, write any code, scaffold any project, or take any implementation action until you have presented a design and the user has approved it. This applies to EVERY project regardless of perceived simplicity.
+
+Approval is only a new user reply sent after the design has been presented.
+An initial request to `begin work` or `start work` is not design approval.
+Until that approval reply arrives, only read-only project inspection, visible questions, and visible design or options are allowed.
+Do not write or commit a spec or plan, create or enter a worktree, invoke a planning or implementation skill, or make project changes before approval.
+Do not create task or todo items during this pre-approval phase.
 </HARD-GATE>
 
 ## Anti-Pattern: "This Is Too Simple To Need A Design"
@@ -19,7 +36,10 @@ Every project goes through this process. A todo list, a single-function utility,
 
 ## Checklist
 
-You MUST create a task for each of these items and complete them in order:
+Follow these steps in order:
+
+Before approval, track steps 1–5 in the visible conversation without creating tool-backed task or todo items.
+After post-design approval, create tasks for the remaining checklist items and complete them in order.
 
 1. **Explore project context** — check files, docs, recent commits
 2. **Offer the visual companion just-in-time** — NOT upfront. The first time a question would genuinely be clearer shown than described, offer it then (its own message); on approval its browser tab opens for you. If no visual question ever arises, never offer it. See the Visual Companion section below.
@@ -65,6 +85,7 @@ digraph brainstorming {
 **Understanding the idea:**
 
 - Check out the current project state first (files, docs, recent commits)
+- When the user explicitly asks to compare a specific number of options and the existing context is sufficient, present that many named options with trade-offs before asking a clarifying question. Keep the project unchanged during that requested comparison.
 - Before asking detailed questions, assess scope: if the request describes multiple independent subsystems (e.g., "build a platform with chat, file storage, billing, and analytics"), flag this immediately. Don't spend questions refining details of a project that needs to be decomposed first.
 - If the project is too large for a single spec, help the user decompose into sub-projects: what are the independent pieces, how do they relate, what order should they be built? Then brainstorm the first sub-project through the normal design flow. Each sub-project gets its own spec → plan → implementation cycle.
 - For appropriately-scoped projects, ask questions one at a time to refine the idea
@@ -83,6 +104,10 @@ digraph brainstorming {
 - Once you believe you understand what you're building, present the design
 - Scale each section to its complexity: a few sentences if straightforward, up to 200-300 words if nuanced
 - Ask after each section whether it looks right so far
+- When the final design asks for approval declaratively rather than as a
+  question, end with exactly: `Waiting on your approval before proceeding.`
+  After that terminal sentence, do not inspect, read, or take another action.
+  A host-native approval control may accompany it, but no project tool may.
 - Cover: architecture, components, data flow, error handling, testing
 - Be ready to go back and clarify if something doesn't make sense
 

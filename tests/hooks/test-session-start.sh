@@ -153,6 +153,159 @@ assert_command_output \
     CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
     bash "$HOOK_UNDER_TEST"
 
+assert_command_output \
+    "Claude Code marks task-entry sources already loaded and declaration-first" \
+    "nested" \
+    "Task-entry sources are already loaded below. Before any Skill, Read, or task-specific tool" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the selector source" \
+    "nested" \
+    "# Selecting Workflow Mode" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the risk-matrix source" \
+    "nested" \
+    "# Workflow Risk Matrix" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code uses dedicated read-only inspection before promotion" \
+    "nested" \
+    "CLAUDE PRE-PROMOTION INSPECTION: use Read only" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the pre-first-mutation checkpoint at top level" \
+    "nested" \
+    "Before the first mutation, complete risk routing" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code preserves standard readiness after an override warning" \
+    "nested" \
+    "CLAUDE STANDARD ENTRY: after the Mode line and any required immediate override warning" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code orders request-triggered override warnings before inspection" \
+    "nested" \
+    "If the request itself exposes strict risk under explicit lean/standard, warn immediately after the Mode line and before project inspection" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the closed override warning sequence" \
+    "nested" \
+    "the warning must be the very next assistant-visible content after the Mode line; no project tool, discovery, skill announcement, or other prose may precede it" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the exact atomic override warning template" \
+    "nested" \
+    "CLAUDE EXPLICIT NON-STRICT OVERRIDE ENTRY: output exactly: Warning: <strict trigger> is strict-risk work. Retaining your explicit <lean|standard> override. End that assistant block immediately after the warning" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code forbids shell during pre-promotion inspection" \
+    "nested" \
+    "Do not invoke ToolSearch, Agent, Bash, Glob, or Grep" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code directly reads known promotion evidence without discovery" \
+    "nested" \
+    "CLAUDE PRE-PROMOTION INSPECTION: use Read only. Do not invoke ToolSearch, Agent, Bash, Glob, or Grep. Read the user-named source and a likely same-directory consumer directly; if no consumer path can be identified, pause instead of searching" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the exact promotion template" \
+    "nested" \
+    "CLAUDE PROMOTION ENTRY: output exactly: Promoting to strict — inspection found <source> defines <field> consumed by <consumer> as part of <strict surface>; <change> would <consequence>." \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code keeps explicit-skill inspection on dedicated read tools" \
+    "nested" \
+    "CLAUDE EXPLICIT-SKILL INSPECTION: use Read only" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code directly reads explicit-skill context without discovery" \
+    "nested" \
+    "CLAUDE EXPLICIT-SKILL INSPECTION: use Read only. Do not invoke ToolSearch, Agent, Bash, Glob, or Grep. Read a user-named or obvious likely source directly; if its path is unknown, ask for the path instead of searching" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects standard and promotion sequences" \
+    "nested" \
+    "CLAUDE STANDARD ENTRY: after the Mode line and any required immediate override warning, output exactly" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the standard hard mutation gate" \
+    "nested" \
+    "A mutation before this line is invalid" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "Claude Code injects the closed standard entry sequence" \
+    "nested" \
+    "Do not inspect the project or call another tool before this outline. Do not repeat it after inspection" \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
 wrapper_home="$(make_home run-hook-wrapper)"
 assert_command_output \
     "run-hook.cmd wrapper dispatches to the named session-start script" \

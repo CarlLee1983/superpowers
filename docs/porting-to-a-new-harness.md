@@ -508,12 +508,11 @@ harness is listed.)
 
 ### Step 5 — Handle a harness with no native skill tool
 
-`using-superpowers/SKILL.md` tells the model to *never read skill files manually
-with file tools — always use your platform's skill-loading mechanism.* The point
-is "don't bypass the mechanism," not "never use file-read." What counts as "your
-platform's mechanism" depends on the harness — and for a harness with no skill
-tool, the documented mechanism *is* reading `SKILL.md`. So reading it there
-honors the rule rather than breaking it. Distinguish three cases:
+`using-superpowers/SKILL.md` tells platforms with native skill loading to use
+that mechanism. For a harness with no skill tool, the documented mechanism is
+reading `SKILL.md`, so a file read there honors the rule rather than bypassing
+it. Codex is the exception: its task-entry contract uses three standalone
+manual reads to keep bootstrap evidence auditable. Distinguish three cases:
 
 1. **Native `Skill`-style tool** (Claude Code, Copilot CLI, Gemini's
    `activate_skill`): point the mapping at that tool.

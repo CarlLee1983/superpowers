@@ -13,6 +13,27 @@ Claiming work is complete without verification is dishonesty, not efficiency.
 
 **Violating the letter of this rule is violating the spirit of this rule.**
 
+<WORKFLOW-MODE-DEPTH>
+The evidence rule is identical in every mode. Only verification breadth changes:
+
+- `lean`: run the most relevant test or check and inspect the resulting diff.
+- `standard`: run relevant tests, static checks, and integrated verification.
+- `strict`: run the complete suite and verify requirements against the written
+  spec and plan.
+- no active mode: invoke `selecting-workflow-mode`.
+
+Do not reclassify the task here.
+A narrower command must still directly prove the claim being made.
+A focused check supports only the correspondingly narrow claim; it never
+supports a broader completion claim.
+Run every claim-proving command as a standalone tool call so its result
+exposes the actual exit status.
+Appending status-printing or masking syntax such as `; echo`, `|| true`,
+pipelines, or fallback commands invalidates that evidence; rerun the command
+standalone.
+Run `git diff` as a standalone command and inspect its result.
+</WORKFLOW-MODE-DEPTH>
+
 ## The Iron Law
 
 ```
@@ -27,7 +48,7 @@ If you haven't run the verification command in this message, you cannot claim it
 BEFORE claiming any status or expressing satisfaction:
 
 1. IDENTIFY: What command proves this claim?
-2. RUN: Execute the FULL command (fresh, complete)
+2. RUN: Execute the mode-appropriate command fresh and completely
 3. READ: Full output, check exit code, count failures
 4. VERIFY: Does output confirm the claim?
    - If NO: State actual status with evidence
@@ -55,7 +76,8 @@ Skip any step = lying, not verifying
 - Expressing satisfaction before verification ("Great!", "Perfect!", "Done!", etc.)
 - About to commit/push/PR without verification
 - Trusting agent success reports
-- Relying on partial verification
+- Relying on a partial check that does not directly prove the stated claim
+- Expanding a narrow check into a broader completion claim
 - Thinking "just this once"
 - Tired and wanting work over
 - **ANY wording implying success without having run verification**
@@ -70,7 +92,7 @@ Skip any step = lying, not verifying
 | "Linter passed" | Linter ≠ compiler |
 | "Agent said success" | Verify independently |
 | "I'm tired" | Exhaustion ≠ excuse |
-| "Partial check is enough" | Partial proves nothing |
+| "Partial check is enough" | Only when it directly proves the correspondingly narrow claim; it never proves a broader claim. |
 | "Different words so rule doesn't apply" | Spirit over letter |
 
 ## Key Patterns

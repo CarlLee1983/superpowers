@@ -15,15 +15,20 @@ Give your agent Superpowers: [Claude Code](#claude-code), [Antigravity](#antigra
 
 ## How it works
 
-It starts from the moment you fire up your coding agent. As soon as it sees that you're building something, it *doesn't* just jump into trying to write code. Instead, it steps back and asks you what you're really trying to do. 
+Every task starts with workflow-mode selection based on risk, uncertainty,
+reversibility, blast radius, and external effects. The selected mode controls
+how much process the task needs:
 
-Once it's teased a spec out of the conversation, it shows it to you in chunks short enough to actually read and digest. 
+- **Lean** implements clear, reversible work directly with focused verification.
+- **Standard** gives a short inline design and execution outline, then proceeds
+  without an approval pause.
+- **Strict** runs the full questions, design, plan, TDD, and subagent workflow,
+  including approval checkpoints and independent review.
 
-After you've signed off on the design, your agent puts together an implementation plan that's clear enough for an enthusiastic junior engineer with poor taste, no judgement, no project context, and an aversion to testing to follow. It emphasizes true red/green TDD, YAGNI (You Aren't Gonna Need It), and DRY. 
-
-Next up, once you say "go", it launches a *subagent-driven-development* process, having agents work through each engineering task, inspecting and reviewing their work, and continuing forward. It's not uncommon for your agent to work autonomously for a couple hours at a time without deviating from the plan you put together.
-
-There's a bunch more to it, but that's the core of the system. And because the skills trigger automatically, you don't need to do anything special. Your coding agent just has Superpowers.
+The detailed questions, approved design, written plan, red/green TDD, and
+subagent-driven sequence described below is strict-only. Lean and standard use
+their reduced contracts. Because skills trigger automatically, you do not need
+to opt in per task.
 
 ## Commercial Services
 
@@ -185,13 +190,30 @@ pi -e /path/to/superpowers
 
 The Pi package loads the Superpowers skills and a small extension that injects the `using-superpowers` bootstrap at session startup and again after compaction. Pi has native skills, so no compatibility `Skill` tool is required. Subagent and task-list tools remain optional Pi companion packages.
 
-## The Basic Workflow
+## Adaptive workflow modes
+
+This fork selects process depth from task risk instead of applying the complete
+workflow to every change:
+
+- **lean** — direct implementation and focused verification for clear,
+  reversible, low-impact work
+- **standard** — a short inline design followed by continuous execution
+  without an approval pause for bounded multi-component work
+- **strict** — the complete upstream workflow for high-risk or materially
+  ambiguous work
+
+The agent declares the selected mode once. Override it by including
+`Mode: lean`, `Mode: standard`, or `Mode: strict` in the request. See
+[`docs/workflow-modes.md`](docs/workflow-modes.md).
+An explicit lean or standard override remains active if later inspection discovers strict risk; the agent warns instead of auto-promoting.
+
+## The Strict Workflow
 
 1. **brainstorming** - Activates before writing code. Refines rough ideas through questions, explores alternatives, presents design in sections for validation. Saves design document.
 
-2. **using-git-worktrees** - Activates after design approval. Creates isolated workspace on new branch, runs project setup, verifies clean test baseline.
+2. **writing-plans** - Activates with an approved design and reviewed specification. Breaks work into bite-sized tasks (2-5 minutes each). Every task has exact file paths, complete code, verification steps.
 
-3. **writing-plans** - Activates with approved design. Breaks work into bite-sized tasks (2-5 minutes each). Every task has exact file paths, complete code, verification steps.
+3. **using-git-worktrees** - Activates after the implementation plan is ready. Creates an isolated workspace on a new branch, runs project setup, and verifies a clean test baseline before execution.
 
 4. **subagent-driven-development** or **executing-plans** - Activates with plan. Dispatches fresh subagent per task with two-stage review (spec compliance, then code quality), or executes in batches with human checkpoints.
 
@@ -201,7 +223,9 @@ The Pi package loads the Superpowers skills and a small extension that injects t
 
 7. **finishing-a-development-branch** - Activates when tasks complete. Verifies tests, presents options (merge/PR/keep/discard), cleans up worktree.
 
-**The agent checks for relevant skills before any task.** Mandatory workflows, not suggestions.
+The complete sequence is mandatory in strict mode. Lean and standard use the
+reduced contracts described above. Relevant domain skills still apply in every
+mode.
 
 ## What's Inside
 
@@ -231,7 +255,7 @@ The Pi package loads the Superpowers skills and a small extension that injects t
 
 ## Philosophy
 
-- **Test-Driven Development** - Write tests first, always
+- **Risk-proportionate TDD** - mandatory in strict, selected for meaningful risk in standard, optional in lean
 - **Systematic over ad-hoc** - Process over guessing
 - **Complexity reduction** - Simplicity as primary goal
 - **Evidence over claims** - Verify before declaring success

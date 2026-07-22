@@ -1,6 +1,6 @@
 ---
 name: using-git-worktrees
-description: Use when starting feature work that needs isolation from current workspace or before executing implementation plans - ensures an isolated workspace exists via native tools or git worktree fallback
+description: Use when strict mode begins implementation, standard mode needs materially useful isolation, or the human partner explicitly requests an isolated workspace
 ---
 
 # Using Git Worktrees
@@ -10,6 +10,19 @@ description: Use when starting feature work that needs isolation from current wo
 Ensure work happens in an isolated workspace. Prefer your platform's native worktree tools. Fall back to manual git worktrees only when no native tool is available.
 
 **Core principle:** Detect existing isolation first. Then use native tools. Then fall back to git. Never fight the harness.
+
+<WORKFLOW-MODE-GATE>
+Run this skill when explicitly requested. Otherwise:
+
+- `strict`: follow the full isolation workflow.
+- `standard`: continue only when isolation prevents interference, protects
+  unrelated local changes, or enables independent work.
+- `lean`: return control and work in the current workspace.
+- no active mode: invoke `selecting-workflow-mode`.
+
+Do not reclassify the task here.
+Do not create isolation merely because a task changes multiple files.
+</WORKFLOW-MODE-GATE>
 
 **Announce at start:** "I'm using the using-git-worktrees skill to set up an isolated workspace."
 
