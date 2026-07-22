@@ -1,6 +1,6 @@
 # Superpowers Release Notes
 
-## v6.1.1-adaptive.4 (2026-07-22)
+## v6.1.1-adaptive.5 (2026-07-22)
 
 ### Portable Mode declarations
 
