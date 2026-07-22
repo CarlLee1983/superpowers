@@ -115,6 +115,8 @@ test('session_compact injects bootstrap after compaction summaries, not before c
   assert.equal(result.messages[0], summary);
   assert.equal(result.messages[1].role, 'user');
   assert.match(textOf(result.messages[1]), /You have superpowers/);
+  assert.match(textOf(result.messages[1]), /does not start a new task/);
+  assert.match(textOf(result.messages[1]), /must not cause another declaration/);
   assert.equal(result.messages[2], user);
 });
 

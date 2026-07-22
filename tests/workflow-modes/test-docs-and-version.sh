@@ -166,6 +166,7 @@ runner_contract_valid() {
   expected=""
   for test in \
     test-selector-contract.sh \
+    test-portable-mode-protocol.sh \
     test-planning-gates.sh \
     test-execution-gates.sh \
     test-evidence-gates.sh \
@@ -333,6 +334,7 @@ else
 fi
 for test in \
   test-selector-contract.sh \
+  test-portable-mode-protocol.sh \
   test-planning-gates.sh \
   test-execution-gates.sh \
   test-evidence-gates.sh \

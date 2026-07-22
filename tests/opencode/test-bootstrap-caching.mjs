@@ -36,6 +36,9 @@ const firstOutput = makeOutput(`${scenario} bootstrap first step`);
 await transform({}, firstOutput);
 const afterFirst = { existsCount, readCount };
 
+await transform({}, firstOutput);
+const afterSameOutput = { existsCount, readCount };
+
 const secondOutput = makeOutput(`${scenario} bootstrap second step`);
 await transform({}, secondOutput);
 const afterSecond = { existsCount, readCount };
@@ -43,14 +46,19 @@ const afterSecond = { existsCount, readCount };
 const result = {
   scenario,
   firstBootstrapParts: countBootstrapParts(firstOutput),
+  sameOutputBootstrapParts: countBootstrapParts(firstOutput),
   secondBootstrapParts: countBootstrapParts(secondOutput),
+  explainsTaskContinuity: bootstrapText(firstOutput).includes('does not start a new task'),
+  forbidsRedeclarationAfterReinjection: bootstrapText(firstOutput).includes('must not cause another declaration'),
   staleMentionMapping: bootstrapText(firstOutput).includes('@mention'),
   staleTaskMapping: bootstrapText(firstOutput).includes('`Task` tool with subagents'),
   mapsSubagentToTask: bootstrapText(firstOutput).includes('`task` with `subagent_type: "general"`'),
   mapsMutationToApplyPatch: bootstrapText(firstOutput).includes('`apply_patch`'),
   firstReadCount: afterFirst.readCount,
+  sameOutputReadCount: afterSameOutput.readCount,
   secondReadCount: afterSecond.readCount,
   firstExistsCount: afterFirst.existsCount,
+  sameOutputExistsCount: afterSameOutput.existsCount,
   secondExistsCount: afterSecond.existsCount,
 };
 
@@ -101,14 +109,26 @@ function assertPresentBootstrap(result) {
   if (result.secondBootstrapParts !== 1) {
     failures.push(`expected second transform to inject one bootstrap part, got ${result.secondBootstrapParts}`);
   }
+  if (result.sameOutputBootstrapParts !== 1) {
+    failures.push(`expected reinjection guard to retain exactly one bootstrap part, got ${result.sameOutputBootstrapParts}`);
+  }
+  if (!result.explainsTaskContinuity || !result.forbidsRedeclarationAfterReinjection) {
+    failures.push('expected injected protocol to preserve active task state across duplicate injection and compaction');
+  }
   if (result.firstReadCount !== 1) {
     failures.push(`expected first transform to read SKILL.md once, got ${result.firstReadCount}`);
   }
   if (result.secondReadCount !== result.firstReadCount) {
     failures.push(`expected cached second transform to do no additional reads, got ${result.secondReadCount - result.firstReadCount}`);
   }
+  if (result.sameOutputReadCount !== result.firstReadCount) {
+    failures.push(`expected duplicate-injection guard to do no additional reads, got ${result.sameOutputReadCount - result.firstReadCount}`);
+  }
   if (result.secondExistsCount !== result.firstExistsCount) {
     failures.push(`expected cached second transform to do no additional exists checks, got ${result.secondExistsCount - result.firstExistsCount}`);
+  }
+  if (result.sameOutputExistsCount !== result.firstExistsCount) {
+    failures.push(`expected duplicate-injection guard to do no additional exists checks, got ${result.sameOutputExistsCount - result.firstExistsCount}`);
   }
   if (result.staleMentionMapping) {
     failures.push('expected OpenCode bootstrap not to teach @mention subagent syntax');
@@ -132,6 +152,9 @@ function assertMissingBootstrap(result) {
   }
   if (result.secondBootstrapParts !== 0) {
     failures.push(`expected no bootstrap on second missing-file transform, got ${result.secondBootstrapParts}`);
+  }
+  if (result.sameOutputBootstrapParts !== 0) {
+    failures.push(`expected no bootstrap on repeated missing-file transform, got ${result.sameOutputBootstrapParts}`);
   }
   if (result.firstReadCount !== 0 || result.secondReadCount !== 0) {
     failures.push(`expected missing file path to avoid reads, got ${result.secondReadCount}`);

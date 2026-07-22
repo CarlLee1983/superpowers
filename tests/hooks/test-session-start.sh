@@ -163,6 +163,24 @@ assert_command_output \
     bash "$HOOK_UNDER_TEST"
 
 assert_command_output \
+    "hook-injected hosts declare the portable profile boundary" \
+    "nested" \
+    "HOOK-INJECTED MODE PROFILE: host context injection is bootstrap transport, not task-specific assistant output. The Mode declaration is the first task-specific visible assistant output; no project tool or mutation may precede it." \
+    "" \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
+    "hook-injected hosts ship the canonical Mode grammar" \
+    "nested" \
+    "Mode: <lean|standard|strict> — <brief reason>." \
+    "Mode: <lean|standard|strict> — <reason>." \
+    "$claude_home" \
+    CLAUDE_PLUGIN_ROOT="$REPO_ROOT" \
+    bash "$HOOK_UNDER_TEST"
+
+assert_command_output \
     "Claude Code injects the selector source" \
     "nested" \
     "# Selecting Workflow Mode" \
