@@ -1,9 +1,12 @@
 {
   "name": "superpowers",
-  "version": "6.1.1-adaptive.4",
+  "version": "6.1.1-adaptive.5",
   "description": "Superpowers skills and runtime bootstrap for coding agents",
   "type": "module",
   "main": ".opencode/plugins/superpowers.js",
+  "scripts": {
+    "test": "bash tests/opencode/run-tests.sh && node --experimental-strip-types --test tests/pi/test-pi-extension.mjs && bash tests/kimi/run-tests.sh && bash tests/antigravity/run-tests.sh && bash tests/codex/test-marketplace-manifest.sh"
+  },
   "keywords": [
     "pi-package",
     "skills",

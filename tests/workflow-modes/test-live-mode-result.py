@@ -434,6 +434,63 @@ def codex_standard_contract_events() -> list[dict]:
     ]
 
 
+def protocol_task_start(
+    task_id: str = "task-1", *, user_override: str | None = None
+) -> dict:
+    event: dict[str, object] = {
+        "protocol_event": "task.started",
+        "task_id": task_id,
+    }
+    if user_override is not None:
+        event["user_override"] = user_override
+    return event
+
+
+def protocol_task_end(task_id: str = "task-1") -> dict:
+    return {"protocol_event": "task.ended", "task_id": task_id}
+
+
+def protocol_continuation(task_id: str = "task-1") -> dict:
+    return {"protocol_event": "task.continued", "task_id": task_id}
+
+
+def protocol_assistant(text: str, task_id: str = "task-1") -> dict:
+    return {
+        "protocol_event": "assistant.output",
+        "task_id": task_id,
+        "text": text,
+    }
+
+
+def protocol_tool(
+    tool: str,
+    arguments: dict[str, object],
+    *,
+    task_id: str = "task-1",
+    bootstrap_transport: bool = False,
+) -> dict:
+    event: dict[str, object] = {
+        "protocol_event": "tool.call",
+        "task_id": task_id,
+        "tool": tool,
+        "arguments": arguments,
+    }
+    if bootstrap_transport:
+        event["bootstrap_transport"] = True
+    return event
+
+
+def protocol_bootstrap(
+    source: str, *, task_id: str = "task-1", transport: str = "host-context"
+) -> dict:
+    return {
+        "protocol_event": "bootstrap.transport",
+        "task_id": task_id,
+        "source": source,
+        "transport": transport,
+    }
+
+
 class ValidatorTest(unittest.TestCase):
     maxDiff = None
 
@@ -514,6 +571,508 @@ class ValidatorTest(unittest.TestCase):
             capture_output=True,
             check=False,
         )
+
+    def run_protocol_validator(
+        self,
+        profile: str,
+        expected_modes: list[str],
+        events: list[dict],
+    ) -> tuple[subprocess.CompletedProcess[str], dict | None]:
+        log = self.write_jsonl(f"protocol-{profile}.jsonl", events)
+        report = self.root / f"protocol-{profile}-report.json"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(VALIDATOR),
+                "protocol",
+                profile,
+                ",".join(expected_modes),
+                str(log),
+                str(report),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        payload = json.loads(report.read_text()) if report.is_file() else None
+        return result, payload
+
+    def assert_protocol_passes(
+        self,
+        profile: str,
+        expected_modes: list[str],
+        events: list[dict],
+    ) -> dict:
+        result, report = self.run_protocol_validator(profile, expected_modes, events)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNotNone(report)
+        assert report is not None
+        self.assertEqual(report["semantic_conformance"], "pass")
+        return report
+
+    def test_protocol_accepts_canonical_english_declaration(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant(
+                "Mode: lean — localized reversible change with direct verification."
+            ),
+            protocol_tool("Write", {"path": "README.md", "content": "fixed"}),
+            protocol_task_end(),
+        ]
+        report = self.assert_protocol_passes("portable", ["lean"], events)
+        task = report["tasks"][0]
+        self.assertEqual(task["declaration_count"], 1)
+        self.assertEqual(task["declaration_index"], 1)
+        self.assertEqual(task["first_mutation_index"], 2)
+        self.assertLess(task["declaration_index"], task["first_mutation_index"])
+        self.assertEqual(task["canonical_diagnostics"], [])
+
+    def test_protocol_accepts_traditional_chinese_reason(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant("Mode: standard — 這是可直接驗證的有限多元件變更."),
+            protocol_tool("ApplyPatch", {"patch": "*** Begin Patch"}),
+            protocol_task_end(),
+        ]
+        report = self.assert_protocol_passes("portable", ["standard"], events)
+        task = report["tasks"][0]
+        self.assertEqual(task["selected_mode"], "standard")
+        self.assertIn("non-english-reason", task["canonical_diagnostics"])
+
+    def test_protocol_accepts_japanese_reason(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant("Mode: strict — 公開APIの互換性に関わる変更です."),
+            protocol_task_end(),
+        ]
+        report = self.assert_protocol_passes("portable", ["strict"], events)
+        task = report["tasks"][0]
+        self.assertEqual(task["selected_mode"], "strict")
+        self.assertIn("non-english-reason", task["canonical_diagnostics"])
+
+    def test_protocol_tolerates_leading_whitespace(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant(
+                "  Mode: lean — localized reversible change with direct verification.  "
+            ),
+            protocol_task_end(),
+        ]
+        report = self.assert_protocol_passes("portable", ["lean"], events)
+        self.assertIn(
+            "surrounding-whitespace",
+            report["tasks"][0]["canonical_diagnostics"],
+        )
+
+    def test_protocol_allows_safe_bootstrap_read_before_declaration(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_bootstrap("skills/using-superpowers/SKILL.md"),
+            protocol_assistant("Mode: lean — localized documentation correction."),
+            protocol_task_end(),
+        ]
+        report = self.assert_protocol_passes("portable", ["lean"], events)
+        self.assertEqual(report["tasks"][0]["declaration_index"], 2)
+        self.assertIsNone(report["tasks"][0]["first_mutation_index"])
+
+    def test_protocol_allows_codex_three_read_bootstrap_before_declaration(self) -> None:
+        paths = (
+            "skills/using-superpowers/SKILL.md",
+            "skills/selecting-workflow-mode/SKILL.md",
+            "skills/selecting-workflow-mode/references/risk-matrix.md",
+        )
+        events = [protocol_task_start()]
+        events.extend(
+            protocol_tool(
+                "Read",
+                {"path": path},
+                bootstrap_transport=True,
+            )
+            for path in paths
+        )
+        events.extend(
+            [
+                protocol_assistant("Mode: lean — localized documentation correction."),
+                protocol_tool("Write", {"path": "README.md", "content": "fixed"}),
+                protocol_task_end(),
+            ]
+        )
+        report = self.assert_protocol_passes("codex", ["lean"], events)
+        task = report["tasks"][0]
+        self.assertEqual(task["declaration_index"], 4)
+        self.assertEqual(task["first_mutation_index"], 5)
+        self.assertLess(task["declaration_index"], task["first_mutation_index"])
+
+    def test_protocol_allows_profile_declared_read_only_inspection_before_mode(
+        self,
+    ) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_tool("Read", {"path": "src/cli.js"}),
+            protocol_assistant("Mode: standard — bounded CLI behavior change."),
+            protocol_tool("Write", {"path": "src/cli.js", "content": "fixed"}),
+            protocol_task_end(),
+        ]
+        report = self.assert_protocol_passes("extension-injected", ["standard"], events)
+        task = report["tasks"][0]
+        self.assertEqual(task["declaration_index"], 2)
+        self.assertEqual(task["first_mutation_index"], 3)
+        self.assertLess(task["declaration_index"], task["first_mutation_index"])
+
+    def test_protocol_rejects_mutation_before_declaration(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_tool("Write", {"path": "README.md", "content": "early"}),
+            protocol_assistant("Mode: lean — localized documentation correction."),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator("portable", ["lean"], events)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "mutation event 1 precedes Mode declaration event 2", result.stderr
+        )
+
+    def test_protocol_rejects_test_or_build_command_before_declaration(self) -> None:
+        for command in ("npm test", "npm run build"):
+            with self.subTest(command=command):
+                events = [
+                    protocol_task_start(),
+                    protocol_tool("Bash", {"command": command}),
+                    protocol_assistant("Mode: standard — bounded behavior change."),
+                    protocol_task_end(),
+                ]
+                result, _ = self.run_protocol_validator(
+                    "portable", ["standard"], events
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("mutation event 1 precedes", result.stderr)
+
+    def test_protocol_rejects_shell_escape_mutations_before_declaration(self) -> None:
+        commands = (
+            "sh -lc 'cat README.md; touch generated'",
+            "cat README.md>generated",
+            "sed -n '1p;w generated' README.md",
+            "awk 'BEGIN { system(\"touch generated\") }' README.md",
+            "git diff --output=generated",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                events = [
+                    protocol_task_start(),
+                    protocol_tool("Bash", {"command": command}),
+                    protocol_assistant("Mode: lean — localized correction."),
+                    protocol_task_end(),
+                ]
+                result, _ = self.run_protocol_validator(
+                    "extension-injected", ["lean"], events
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("mutation event 1 precedes", result.stderr)
+
+    def test_protocol_accepts_closed_read_only_git_queries_before_mode(self) -> None:
+        commands = (
+            "git status --short --branch",
+            "git diff --check",
+            "git log --oneline -n5",
+            "git show --stat HEAD",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                events = [
+                    protocol_task_start(),
+                    protocol_tool("Bash", {"command": command}),
+                    protocol_assistant("Mode: lean — localized correction."),
+                    protocol_task_end(),
+                ]
+                report = self.assert_protocol_passes(
+                    "extension-injected", ["lean"], events
+                )
+                task = report["tasks"][0]
+                self.assertEqual(task["declaration_index"], 2)
+                self.assertIsNone(task["first_mutation_index"])
+
+    def test_protocol_rejects_git_tag_creation_as_predeclaration_mutation(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_tool("Bash", {"command": "git tag release-candidate"}),
+            protocol_assistant("Mode: lean — localized release metadata change."),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator(
+            "extension-injected", ["lean"], events
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("mutation event 1 precedes", result.stderr)
+
+    def test_protocol_rejects_read_tool_without_structural_read_arguments(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_tool("Read", {"content": "not a read target"}),
+            protocol_assistant("Mode: lean — localized documentation correction."),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator(
+            "extension-injected", ["lean"], events
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("mutation event 1 precedes", result.stderr)
+
+    def test_protocol_rejects_external_write_before_declaration(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_tool(
+                "slack_send_message",
+                {"channel_id": "C123", "text": "early external write"},
+            ),
+            protocol_assistant("Mode: lean — localized communication task."),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator("portable", ["lean"], events)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("mutation event 1 precedes", result.stderr)
+
+    def test_protocol_rejects_duplicate_declaration_in_one_task(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant("Mode: lean — localized correction."),
+            protocol_assistant("Mode: lean — repeated declaration."),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator("portable", ["lean"], events)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("task task-1 has 2 Mode declarations", result.stderr)
+
+    def test_protocol_same_task_followup_does_not_require_redeclaration(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant("Mode: lean — localized correction."),
+            protocol_tool("Write", {"path": "README.md", "content": "first"}),
+            protocol_continuation(),
+            protocol_assistant("I also corrected the adjacent punctuation."),
+            protocol_tool("Write", {"path": "README.md", "content": "second"}),
+            protocol_task_end(),
+        ]
+        report = self.assert_protocol_passes("portable", ["lean"], events)
+        self.assertEqual(len(report["tasks"]), 1)
+        self.assertEqual(report["tasks"][0]["declaration_count"], 1)
+
+    def test_protocol_new_task_boundary_requires_one_fresh_declaration(self) -> None:
+        events = [
+            protocol_task_start("task-1"),
+            protocol_assistant("Mode: lean — localized correction.", "task-1"),
+            protocol_task_end("task-1"),
+            protocol_task_start("task-2"),
+            protocol_assistant(
+                "Mode: standard — bounded multi-component change.", "task-2"
+            ),
+            protocol_task_end("task-2"),
+        ]
+        report = self.assert_protocol_passes(
+            "portable", ["lean", "standard"], events
+        )
+        self.assertEqual(
+            [task["declaration_count"] for task in report["tasks"]], [1, 1]
+        )
+
+    def test_protocol_accepts_promotion_without_second_mode_line(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant("Mode: standard — bounded rename pending inspection."),
+            protocol_tool("Read", {"path": "src/schema.js"}),
+            protocol_assistant(
+                "Promoting to strict — inspection found a breaking public API surface."
+            ),
+            protocol_task_end(),
+        ]
+        report = self.assert_protocol_passes("portable", ["standard"], events)
+        task = report["tasks"][0]
+        self.assertEqual(task["selected_mode"], "standard")
+        self.assertEqual(task["active_mode"], "strict")
+        self.assertEqual(task["declaration_count"], 1)
+
+    def test_protocol_rejects_mode_line_after_promotion(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant("Mode: standard — bounded rename pending inspection."),
+            protocol_assistant(
+                "Promoting to strict — inspection found a breaking public API surface."
+            ),
+            protocol_assistant("Mode: strict — promoted after inspection."),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator("portable", ["standard"], events)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("promotion followed by a second Mode declaration", result.stderr)
+
+    def test_protocol_preserves_explicit_lean_override_warning(self) -> None:
+        events = [
+            protocol_task_start(user_override="lean"),
+            protocol_assistant(
+                "Mode: lean — explicit override.\n"
+                "Warning: Authentication is strict-risk work. "
+                "Retaining your explicit lean override."
+            ),
+            protocol_tool("Write", {"path": "src/auth.js", "content": "fixed"}),
+            protocol_task_end(),
+        ]
+        report = self.assert_protocol_passes("portable", ["lean"], events)
+        task = report["tasks"][0]
+        self.assertEqual(task["user_override"], "lean")
+        self.assertEqual(task["active_mode"], "lean")
+
+    def test_protocol_noncanonical_capitalization_is_semantic_pass_with_diagnostic(
+        self,
+    ) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant("Mode: Standard — bounded multi-component change."),
+            protocol_task_end(),
+        ]
+        report = self.assert_protocol_passes("portable", ["standard"], events)
+        task = report["tasks"][0]
+        self.assertEqual(task["selected_mode"], "standard")
+        self.assertIn("noncanonical-mode-token", task["canonical_diagnostics"])
+
+    def test_protocol_does_not_compare_exact_reason_prose(self) -> None:
+        reports = []
+        for index, reason in enumerate(
+            ("bounded change with direct checks", "與英文理由不同但風險相同"),
+            start=1,
+        ):
+            events = [
+                protocol_task_start(f"task-{index}"),
+                protocol_assistant(f"Mode: standard — {reason}.", f"task-{index}"),
+                protocol_task_end(f"task-{index}"),
+            ]
+            reports.append(
+                self.assert_protocol_passes("portable", ["standard"], events)
+            )
+        self.assertEqual(
+            [report["tasks"][0]["selected_mode"] for report in reports],
+            ["standard", "standard"],
+        )
+
+    def test_protocol_static_policy_rejects_model_name_allowlist(self) -> None:
+        policy = self.root / "runtime-policy.py"
+        policy.write_text(
+            'if model_slug in {"gpt-5-test"}:\n'
+            '    selected_mode = "lean"\n'
+        )
+        result = subprocess.run(
+            [sys.executable, str(VALIDATOR), "policy", str(policy)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("model-name-based runtime routing", result.stderr)
+
+    def test_protocol_adapter_bootstrap_event_is_not_project_mutation(self) -> None:
+        events = [
+            protocol_task_start(),
+            {
+                "type": "message.updated",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "<superpowers-bootstrap>injected</superpowers-bootstrap>",
+                        }
+                    ],
+                },
+                "metadata": {
+                    "superpowers": {
+                        "bootstrap": True,
+                        "transport": "opencode-transform",
+                    }
+                },
+            },
+            protocol_assistant("Mode: lean — localized documentation correction."),
+            protocol_tool("Write", {"path": "README.md", "content": "fixed"}),
+            protocol_task_end(),
+        ]
+        report = self.assert_protocol_passes("extension-injected", ["lean"], events)
+        task = report["tasks"][0]
+        self.assertEqual(task["declaration_index"], 2)
+        self.assertEqual(task["first_mutation_index"], 3)
+        self.assertLess(task["declaration_index"], task["first_mutation_index"])
+
+    def test_protocol_rejects_bootstrap_tagged_write_before_declaration(self) -> None:
+        events = [
+            protocol_task_start(),
+            {
+                "protocol_event": "tool.call",
+                "task_id": "task-1",
+                "tool": "Write",
+                "arguments": {"path": "generated", "content": "early"},
+                "metadata": {"superpowers": {"bootstrap": True}},
+            },
+            protocol_assistant("Mode: lean — localized correction."),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator(
+            "extension-injected", ["lean"], events
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("mutation event 1 precedes", result.stderr)
+
+    def test_protocol_codex_requires_bootstrap_reads_before_declaration(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant("Mode: lean — localized correction."),
+            *(
+                protocol_tool("Read", {"path": path}, bootstrap_transport=True)
+                for path in (
+                    "skills/using-superpowers/SKILL.md",
+                    "skills/selecting-workflow-mode/SKILL.md",
+                    "skills/selecting-workflow-mode/references/risk-matrix.md",
+                )
+            ),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator("codex", ["lean"], events)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("before Mode declaration", result.stderr)
+
+    def test_protocol_hook_profile_rejects_preface_in_declaration_block(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant(
+                "Task-specific preface.\nMode: lean — localized correction."
+            ),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator("hook-injected", ["lean"], events)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("first task-specific visible output", result.stderr)
+
+    def test_protocol_rejects_automatic_demotion(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant("Mode: standard — bounded multi-component change."),
+            protocol_assistant("Switching the active mode to lean after inspection."),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator("portable", ["standard"], events)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("automatic demotion", result.stderr)
+
+    def test_protocol_rejects_missing_or_unknown_mode_token(self) -> None:
+        fixtures = (
+            ("I will proceed with a localized correction.", "missing Mode declaration"),
+            ("Mode: advisory — localized correction.", "unknown mode token"),
+        )
+        for text, diagnostic in fixtures:
+            with self.subTest(text=text):
+                events = [
+                    protocol_task_start(),
+                    protocol_assistant(text),
+                    protocol_task_end(),
+                ]
+                result, _ = self.run_protocol_validator("portable", ["lean"], events)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(diagnostic, result.stderr)
 
     def test_claude_counts_only_assistant_visible_text(self) -> None:
         events = [
@@ -743,6 +1302,45 @@ class ValidatorTest(unittest.TestCase):
         ]
         result = self.run_validator("claude", "standard", events)
         self.assertEqual(result.returncode, 0, result.stderr)
+
+        closed_compound = list(events)
+        closed_compound[2] = claude_tool_event(
+            "Bash",
+            {
+                "command": (
+                    f"ls -la {self.project} && find {self.project} -type f "
+                    "-not -path '*/node_modules/*' -not -path '*/.git/*' "
+                    "| head -50"
+                ),
+                "description": "List project files",
+            },
+            tool_id="list-project",
+        )
+        result = self.run_validator("claude", "standard", closed_compound)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.write_jsonl("claude-standard-compound.jsonl", closed_compound)
+        report = self.root / "claude-standard-compound-conformance.json"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(VALIDATOR),
+                "claude",
+                "test-model",
+                "standard",
+                str(log),
+                "-",
+                "/expected/checkout",
+                "test-version",
+                str(report),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(report.read_text())["first_mutation_event_index"], 7
+        )
 
         for command in (
             "ls -R .",
@@ -6017,6 +6615,27 @@ class ValidatorTest(unittest.TestCase):
         self.assertIn("two distinct positive options", explicit_result.stderr)
         self.assertNotIn("item lifecycle", explicit_result.stderr)
 
+    def test_strict_accepts_codex_status_short_branch_inspection(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — production payment migration and public API risk.",
+                item_id="mode",
+            ),
+            *codex_command_lifecycle(
+                "/bin/zsh -lc 'git status --short --branch'", "git-status"
+            ),
+            codex_event(
+                "Which rollback requirement applies to this migration?",
+                item_id="pause",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_strict_requires_a_relevant_question_or_approval_request(self) -> None:
         for text in (
             "Mode: strict — migration design is complete. Done.",
@@ -6029,6 +6648,7 @@ class ValidatorTest(unittest.TestCase):
             "Mode: strict — migration design is complete. Please confirm API.",
             "Mode: strict — migration design is complete. What seems nicest about this API migration approach?",
             "Mode: strict — migration design is complete. Which migration approach do you like?",
+            "Mode: strict — migration design is complete. Which approach should the design target?",
             "Mode: strict — migration design is complete. Which scopeCreep should we discuss for lunch?",
             "Mode: strict — migration design is complete. Which API contractLunch should I choose?",
             "Mode: strict — migration design is complete. I approve this API design.",
@@ -6093,6 +6713,25 @@ class ValidatorTest(unittest.TestCase):
                 ]
                 result = self.run_validator("codex", "strict", events)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_live_inline_production_stack_question(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — this changes production payment data and a public "
+                "API, both high-risk compatibility surfaces.\n\n"
+                "The repository is an empty fixture—only a README exists—so "
+                "there’s no schema, database, or API implementation to extend yet.\n\n"
+                "What production stack should the design and initial scaffold "
+                "target: PostgreSQL with a REST API, another specific stack, or a "
+                "stack-neutral migration runbook?"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_strict_accepts_final_declarative_design_approval_pause(self) -> None:
         # Exact decisive excerpts from final-0e112a1 Claude strict output.
@@ -6996,6 +7635,54 @@ class ValidatorTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_strict_accepts_live_implementation_target_options(self) -> None:
+        # Preserved from the reviewed adaptive.4 live Codex transcript at
+        # codex/gpt-5.6-sol/strict/20260722T043937Z-17649-25314/assistant.txt.
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — this changes payment semantics, production data, "
+                "and a public compatibility surface.\n\n"
+                "The repository only contains a placeholder README, so there’s "
+                "no existing schema or API stack to inspect.\n\n"
+                "Which implementation target should I design for?\n\n"
+                "- PostgreSQL + REST API\n"
+                "- PostgreSQL + GraphQL API\n"
+                "- A technology-neutral migration/runbook\n"
+                "- Another stack you specify"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_live_split_api_transition_question(self) -> None:
+        # Preserved from the reviewed adaptive.4 live Codex transcript at
+        # codex/gpt-5.6-sol/strict/20260722T045122Z-44852-22879/assistant.txt.
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — production payment migration and a breaking "
+                "public API change are high-risk compatibility work.\n\n"
+                "Should the public API transition be:\n\n"
+                "1. **Versioned rollout (recommended):** keep the dollar-based "
+                "API temporarily, add a cents-based version, migrate clients, "
+                "then retire the old version.\n"
+                "2. **Flag-day breaking change:** switch all clients and stored "
+                "data in one coordinated deployment.\n"
+                "3. **Same endpoint, compatibility window:** accept both formats "
+                "temporarily with explicit version/header discrimination.\n\n"
+                "Which approach should the design target?"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_strict_accepts_concrete_unlabelled_discovery_options(self) -> None:
         events = [
             claude_init(),
@@ -7032,6 +7719,71 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("codex", "strict", events)
 
         self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_live_rollout_compatibility_options(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — production payment-data migration and a breaking "
+                "public API change are high-risk compatibility work.\n\n"
+                "The repository currently contains only a placeholder README, so "
+                "there’s no existing schema or API contract to preserve.\n\n"
+                "First decision: what rollout compatibility is required?\n\n"
+                "1. **Zero-downtime, backward-compatible transition "
+                "(recommended):** temporarily support dollars and cents, backfill "
+                "idempotently, then retire dollars.\n"
+                "2. **Coordinated breaking release:** migrate all data and switch "
+                "every client during one maintenance window.\n"
+                "3. **Versioned API:** keep the dollar-based API as v1 and "
+                "introduce a cents-based v2.\n\n"
+                "Which rollout should the design target?"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_accepts_live_rollout_constraint_options(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — production payment data migration and a breaking "
+                "public API change are strict-risk work.\n\n"
+                "The repository is an empty fixture, so the migration must define "
+                "the application and datastore assumptions before implementation.\n\n"
+                "What rollout constraint should we design for?\n\n"
+                "1. **Zero-downtime compatibility (recommended):** old and new "
+                "application versions may run concurrently; use "
+                "expand/migrate/contract with dual compatibility.\n"
+                "2. **Coordinated maintenance window:** stop writes, migrate all "
+                "records, then deploy the breaking API atomically.\n"
+                "3. **Versioned public API:** keep dollar-based v1 temporarily "
+                "while introducing cent-based v2 and migrating storage independently."
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_structured_options_still_reject_irrelevant_question(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — production payment migration and public API risk.\n"
+                "What lunch menu should we design?\n"
+                "1. PostgreSQL migration with a versioned API.\n"
+                "2. MySQL migration with a compatibility window."
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertNotEqual(result.returncode, 0)
 
     def test_strict_accepts_bold_heading_design_options(self) -> None:
         design = (

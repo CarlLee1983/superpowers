@@ -44,10 +44,112 @@ BOOTSTRAP_PATHS = (
     "skills/selecting-workflow-mode/references/risk-matrix.md",
 )
 REQUIRED_ESCALATION_INSPECTIONS = {"src/schema.js", "src/billing.js"}
+PORTABLE_MODES = ("lean", "standard", "strict")
+PORTABLE_MODE_LINE = re.compile(
+    r"(?im)^(?P<leading>[ \t]*)Mode(?P<before_colon>[ \t]*):"
+    r"(?P<after_colon>[ \t]*)(?P<mode>[A-Za-z]+)"
+    r"(?P<before_dash>[ \t]*)(?P<dash>—|-)"
+    r"(?P<after_dash>[ \t]*)(?P<reason>[^\r\n]*?)(?P<trailing>[ \t]*)$"
+)
+PORTABLE_PROMOTION_LINE = re.compile(
+    r"(?im)^Promoting\s+to\s+(?P<mode>lean|standard|strict)\s+—\s*"
+    r"(?P<reason>[^\r\n]+)$"
+)
+PORTABLE_PROFILE_PROJECT_INSPECTION = {
+    "portable": False,
+    "codex": False,
+    "hook-injected": False,
+    "extension-injected": True,
+    "instructions-file": False,
+}
+MUTATING_TOOL_NAMES = {
+    "applypatch",
+    "apply_patch",
+    "create",
+    "delete",
+    "edit",
+    "file_change",
+    "move",
+    "rename",
+    "test",
+    "write",
+}
+READ_ONLY_TOOL_NAMES = {
+    "fetch",
+    "find",
+    "glob",
+    "grep",
+    "list",
+    "read",
+    "read_file",
+    "repository_search",
+    "search",
+    "view_file",
+    "web_search",
+}
+SHELL_TOOL_NAMES = {
+    "bash",
+    "command_execution",
+    "exec",
+    "exec_command",
+    "shell",
+    "terminal",
+    "run_command",
+}
+MUTATING_SHELL_COMMANDS = {
+    "bun",
+    "cargo",
+    "composer",
+    "deno",
+    "dotnet",
+    "gradle",
+    "make",
+    "mvn",
+    "npm",
+    "npx",
+    "pnpm",
+    "poetry",
+    "pytest",
+    "ruff",
+    "tox",
+    "yarn",
+}
+READ_ONLY_SHELL_COMMANDS = {
+    "cat",
+    "cut",
+    "git",
+    "head",
+    "ls",
+    "pwd",
+    "rg",
+    "sed",
+    "tail",
+    "wc",
+}
+CODEX_PORTABLE_BOOTSTRAP_PATHS = (
+    "skills/using-superpowers/SKILL.md",
+    "skills/selecting-workflow-mode/SKILL.md",
+    "skills/selecting-workflow-mode/references/risk-matrix.md",
+)
 
 
 class ValidationError(Exception):
     pass
+
+
+@dataclass
+class PortableTaskState:
+    task_id: str
+    expected_mode: str
+    user_override: str | None
+    declarations: list[tuple[int, str]]
+    diagnostics: list[str]
+    first_mutation_index: int | None = None
+    first_project_inspection_index: int | None = None
+    promotion_index: int | None = None
+    active_mode: str | None = None
+    codex_bootstrap_paths: list[str] | None = None
+    codex_bootstrap_indexes: list[int] | None = None
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -901,6 +1003,58 @@ def is_safe_ls_discovery_command(
     )
 
 
+def is_safe_find_discovery_command(
+    command: str, expected_project_root: Path
+) -> bool:
+    pipeline = shell_pipeline_arguments(command)
+    if pipeline is None or len(pipeline) not in {1, 2}:
+        return False
+    arguments = pipeline[0]
+    if len(arguments) < 4 or arguments[0] != "find":
+        return False
+    root = project_path(
+        arguments[1], expected_project_root, require_directory=True
+    )
+    if (
+        root != expected_project_root.resolve(strict=True)
+        or arguments[2:4] != ["-type", "f"]
+    ):
+        return False
+    exclusions = arguments[4:]
+    if len(exclusions) % 3 != 0:
+        return False
+    allowed_exclusions = {
+        "*/.git/*",
+        "*/node_modules/*",
+        "*/vendor/*",
+    }
+    excluded_paths: list[str] = []
+    for index in range(0, len(exclusions), 3):
+        if exclusions[index : index + 2] != ["-not", "-path"]:
+            return False
+        excluded_paths.append(exclusions[index + 2])
+    if (
+        len(excluded_paths) != len(set(excluded_paths))
+        or any(path not in allowed_exclusions for path in excluded_paths)
+    ):
+        return False
+    if len(pipeline) == 1:
+        return True
+    head = pipeline[1]
+    if (
+        len(head) == 2
+        and head[0] == "head"
+        and re.fullmatch(r"-[1-9]\d*", head[1])
+    ):
+        return int(head[1][1:]) <= 1000
+    return (
+        len(head) == 3
+        and head[:2] == ["head", "-n"]
+        and re.fullmatch(r"[1-9]\d*", head[2]) is not None
+        and int(head[2]) <= 1000
+    )
+
+
 def is_generic_codex_bootstrap_narration(text: str) -> bool:
     """Allow only platform-facing workflow narration before Codex's Mode line."""
     return (
@@ -1133,10 +1287,46 @@ def has_relevant_pause(text: str) -> bool:
             for pattern in requirement_signals
         ):
             return True
+    split_design_target = re.search(
+        r"(?mi)^\s*which\s+approach\s+should\s+(?:the\s+)?design\s+"
+        r"target\s*\?\s*\Z",
+        text,
+    )
+    if split_design_target is not None:
+        context = text[: split_design_target.start()]
+        decision_intro = re.search(
+            r"(?i)\b(?:public\s+API|API|migration|rollout|compatibility)\s+"
+            r"(?:transition|approach|strategy|plan|contract|change)\s+be\s*:",
+            context,
+        )
+        option_lines = re.findall(
+            r"(?m)^\s*(?:[-*]|[1-9][0-9]*[.)])\s+(.+)$", context
+        )
+        concrete_option = re.compile(
+            r"\b(?:API|version|client|data|deployment|endpoint|format|header|"
+            r"migration|rollout|compatibility|breaking|database|runbook)\b",
+            re.IGNORECASE,
+        )
+        high_risk_signals = (
+            r"\b(?:payment|billing|finance|amount|dollars?|cents?)\b",
+            r"\b(?:production|data\s+migration|schema|migration|backfill)\b",
+            r"\b(?:public\s+API|compatibility|breaking|API\s+versioning?)\b",
+        )
+        if (
+            decision_intro is not None
+            and len(option_lines) >= 2
+            and all(concrete_option.search(option) for option in option_lines)
+            and sum(
+                re.search(pattern, text, re.IGNORECASE) is not None
+                for pattern in high_risk_signals
+            )
+            >= 2
+        ):
+            return True
     decision_object_body = (
-        r"(?:requirements?|scope|rollback\s+requirements?|"
+        r"(?:requirements?|scope|production\s+stack|rollback\s+requirements?|"
         r"migration\s+(?:approach|plan|strategy|options?)|"
-        r"rollout(?:\s+(?:approach|plan|strategy|options?))?|"
+        r"rollout(?:\s+(?:approach|plan|strategy|options?|compatibility))?|"
         r"public\s+API\s+transition|"
         r"(?:breaking\s+)?public\s+(?:API\s+)?contract\s+rename|"
         r"API\s+(?:compatibility|contract(?:\s+change)?|changes?|versions?|"
@@ -1160,6 +1350,11 @@ def has_relevant_pause(text: str) -> bool:
         r"proceed\s+with|roll\s+out)"
     )
     decision_forms = (
+        rf"^\s*(?:first\s+decision:\s*)?what\s+{decision_target}\s+"
+        rf"(?:is|are)\s+required\s*\?\s*$",
+        rf"^\s*(?:what|which)\s+{decision_target}\s+should\s+(?:the\s+)?"
+        rf"(?:design|initial\s+scaffold|design\s+and\s+initial\s+scaffold)\s+"
+        rf"target\b[^?]*\?\s*$",
         rf"^\s*which\s+{decision_target}\s+should\s+(?:I|we)\s+"
         rf"(?:use|choose|follow)\s*\?\s*$",
         rf"^\s*which\s+{decision_target}\s+do\s+you\s+"
@@ -1260,17 +1455,29 @@ def has_concrete_discovery_pause(text: str) -> bool:
     question = re.search(
         r"(?mi)^\s*(?:\*\*)?(?:(?:first|next)\s+"
         r"(?:decision|question)\s*:\s*)?"
-        r"((?:(?:where|what|which|how)\b[^?\n]*"
-        r"(?:system|stack|migration|public\s+API|API)\b[^?\n]*|"
-        r"what\s+should\s+(?:this|the)\s+design\s+target)\?)",
+        r"((?:where|what|which|how)\b[^?\n]*\?)(?:\*\*)?",
         text,
     )
     if question is None:
         return False
     question_text = question.group(1)
+    domain_signal = re.search(
+        r"\b(?:system|stack|implementation|migration|public\s+API|API|rollout|"
+        r"compatibility|schema|datastore|storage|payment|billing)\b",
+        question_text,
+        re.IGNORECASE,
+    )
+    generic_design_target = re.fullmatch(
+        r"what\s+should\s+(?:this|the)\s+design\s+target\?",
+        question_text.strip(),
+        re.IGNORECASE,
+    )
+    if domain_signal is None and generic_design_target is None:
+        return False
     if re.search(
         r"\b(?:live|stack|expose|store|format|transition|version|migrat\w*|"
-        r"architecture|implementation|look\s+like|use|target)\b",
+        r"architecture|implementation|look\s+like|use|target|design|require\w*|"
+        r"constraint|approach|plan|strategy)\b",
         question_text,
         re.IGNORECASE,
     ) is None:
@@ -1394,6 +1601,17 @@ def has_concrete_discovery_pause(text: str) -> bool:
             r"endpoint|interface|versioned|v\d+|schema|migration|transition|"
             r"deprecation|compatibility|breaking|cutoff|in[- ]place|integer|"
             r"dollars?|cents?)\b",
+            re.IGNORECASE,
+        )
+    elif re.search(
+        r"\b(?:rollout|compatibility|constraint)\b",
+        question_text,
+        re.IGNORECASE,
+    ):
+        responsive_signal = re.compile(
+            r"\b(?:transition|migration|migrat\w*|backfill|compatibility|"
+            r"breaking|cutoff|window|dual|concurrent|versioned|v\d+|API|"
+            r"dollars?|cents?|storage|datastore)\b",
             re.IGNORECASE,
         )
     else:
@@ -1586,6 +1804,8 @@ def is_strict_read_only_shell_command(
         command, expected_project_root
     ) or is_safe_git_discovery_command(
         command, expected_project_root
+    ) or is_safe_find_discovery_command(
+        command, expected_project_root
     ) or is_closed_strict_read_only_composition(
         command, expected_project_root
     ):
@@ -1599,34 +1819,6 @@ def is_strict_read_only_shell_command(
             normalized_rg = arguments[:2] + arguments[3:]
             if valid_rg_discovery_arguments(normalized_rg, expected_project_root):
                 return True
-    if len(arguments) != 7 or arguments[0] != "find":
-        return False
-    root = project_path(
-        arguments[1], expected_project_root, require_directory=True
-    )
-    if root != expected_project_root.resolve(strict=True) or arguments[2:] != [
-        "-type",
-        "f",
-        "-not",
-        "-path",
-        "*/.git/*",
-    ]:
-        return False
-    if len(pipeline) == 1:
-        return True
-    head = pipeline[1]
-    if (
-        len(head) == 2
-        and head[0] == "head"
-        and re.fullmatch(r"-[1-9]\d*", head[1])
-    ):
-        return int(head[1][1:]) <= 1000
-    if (
-        len(head) == 3
-        and head[:2] == ["head", "-n"]
-        and re.fullmatch(r"[1-9]\d*", head[2])
-    ):
-        return int(head[2]) <= 1000
     return False
 
 
@@ -1656,11 +1848,17 @@ def is_safe_git_discovery_command(
         explicit_root = True
     if require_explicit_root and not explicit_root:
         return False
-    if tuple(git_arguments) in {
-        ("status", "--short"),
-        ("status", "--porcelain"),
-    }:
-        return True
+    if git_arguments and git_arguments[0] == "status":
+        status_arguments = git_arguments[1:]
+        allowed_status_arguments = {"--short", "--porcelain", "--branch"}
+        return (
+            len(status_arguments) == len(set(status_arguments))
+            and all(
+                argument in allowed_status_arguments
+                for argument in status_arguments
+            )
+            and not {"--short", "--porcelain"}.issubset(status_arguments)
+        )
     if len(git_arguments) < 3 or git_arguments[0] != "log":
         return False
     log_arguments = git_arguments[1:]
@@ -1694,7 +1892,6 @@ def is_closed_strict_read_only_composition(
             token in payload.replace("&&", "")
             for token in (
                 ";",
-                "|",
                 "&",
                 "<",
                 ">",
@@ -1714,6 +1911,13 @@ def is_closed_strict_read_only_composition(
         for segment in segments
         if is_safe_ls_discovery_command(segment, expected_project_root)
     ]
+    find_segments = [
+        segment
+        for segment in segments
+        if is_safe_find_discovery_command(segment, expected_project_root)
+    ]
+    if len(ls_segments) == 1 and len(find_segments) == 1:
+        return True
     git_segments = [
         segment
         for segment in segments
@@ -2087,6 +2291,13 @@ def escalation_records(
                         elif (
                             isinstance(command, str)
                             and is_safe_git_discovery_command(
+                                command, expected_project_root
+                            )
+                        ):
+                            tool_uses[tool_id] = ("discovery", ())
+                        elif (
+                            isinstance(command, str)
+                            and is_closed_strict_read_only_composition(
                                 command, expected_project_root
                             )
                         ):
@@ -3772,6 +3983,843 @@ def require_affirmative_brainstorming(
         )
 
 
+def portable_mode_declarations(
+    text: str,
+) -> list[tuple[re.Match[str], str, list[str]]]:
+    declarations: list[tuple[re.Match[str], str, list[str]]] = []
+    for match in PORTABLE_MODE_LINE.finditer(text):
+        raw_mode = match.group("mode")
+        mode = raw_mode.lower()
+        if mode not in PORTABLE_MODES:
+            raise ValidationError(f"unknown mode token: {raw_mode}")
+        raw_reason = match.group("reason").strip()
+        reason = raw_reason[:-1].strip() if raw_reason.endswith(".") else raw_reason
+        if not reason:
+            raise ValidationError("Mode declaration reason must be non-empty")
+
+        diagnostics: list[str] = []
+        if match.group("leading") or match.group("trailing"):
+            diagnostics.append("surrounding-whitespace")
+        if raw_mode != mode:
+            diagnostics.append("noncanonical-mode-token")
+        if match.group("dash") != "—":
+            diagnostics.append("noncanonical-dash")
+        if not raw_reason.endswith("."):
+            diagnostics.append("missing-terminal-period")
+        if any(ord(character) > 127 for character in reason):
+            diagnostics.append("non-english-reason")
+        if (
+            match.group("before_colon") != ""
+            or match.group("after_colon") != " "
+            or match.group("before_dash") != " "
+            or match.group("after_dash") != " "
+        ):
+            diagnostics.append("additional-whitespace")
+        declarations.append((match, mode, diagnostics))
+    return declarations
+
+
+def portable_adapter_bootstrap_event(event: dict[str, Any]) -> bool:
+    if event.get("protocol_event") == "bootstrap.transport":
+        return (
+            isinstance(event.get("source"), str)
+            and bool(event["source"].strip())
+            and isinstance(event.get("transport"), str)
+            and bool(event["transport"].strip())
+            and "tool" not in event
+            and "arguments" not in event
+        )
+    if (
+        event.get("protocol_event") is not None
+        or "tool" in event
+        or "arguments" in event
+    ):
+        return False
+    metadata = event.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    superpowers = metadata.get("superpowers")
+    message = event.get("message")
+    return (
+        isinstance(superpowers, dict)
+        and superpowers.get("bootstrap") is True
+        and isinstance(message, dict)
+        and message.get("role") == "user"
+        and isinstance(message.get("content"), list)
+    )
+
+
+def portable_shell_tokens(command: str) -> list[str] | None:
+    if "\n" in command or "\r" in command:
+        return None
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        arguments = list(lexer)
+    except ValueError:
+        return None
+    if not arguments or any(
+        re.fullmatch(r"[;&|<>]+", token) for token in arguments
+    ):
+        return None
+    if any(marker in command for marker in ("$(", "${", "`")):
+        return None
+    return arguments
+
+
+def portable_shell_arguments(command: str) -> list[str] | None:
+    arguments = portable_shell_tokens(command)
+    if arguments is None:
+        return None
+    if (
+        len(arguments) == 3
+        and Path(arguments[0]).name in {"bash", "sh", "zsh"}
+        and arguments[1] in {"-c", "-lc"}
+    ):
+        arguments = portable_shell_tokens(arguments[2])
+    return arguments
+
+
+def portable_git_command_is_read_only(arguments: list[str]) -> bool:
+    if len(arguments) < 2:
+        return False
+    subcommand = arguments[1]
+    operands = arguments[2:]
+    common_forbidden = (
+        "--exec",
+        "--ext-diff",
+        "--output",
+        "--textconv",
+    )
+    if any(
+        argument == option or argument.startswith(option + "=")
+        for argument in operands
+        for option in common_forbidden
+    ):
+        return False
+    safe_exact: dict[str, set[str]] = {
+        "diff": {
+            "--",
+            "--cached",
+            "--check",
+            "--exit-code",
+            "--name-only",
+            "--name-status",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--numstat",
+            "--quiet",
+            "--shortstat",
+            "--staged",
+            "--stat",
+            "--summary",
+        },
+        "log": {
+            "--",
+            "--all",
+            "--branches",
+            "--date-order",
+            "--decorate",
+            "--first-parent",
+            "--graph",
+            "--merges",
+            "--name-only",
+            "--name-status",
+            "--no-color",
+            "--no-decorate",
+            "--no-merges",
+            "--oneline",
+            "--remotes",
+            "--reverse",
+            "--stat",
+            "--tags",
+            "--topo-order",
+        },
+        "show": {
+            "--",
+            "--name-only",
+            "--name-status",
+            "--no-color",
+            "--no-patch",
+            "--oneline",
+            "--stat",
+            "--summary",
+            "-s",
+        },
+        "status": {
+            "--",
+            "--branch",
+            "--ignored",
+            "--no-renames",
+            "--porcelain",
+            "--short",
+            "--show-stash",
+            "-b",
+            "-s",
+        },
+        "rev-parse": {
+            "--",
+            "--absolute-git-dir",
+            "--git-common-dir",
+            "--git-dir",
+            "--is-bare-repository",
+            "--is-inside-git-dir",
+            "--is-inside-work-tree",
+            "--show-cdup",
+            "--show-prefix",
+            "--show-toplevel",
+            "--verify",
+        },
+    }
+    safe_prefixes: dict[str, tuple[str, ...]] = {
+        "diff": ("--color=", "--diff-filter=", "--unified=", "-U"),
+        "log": (
+            "--author=",
+            "--color=",
+            "--date=",
+            "--format=",
+            "--grep=",
+            "--max-count=",
+            "--pretty=",
+            "--since=",
+            "--until=",
+            "-n",
+        ),
+        "show": ("--color=", "--format=", "--pretty=", "--abbrev="),
+        "status": ("--column=", "--porcelain=", "--untracked-files="),
+        "rev-parse": ("--path-format=", "--show-object-format="),
+    }
+    if subcommand in safe_exact:
+        after_path_separator = False
+        for argument in operands:
+            if argument == "--":
+                after_path_separator = True
+                continue
+            if after_path_separator or not argument.startswith("-"):
+                continue
+            if argument in safe_exact[subcommand]:
+                continue
+            if any(argument.startswith(prefix) for prefix in safe_prefixes[subcommand]):
+                if argument.startswith(("-n", "-U")) and not re.fullmatch(
+                    r"-(?:n|U)[0-9]+", argument
+                ):
+                    return False
+                continue
+            return False
+        return True
+    if subcommand == "tag":
+        return len(arguments) == 2 or all(
+            argument in {"-l", "--list"}
+            or argument.startswith(
+                ("--contains=", "--format=", "--points-at=", "--sort=")
+            )
+            or not argument.startswith("-")
+            for argument in operands
+        ) and any(argument in {"-l", "--list"} for argument in operands)
+    if subcommand == "branch":
+        return bool(operands) and all(
+            argument in {"--list", "--show-current", "-a", "-r", "-v", "-vv"}
+            or argument.startswith(
+                ("--contains=", "--format=", "--points-at=", "--sort=")
+            )
+            or not argument.startswith("-")
+            for argument in operands
+        ) and any(
+            argument in {"--list", "--show-current", "-a", "-r"}
+            for argument in operands
+        )
+    if subcommand == "worktree":
+        return len(arguments) >= 3 and arguments[2] == "list" and all(
+            argument in {"--porcelain", "-v", "-z"} for argument in arguments[3:]
+        )
+    if subcommand == "check-ignore":
+        return all(
+            argument
+            in {
+                "--",
+                "--no-index",
+                "--non-matching",
+                "--quiet",
+                "--verbose",
+                "-q",
+                "-v",
+            }
+            or not argument.startswith("-")
+            for argument in operands
+        )
+    return False
+
+
+def portable_read_only_arguments(
+    normalized_tool: str, arguments: dict[str, Any]
+) -> bool:
+    normalized_keys = {key.lower() for key in arguments if isinstance(key, str)}
+    if normalized_keys & {
+        "body",
+        "content",
+        "message",
+        "new_text",
+        "patch",
+        "replacement",
+        "text",
+    }:
+        return False
+    collapsed = normalized_tool.replace("_", "")
+    target_keys = {
+        "file_path",
+        "path",
+        "ref_id",
+        "uri",
+    }
+    query_keys = target_keys | {
+        "channel_id",
+        "cursor",
+        "pattern",
+        "q",
+        "query",
+        "resource",
+    }
+    required_keys = (
+        target_keys
+        if collapsed in {"read", "readfile", "viewfile"}
+        else query_keys
+    )
+    return any(
+        key in arguments
+        and isinstance(arguments[key], (str, int))
+        and str(arguments[key]).strip()
+        for key in required_keys
+    )
+
+
+def portable_shell_command_is_read_only(command: str) -> bool:
+    arguments = portable_shell_arguments(command)
+    if not arguments:
+        return False
+    command_name = Path(arguments[0]).name
+    if command_name in MUTATING_SHELL_COMMANDS:
+        return False
+    if command_name == "git":
+        return portable_git_command_is_read_only(arguments)
+    if command_name not in READ_ONLY_SHELL_COMMANDS:
+        return False
+    if command_name == "sed":
+        return (
+            len(arguments) >= 4
+            and arguments[1] in {"-n", "--quiet", "--silent"}
+            and re.fullmatch(
+                r"(?:[1-9][0-9]*|\$)(?:,(?:[1-9][0-9]*|\$))?p",
+                arguments[2],
+            )
+            is not None
+            and all(not argument.startswith("-") for argument in arguments[3:])
+        )
+    if command_name == "rg" and any(
+        argument == option or argument.startswith(option + "=")
+        for argument in arguments[1:]
+        for option in {"--hostname-bin", "--pre", "--pre-glob"}
+    ):
+        return False
+    return True
+
+
+def portable_tool_event_kind(event: dict[str, Any]) -> str:
+    if portable_adapter_bootstrap_event(event):
+        return "bootstrap"
+    if event.get("protocol_event") != "tool.call":
+        return "neutral"
+    tool = event.get("tool")
+    arguments = event.get("arguments")
+    if not isinstance(tool, str) or not isinstance(arguments, dict):
+        return "mutation"
+    normalized = tool.lower().replace("-", "_")
+    collapsed = normalized.replace("_", "")
+    if event.get("bootstrap_transport") is True:
+        return (
+            "bootstrap"
+            if collapsed in {name.replace("_", "") for name in READ_ONLY_TOOL_NAMES}
+            and portable_read_only_arguments(normalized, arguments)
+            else "mutation"
+        )
+    if collapsed in {name.replace("_", "") for name in READ_ONLY_TOOL_NAMES}:
+        return (
+            "inspection"
+            if portable_read_only_arguments(normalized, arguments)
+            else "mutation"
+        )
+    if normalized in SHELL_TOOL_NAMES or collapsed in {
+        name.replace("_", "") for name in SHELL_TOOL_NAMES
+    }:
+        command = arguments.get("command")
+        return (
+            "inspection"
+            if isinstance(command, str) and portable_shell_command_is_read_only(command)
+            else "mutation"
+        )
+    if normalized in MUTATING_TOOL_NAMES or collapsed in {
+        name.replace("_", "") for name in MUTATING_TOOL_NAMES
+    }:
+        return "mutation"
+    if re.search(
+        r"(^|_)(send|create|update|delete|edit|write|post|publish|deploy|migrate)(_|$)",
+        normalized,
+    ):
+        return "mutation"
+    if "agent" in normalized or "subagent" in normalized:
+        return "mutation"
+    return "mutation"
+
+
+def portable_bootstrap_path(event: dict[str, Any]) -> str | None:
+    if (
+        event.get("protocol_event") != "tool.call"
+        or event.get("bootstrap_transport") is not True
+    ):
+        return None
+    arguments = event.get("arguments")
+    if not isinstance(arguments, dict):
+        return None
+    path = arguments.get("path")
+    return path if isinstance(path, str) else None
+
+
+def validate_portable_protocol(
+    profile: str,
+    expected_modes: list[str],
+    events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if profile not in PORTABLE_PROFILE_PROJECT_INSPECTION:
+        raise ValidationError(f"unknown protocol profile: {profile}")
+    if not expected_modes or any(mode not in PORTABLE_MODES for mode in expected_modes):
+        raise ValidationError("expected modes must contain only lean, standard, or strict")
+
+    tasks: list[PortableTaskState] = []
+    current: PortableTaskState | None = None
+    task_by_id: dict[str, PortableTaskState] = {}
+
+    for event_index, event in enumerate(events):
+        protocol_event = event.get("protocol_event")
+        if protocol_event == "task.started":
+            task_id = event.get("task_id")
+            if not isinstance(task_id, str) or not task_id:
+                raise ValidationError("task.started event lacks task_id")
+            if task_id in task_by_id:
+                raise ValidationError(f"task {task_id} started more than once")
+            if len(tasks) >= len(expected_modes):
+                raise ValidationError("transcript contains more tasks than expected modes")
+            override = event.get("user_override")
+            if override is not None and override not in PORTABLE_MODES:
+                raise ValidationError(f"task {task_id} has unknown user override")
+            current = PortableTaskState(
+                task_id=task_id,
+                expected_mode=expected_modes[len(tasks)],
+                user_override=override if isinstance(override, str) else None,
+                declarations=[],
+                diagnostics=[],
+                codex_bootstrap_paths=[],
+                codex_bootstrap_indexes=[],
+            )
+            tasks.append(current)
+            task_by_id[task_id] = current
+            continue
+        if protocol_event == "task.continued":
+            task_id = event.get("task_id")
+            if current is None or task_id != current.task_id:
+                raise ValidationError("task continuation does not match the active task")
+            continue
+        if protocol_event == "task.ended":
+            task_id = event.get("task_id")
+            if current is None or task_id != current.task_id:
+                raise ValidationError("task end does not match the active task")
+            current = None
+            continue
+
+        event_task_id = event.get("task_id")
+        if isinstance(event_task_id, str) and event_task_id in task_by_id:
+            state = task_by_id[event_task_id]
+        else:
+            state = current
+        if state is None:
+            if portable_adapter_bootstrap_event(event):
+                continue
+            continue
+
+        if portable_adapter_bootstrap_event(event):
+            continue
+
+        if protocol_event == "assistant.output":
+            text = event.get("text")
+            if not isinstance(text, str):
+                raise ValidationError("assistant.output event lacks text")
+            declarations = portable_mode_declarations(text)
+            if not declarations and re.search(r"(?im)^\s*Mode\s*:", text):
+                token = re.search(r"(?im)^\s*Mode\s*:\s*([^\s—-]+)", text)
+                if token is not None and token.group(1).lower() not in PORTABLE_MODES:
+                    raise ValidationError(f"unknown mode token: {token.group(1)}")
+                raise ValidationError("malformed Mode declaration")
+            if profile == "hook-injected" and not state.declarations and text.strip():
+                if not declarations or text[: declarations[0][0].start()].strip():
+                    raise ValidationError(
+                        "hook-injected profile requires Mode as the first task-specific visible output"
+                    )
+            for _match, mode, diagnostics in declarations:
+                if state.promotion_index is not None:
+                    raise ValidationError(
+                        "promotion followed by a second Mode declaration"
+                    )
+                state.declarations.append((event_index, mode))
+                state.active_mode = mode
+                for diagnostic in diagnostics:
+                    if diagnostic not in state.diagnostics:
+                        state.diagnostics.append(diagnostic)
+
+            promotions = list(PORTABLE_PROMOTION_LINE.finditer(text))
+            for promotion in promotions:
+                target = promotion.group("mode").lower()
+                if state.user_override is not None:
+                    raise ValidationError("explicit override not preserved during promotion")
+                if target != "strict":
+                    raise ValidationError("canonical promotion may only target strict")
+                if state.active_mode not in {"lean", "standard"}:
+                    raise ValidationError("promotion does not start from an active non-strict mode")
+                if state.promotion_index is not None:
+                    raise ValidationError("task contains multiple promotion events")
+                state.promotion_index = event_index
+                state.active_mode = "strict"
+
+            for transition in WORKFLOW_TRANSITION.finditer(text):
+                target = transition.group("mode").lower()
+                if (
+                    state.active_mode is not None
+                    and PORTABLE_MODES.index(target)
+                    < PORTABLE_MODES.index(state.active_mode)
+                ):
+                    raise ValidationError("automatic demotion is forbidden")
+            continue
+
+        kind = portable_tool_event_kind(event)
+        if kind == "bootstrap":
+            if profile == "codex" and protocol_event == "tool.call":
+                path = portable_bootstrap_path(event)
+                if path is None:
+                    raise ValidationError("Codex bootstrap read lacks a structural path")
+                assert state.codex_bootstrap_paths is not None
+                assert state.codex_bootstrap_indexes is not None
+                state.codex_bootstrap_paths.append(path)
+                state.codex_bootstrap_indexes.append(event_index)
+            continue
+        if kind == "inspection" and not state.declarations:
+            if state.first_project_inspection_index is None:
+                state.first_project_inspection_index = event_index
+            if not PORTABLE_PROFILE_PROJECT_INSPECTION[profile]:
+                raise ValidationError(
+                    f"{profile} profile forbids project inspection before Mode declaration"
+                )
+            continue
+        if kind == "mutation" and state.first_mutation_index is None:
+            state.first_mutation_index = event_index
+
+    if len(tasks) != len(expected_modes):
+        raise ValidationError(
+            f"expected {len(expected_modes)} task(s); found {len(tasks)}"
+        )
+
+    report_tasks: list[dict[str, Any]] = []
+    for state in tasks:
+        if not state.declarations:
+            raise ValidationError(f"task {state.task_id} has missing Mode declaration")
+        if state.promotion_index is not None and len(state.declarations) > 1:
+            raise ValidationError("promotion followed by a second Mode declaration")
+        if len(state.declarations) != 1:
+            raise ValidationError(
+                f"task {state.task_id} has {len(state.declarations)} Mode declarations"
+            )
+        declaration_index, selected_mode = state.declarations[0]
+        if state.first_mutation_index is not None and not (
+            declaration_index < state.first_mutation_index
+        ):
+            raise ValidationError(
+                f"mutation event {state.first_mutation_index} precedes Mode "
+                f"declaration event {declaration_index}"
+            )
+        if profile == "codex" and tuple(state.codex_bootstrap_paths or ()) != (
+            CODEX_PORTABLE_BOOTSTRAP_PATHS
+        ):
+            raise ValidationError(
+                "Codex profile requires three standalone bootstrap reads in exact order"
+            )
+        if profile == "codex" and any(
+            index >= declaration_index for index in state.codex_bootstrap_indexes or ()
+        ):
+            raise ValidationError(
+                "Codex profile requires all three bootstrap reads before Mode declaration"
+            )
+        if selected_mode != state.expected_mode:
+            raise ValidationError(
+                f"task {state.task_id} expected Mode: {state.expected_mode}; "
+                f"found Mode: {selected_mode}"
+            )
+        if state.user_override is not None and selected_mode != state.user_override:
+            raise ValidationError(
+                f"task {state.task_id} did not preserve explicit {state.user_override} override"
+            )
+        if state.user_override is not None and state.active_mode != state.user_override:
+            raise ValidationError(
+                f"task {state.task_id} changed explicit {state.user_override} override"
+            )
+        report_tasks.append(
+            {
+                "task_id": state.task_id,
+                "selected_mode": selected_mode,
+                "active_mode": state.active_mode,
+                "user_override": state.user_override,
+                "declaration_count": len(state.declarations),
+                "declaration_index": declaration_index,
+                "first_mutation_index": state.first_mutation_index,
+                "canonical_diagnostics": state.diagnostics,
+            }
+        )
+
+    return {
+        "semantic_conformance": "pass",
+        "profile": profile,
+        "tasks": report_tasks,
+    }
+
+
+def validate_runtime_policy(path: Path) -> None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValidationError(f"cannot read runtime policy {path}: {exc}") from exc
+    has_named_model = re.search(
+        r"(?i)\b(?:gpt|claude|gemini)-[A-Za-z0-9._-]+\b", text
+    )
+    has_model_allowlist = re.search(
+        r"(?i)model[_ -]?(?:allowlist|allow-list|allow_list)", text
+    )
+    has_mode_routing = re.search(
+        r"(?i)(?:selected|active)?_?mode\s*=|(?:select|classif)[^\n]{0,40}mode",
+        text,
+    )
+    if has_model_allowlist or (has_named_model and has_mode_routing):
+        raise ValidationError("model-name-based runtime routing is forbidden")
+
+
+def live_assistant_text_events(
+    backend: str, events: list[dict[str, Any]]
+) -> list[tuple[int, str]]:
+    text_events: list[tuple[int, str]] = []
+    for event_index, event in enumerate(events):
+        if backend == "claude":
+            if event.get("type") != "assistant":
+                continue
+            message = event.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "text":
+                    continue
+                text = block.get("text")
+                if isinstance(text, str) and text:
+                    text_events.append((event_index, text))
+        elif backend == "codex":
+            if event.get("type") != "item.completed":
+                continue
+            item = event.get("item")
+            if not isinstance(item, dict) or item.get("type") != "agent_message":
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text:
+                text_events.append((event_index, text))
+    return text_events
+
+
+def live_tool_kind(
+    tool: str,
+    arguments: dict[str, Any],
+    expected_project_root: Path | None = None,
+) -> str:
+    normalized = tool.lower().replace("-", "_")
+    collapsed = normalized.replace("_", "")
+    if collapsed in {
+        "askuserquestion",
+        "skill",
+        "toolsearch",
+    }:
+        return "neutral"
+    if normalized in SHELL_TOOL_NAMES or collapsed in {
+        name.replace("_", "") for name in SHELL_TOOL_NAMES
+    }:
+        command = arguments.get("command")
+        if (
+            isinstance(command, str)
+            and expected_project_root is not None
+            and is_strict_read_only_shell_command(
+                command, expected_project_root
+            )
+        ):
+            return "inspection"
+    if re.search(r"(?:^|_)(read|get|list|search|find|glob|grep|fetch)(?:_|$)", normalized):
+        if not re.search(
+            r"(?:^|_)(send|create|update|delete|edit|write|post|publish|deploy|migrate)(?:_|$)",
+            normalized,
+        ) and portable_read_only_arguments(normalized, arguments):
+            return "inspection"
+    return portable_tool_event_kind(
+        {
+            "protocol_event": "tool.call",
+            "tool": tool,
+            "arguments": arguments,
+        }
+    )
+
+
+def live_first_mutation_index(
+    backend: str,
+    events: list[dict[str, Any]],
+    expected_plugin_root: Path | None,
+    expected_project_root: Path,
+) -> int | None:
+    seen_codex_items: set[str] = set()
+    for event_index, event in enumerate(events):
+        if backend == "claude":
+            if event.get("type") != "assistant":
+                continue
+            message = event.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                if is_claude_bootstrap(block, expected_plugin_root):
+                    continue
+                name = block.get("name")
+                arguments = block.get("input")
+                if (
+                    not isinstance(name, str)
+                    or not isinstance(arguments, dict)
+                    or live_tool_kind(
+                        name, arguments, expected_project_root
+                    ) == "mutation"
+                ):
+                    return event_index
+            continue
+
+        if event.get("type") not in {"item.started", "item.completed"}:
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        item_id = item.get("id")
+        if isinstance(item_id, str) and item_id in seen_codex_items:
+            continue
+        if isinstance(item_id, str):
+            seen_codex_items.add(item_id)
+        item_type = item.get("type")
+        if item_type in {"agent_message", "reasoning", "web_search"}:
+            continue
+        if item_type == "command_execution":
+            command = item.get("command")
+            if isinstance(command, str) and is_codex_bootstrap(
+                command, expected_plugin_root
+            ):
+                continue
+            if isinstance(command, str) and (
+                portable_shell_command_is_read_only(command)
+                or is_strict_read_only_shell_command(
+                    command, expected_project_root
+                )
+            ):
+                continue
+            return event_index
+        if item_type == "file_change":
+            return event_index
+        if item_type in {"mcp_tool_call", "tool_call"}:
+            tool = item.get("tool") or item.get("name")
+            arguments = item.get("arguments") or item.get("input")
+            if (
+                isinstance(tool, str)
+                and isinstance(arguments, dict)
+                and live_tool_kind(tool, arguments) != "mutation"
+            ):
+                continue
+            return event_index
+        if item_type in {"todo_list", "collaboration_tool_call"}:
+            return event_index
+    return None
+
+
+def live_conformance_report(
+    backend: str,
+    model: str,
+    case: str,
+    transcript: Path,
+    plugin_version: str,
+    expected_plugin_root: Path | None,
+) -> dict[str, Any]:
+    events = load_jsonl(transcript)
+    declarations: list[tuple[int, str]] = []
+    diagnostics: list[str] = []
+    for event_index, text in live_assistant_text_events(backend, events):
+        parsed = portable_mode_declarations(text)
+        if not parsed and re.search(r"(?im)^\s*Mode\s*:", text):
+            token = re.search(r"(?im)^\s*Mode\s*:\s*([^\s—-]+)", text)
+            if token is not None and token.group(1).lower() not in PORTABLE_MODES:
+                raise ValidationError(f"unknown mode token: {token.group(1)}")
+            raise ValidationError("malformed Mode declaration")
+        for _match, mode, event_diagnostics in parsed:
+            declarations.append((event_index, mode))
+            for diagnostic in event_diagnostics:
+                if diagnostic not in diagnostics:
+                    diagnostics.append(diagnostic)
+
+    if len(declarations) != 1:
+        raise ValidationError(
+            "expected exactly one assistant-visible portable Mode declaration; "
+            f"found {len(declarations)}"
+        )
+    declaration_index, selected_mode = declarations[0]
+    expected_mode = EXPECTED_MODE[case]
+    if selected_mode != expected_mode:
+        raise ValidationError(
+            f"expected Mode: {expected_mode}; found Mode: {selected_mode}"
+        )
+    mutation_index = live_first_mutation_index(
+        backend,
+        events,
+        expected_plugin_root,
+        transcript.parent / "project",
+    )
+    if mutation_index is not None and not declaration_index < mutation_index:
+        raise ValidationError(
+            f"mutation event {mutation_index} does not follow Mode declaration "
+            f"event {declaration_index}"
+        )
+
+    return {
+        "semantic_conformance": "pass",
+        "backend": backend,
+        "model": model,
+        "plugin_version": plugin_version,
+        "case": case,
+        "transcript_path": str(transcript.resolve()),
+        "selected_mode": selected_mode,
+        "declaration_count": len(declarations),
+        "first_declaration_event_index": declaration_index,
+        "first_mutation_event_index": mutation_index,
+        "canonical_format_diagnostics": diagnostics,
+        "canonical_presentation_conformance": (
+            "pass" if not diagnostics else "diagnostic"
+        ),
+        "verification_result": "pending",
+    }
+
+
 def validate_case(
     case: str, text: str, *, structured_brainstorming_status: str = "visible-only"
 ) -> None:
@@ -3879,19 +4927,53 @@ def validate(
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) not in {5, 6, 8}:
+    if len(argv) == 3 and argv[1] == "policy":
+        try:
+            validate_runtime_policy(Path(argv[2]))
+        except ValidationError as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+        print("validated model-independent runtime policy")
+        return 0
+
+    if len(argv) == 6 and argv[1] == "protocol":
+        profile = argv[2]
+        expected_modes = [mode for mode in argv[3].split(",") if mode]
+        transcript = Path(argv[4])
+        report_path = Path(argv[5])
+        try:
+            report = validate_portable_protocol(
+                profile,
+                expected_modes,
+                load_jsonl(transcript),
+            )
+            report_path.write_text(
+                json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        except (OSError, ValidationError) as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+        print(
+            "validated portable Mode protocol: "
+            f"{len(report['tasks'])} task(s), profile={profile}"
+        )
+        return 0
+
+    if len(argv) not in {5, 6, 8, 9}:
         print(
             "usage: assert-live-mode-result.py "
             "<claude|codex> <model> <case> <transcript.jsonl> "
-            "[assistant.txt [plugin-root plugin-version]]",
+            "[assistant.txt [plugin-root plugin-version [conformance.json]]]",
             file=sys.stderr,
         )
         return 2
 
     backend, expected_model, case, transcript_name = argv[1:5]
     assistant_output = Path(argv[5]) if len(argv) >= 6 and argv[5] != "-" else None
-    expected_plugin_root = Path(argv[6]) if len(argv) == 8 else None
-    expected_plugin_version = argv[7] if len(argv) == 8 else None
+    expected_plugin_root = Path(argv[6]) if len(argv) in {8, 9} else None
+    expected_plugin_version = argv[7] if len(argv) in {8, 9} else None
+    conformance_output = Path(argv[8]) if len(argv) == 9 else None
     try:
         validate(
             backend,
@@ -3902,7 +4984,21 @@ def main(argv: list[str]) -> int:
             expected_plugin_root,
             expected_plugin_version,
         )
-    except ValidationError as exc:
+        if conformance_output is not None:
+            assert expected_plugin_version is not None
+            report = live_conformance_report(
+                backend,
+                expected_model,
+                case,
+                Path(transcript_name),
+                expected_plugin_version,
+                expected_plugin_root,
+            )
+            conformance_output.write_text(
+                json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+    except (OSError, ValidationError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
 

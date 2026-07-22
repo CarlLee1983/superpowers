@@ -1,11 +1,13 @@
 ## Task-entry bootstrap
 
-At each new task, keep bootstrap reads independently auditable:
+Codex implements a stricter host profile than the portable minimum:
+Mode before project inspection and before mutation. At each new task, keep bootstrap reads
+independently auditable:
 
-1. Read `skills/using-superpowers/SKILL.md` by itself with one read-only command.
-2. Read `skills/selecting-workflow-mode/SKILL.md` by itself with one read-only command.
-3. Read `skills/selecting-workflow-mode/references/risk-matrix.md` by itself with one read-only command.
-4. Output exactly one `Mode:` declaration before project inspection or any other tool.
+1. Read `skills/using-superpowers/SKILL.md` alone.
+2. Read `skills/selecting-workflow-mode/SKILL.md` alone.
+3. Read `skills/selecting-workflow-mode/references/risk-matrix.md` alone.
+4. Emit exactly one `Mode: <lean|standard|strict> — <brief reason>.` declaration before project inspection or any other tool.
 
 Do not use `&&`, `||`, pipes, redirections, command substitution, or a compound
 shell command for bootstrap. Do not mix a bootstrap read with `pwd`, `git`,

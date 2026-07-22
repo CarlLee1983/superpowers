@@ -496,4 +496,74 @@ run_count="$(find "$TEST_TMP/evals/claude/test-model" -name transcript.jsonl -ty
   exit 1
 }
 
+python3 - "$TEST_TMP/evals/claude/test-model" "$PLUGIN_VERSION" <<'PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+version = sys.argv[2]
+expected_modes = {
+    "lean": "lean",
+    "standard": "standard",
+    "strict": "strict",
+    "override": "lean",
+    "escalation": "standard",
+    "explicit-skill": "lean",
+}
+reports = sorted(root.glob("*/*/conformance.json"))
+assert len(reports) == 6, reports
+for path in reports:
+    report = json.loads(path.read_text())
+    case = report["case"]
+    assert report["semantic_conformance"] == "pass", report
+    assert report["backend"] == "claude", report
+    assert report["model"] == "test-model", report
+    assert report["plugin_version"] == version, report
+    assert pathlib.Path(report["transcript_path"]).is_file(), report
+    assert report["selected_mode"] == expected_modes[case], report
+    assert report["declaration_count"] == 1, report
+    assert isinstance(report["first_declaration_event_index"], int), report
+    mutation = report["first_mutation_event_index"]
+    assert mutation is None or report["first_declaration_event_index"] < mutation, report
+    assert report["canonical_format_diagnostics"] == [], report
+    assert report["verification_result"] == "pass", report
+PY
+
+codex_report="$(find "$TEST_TMP/codex-evals" -name conformance.json -type f -print -quit)"
+[[ -n "$codex_report" ]] || {
+  printf 'Codex conformance report was not preserved\n' >&2
+  exit 1
+}
+python3 - "$codex_report" "$PLUGIN_VERSION" <<'PY'
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert report["backend"] == "codex", report
+assert report["model"] == "test-model", report
+assert report["plugin_version"] == sys.argv[2], report
+assert report["selected_mode"] == "lean", report
+assert report["declaration_count"] == 1, report
+assert report["first_declaration_event_index"] == 7, report
+assert report["first_mutation_event_index"] is None, report
+assert report["verification_result"] == "pass", report
+PY
+
+failed_postcheck_report="$(find "$TEST_TMP/bad-artifact-evals" -name conformance.json -type f -print -quit)"
+[[ -n "$failed_postcheck_report" ]] || {
+  printf 'failed postcheck conformance report was not preserved\n' >&2
+  exit 1
+}
+python3 - "$failed_postcheck_report" <<'PY'
+import json
+import pathlib
+import sys
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+assert report["semantic_conformance"] == "pass", report
+assert report["verification_result"] == "fail", report
+PY
+
 printf 'PASS live runner six-case fixture contract\n'

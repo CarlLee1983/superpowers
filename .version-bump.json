@@ -12,6 +12,7 @@
     "exclude": [
       "CHANGELOG.md",
       "RELEASE-NOTES.md",
+      "test-docs-and-version.sh",
       "node_modules",
       ".git",
       ".version-bump.json",

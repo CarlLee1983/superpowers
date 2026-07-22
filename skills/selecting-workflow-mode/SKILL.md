@@ -1,12 +1,36 @@
 ---
 name: selecting-workflow-mode
-description: Use at each new task before general process skills. Read this skill alone, read its risk matrix alone, then output exactly one Mode line before project inspection or mutation.
+description: Use at each new task before general process skills to select and declare the shared workflow mode through the active host profile.
 ---
 
 # Selecting Workflow Mode
 
 Choose workflow depth from task risk, uncertainty, reversibility, blast radius,
 and external effects. Never choose from a model name.
+
+## Portable declaration semantics
+
+This skill owns the shared `lean` / `standard` / `strict` state machine.
+A host adapter transports the protocol. It does not classify task risk or select a mode.
+The model applies this skill and the risk matrix without runtime routing by model
+name, model slug, or model allowlist.
+
+For each new task, emit exactly one declaration with this canonical grammar:
+
+`Mode: <lean|standard|strict> — <brief reason>.`
+
+`Mode:` and the lowercase ASCII mode token are protocol tokens. The reason must
+be non-empty and may use the human partner's language. Semantic validators do
+not compare exact reason prose. Presentation validators report, but do not turn
+into semantic failures, safely normalizable capitalization, whitespace, dash,
+terminal-punctuation, or reason-language differences.
+
+The portable hard gate is before the first mutation or side-effectful operation.
+Read-only bootstrap operations may precede the declaration when required by the host profile.
+Read-only project inspection may precede the declaration only when the host profile explicitly allows it.
+Host profiles may require stricter ordering; they may not weaken the pre-mutation gate or change classification.
+
+Mode state is conversation-local and must not be written to disk.
 
 ## Precedence
 
@@ -43,12 +67,14 @@ Read [references/risk-matrix.md](references/risk-matrix.md), then select:
 - `standard`: bounded work needing some design judgment
 - `strict`: a concrete high-risk trigger is present
 
-After reading the matrix, the next task-specific assistant output is exactly one
-declaration line, before any task-specific tool call. Codex's generic bootstrap
-narration exception is the exact line defined by `using-superpowers` and ends
-when the matrix read completes:
+After the host makes the matrix available, declare according to its documented
+transport profile. The portable contract permits only profile-declared read-only
+bootstrap or inspection events before the declaration and always requires the
+declaration before mutation. Codex's stricter profile uses the exact generic
+bootstrap narration defined by `using-superpowers`, completes three standalone
+reads, and declares before project inspection:
 
-`Mode: <lean|standard|strict> — <one-sentence reason>.`
+`Mode: <lean|standard|strict> — <brief reason>.`
 
 The selector is incomplete until that line is output.
 
@@ -72,6 +98,8 @@ same-task follow-ups may re-enter the selector without a new declaration.
 
 When new risk emerges, announce the reason before promoting the mode.
 Never demote automatically. The human partner may change the mode at any time.
+A same-task continuation must not emit another declaration. A materially
+different requested outcome starts a new task and receives one fresh declaration.
 
 ## Pre-first-mutation checkpoint
 
@@ -159,6 +187,8 @@ Do not name a file in the promotion line unless that exact path was read literal
 `Promoting to strict — inspection found <source> defines <field> consumed by <consumer> as part of <strict surface>; <change> would <consequence>.`
 
 Never output a second `Mode:` line after discovery. Once discovery establishes strict evidence, the next mode-routing content must be the canonical `Promoting to strict — ...` line and its approval pause.
+
+Promotion changes the active state without emitting a second `Mode:` declaration.
 
 Then pause before the first mutation and ask the human partner whether to
 proceed in strict mode. Do not mutate until they answer. Do not output another `Mode:` line:

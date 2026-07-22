@@ -76,6 +76,95 @@ limitation to surface (Part 6) — never a license to hand-edit the user's confi
 `contextFileName` — the harness loads the extension's own file, not a file you
 edited in the user's home.)
 
+### Portable Mode declaration protocol
+
+Every harness transports the same portable `lean` / `standard` / `strict`
+state machine. The model applies `selecting-workflow-mode` and its risk matrix;
+an adapter **must not classify task risk or select a mode**. Runtime routing
+must not branch on model names, slugs, allowlists, or harness-specific guesses.
+Adapters may change bootstrap transport and tool ordering only through an
+explicit host profile. They may not add a fourth mode or a no-mode/advisory
+route.
+
+For every new task under the current workflow, the canonical declaration is:
+
+`Mode: <lean|standard|strict> — <brief reason>.`
+
+The declaration must precede mutation. A profile may identify structurally
+read-only bootstrap events that can come first, and it may explicitly permit
+read-only project inspection before the declaration, but it cannot weaken the
+pre-mutation gate. Same-task continuation, duplicate injection, reinjection,
+and compaction do not create a new task or a second declaration. A materially
+different requested outcome gets one fresh declaration. Promotion changes the
+active state through the canonical promotion event and never emits a second
+`Mode:` line. Mode state is conversation-local and is never persisted in the
+repository.
+
+Before adding an adapter, write a host-profile record that documents all of the
+following metadata in concrete, machine-testable terms:
+
+- bootstrap transport type;
+- how skills are loaded;
+- which events are bootstrap reads;
+- which tools are read-only tools when invoked with structurally read-only
+  arguments;
+- which tools are mutating tools or commands, including test, build, package,
+  git, subagent, and external-write events;
+- whether read-only project inspection can precede visible assistant text;
+- how compaction preserves active task state; and
+- how transcripts expose Mode and mutation ordering, including event indexes.
+
+Conformance tooling must classify tool events structurally. It cannot trust a
+human-readable command description or flattened assistant text alone. Semantic
+acceptance compares the selected mode, declaration count, task boundaries, and
+the event-index relationship `declaration_index < first_mutation_index`; it does
+not compare exact reason prose. Presentation diagnostics may report safely
+normalizable whitespace, capitalization, dash, or punctuation differences
+without changing the semantic result.
+
+Current host profiles are intentionally different:
+
+- **Codex:** three standalone bootstrap reads in order—`using-superpowers`, the
+  selector, then the risk matrix—followed by Mode before project inspection or
+  mutation.
+- **Claude Code and hook-injected hosts:** SessionStart supplies bootstrap
+  context. The declaration is the first task-specific visible assistant output,
+  and no project tool or mutation precedes it. Host-internal injection is not a
+  task-specific tool call.
+- **OpenCode and Pi:** an extension injects a user-role bootstrap message.
+  Duplicate injection and compaction reinjection preserve the existing task;
+  Mode-before-mutation is the hard gate, with a stronger pre-inspection gate
+  preferred where the harness can emit visible text before tools.
+- **Gemini and instructions-file hosts:** an extension-owned instructions file
+  transports the same tokens and semantics. A tool used only to expand an
+  instruction include is a bootstrap read, not project inspection. Test the
+  include mechanism to establish whether content is truly injected or merely
+  offered as an optional file read; inline it when guaranteed injection cannot
+  be proven.
+- **Kimi and native-skill hosts:** native session-start skill loading transports
+  the shared selector. Native loading does not authorize adapter-side risk
+  classification.
+
+### Host-profile conformance matrix
+
+This matrix is the concrete profile record for every supported transport. Tool
+names are illustrative only where the event also passes the structural argument
+checks in the transcript validator; a label such as “read” never overrides a
+write-capable argument shape.
+
+| Harness | Bootstrap transport, marker, and skill capability | Bootstrap and tool event classification | Pre-Mode inspection, compaction, and transcript evidence | Required profile |
+|---|---|---|---|---|
+| Claude Code | `SessionStart` hook emits `hookSpecificOutput.additionalContext`; `<EXTREMELY_IMPORTANT>` brackets the injected sources; native `Skill` loading remains available after task entry. | The host-internal context injection is the only bootstrap event. `Read` with a concrete path is read-only; `Write`, `Edit`, mutating `Bash`, test/build/package commands, external writes, and mutation-authorized agents are mutation events. | No project tool may precede the first visible Mode declaration. `startup`, `clear`, or `compact` reinjection preserves the active task and must not redeclare. Native assistant/tool event indexes expose declaration and first mutation ordering. | `hook-injected` |
+| Codex | Native catalog discovery starts the exact standalone reads of `using-superpowers`, `selecting-workflow-mode`, and `risk-matrix`; the optional marker is exactly `Loading workflow-selection sources before task analysis.`; skills are loaded by standalone read-only commands. | Only those three exact-path, one-file, successful reads are bootstrap reads. Structurally safe file/search and closed Git query commands are read-only; `file_change`, writes, unsafe shell, tests/builds/packages, Git/worktree mutation, external writes, and mutation-authorized subagents are mutations. | No project inspection or mutation precedes Mode. Compaction retains conversation-local task state; reloading catalog context does not create a task or repeat the three-read entry sequence. JSONL item indexes expose all three reads, Mode, and the first mutation. | `codex` |
+| Cursor | The shared `SessionStart` hook emits `additional_context` with `<EXTREMELY_IMPORTANT>`; installed plugin skill discovery supplies later skills. | Host context is bootstrap transport. Structurally safe read/search tools are read-only; file edits, mutating shell, tests/builds/packages, Git mutation, external writes, and mutating agents are mutations. | No project tool precedes Mode. Cursor session/compaction hook reinjection preserves the active task and does not redeclare. Hook, assistant, and tool event indexes establish ordering. | `hook-injected` |
+| Copilot CLI | The shared hook emits SDK-standard `additionalContext` with `<EXTREMELY_IMPORTANT>` when `COPILOT_CLI` is set; native skill-style loading handles later skills. | Host context injection is bootstrap. Read/search queries with read-only arguments are inspection; file or external writes, mutating shell, tests/builds/packages, Git mutation, and mutating agents are mutation. | No project tool precedes Mode. Any session restart or compaction reinjection keeps the active task unless the requested outcome changes. Native transcript event indexes establish ordering. | `hook-injected` |
+| OpenCode | `experimental.chat.messages.transform` injects a user-role `<EXTREMELY_IMPORTANT>` block; the `config` hook registers `skills.paths`, enabling native `skill`; the marker guard prevents double injection. | The marked transformed user message is bootstrap transport, not a tool. `read`, `grep`, `glob`, and `webfetch` with read-only arguments are inspection; `apply_patch`, unsafe `bash`, tests/builds/packages, external writes, and mutation-authorized `task` calls are mutations. | Read-only inspection may precede Mode, though Mode first is preferred. Per-step transform reinjection and already-marked messages preserve the same task and declaration. Message/tool indexes expose ordering. | `extension-injected` |
+| Pi | The `context` event injects a user-role block marked `superpowers:using-superpowers bootstrap for pi`; `resources_discover` registers native skill paths, with explicit `read` fallback. | The marked context message is bootstrap transport. `read`, `grep`, `find`, and `ls` with read-only arguments are inspection; `write`, `edit`, unsafe `bash`, tests/builds/packages, external writes, and mutation-authorized optional subagents are mutations. | Read-only inspection may precede Mode, though Mode first is preferred. `session_compact` schedules one reinjection after compaction summaries; the marker suppresses duplicates and the active task does not redeclare. Message/tool indexes expose ordering. | `extension-injected` |
+| Gemini / instructions-file | `GEMINI.md` uses `@` includes for `using-superpowers` and the Gemini mapping; the include marker is the exact included path, and native skill capability is harness-version dependent and must be certified. | Truly injected include content is host bootstrap. A tool call used solely to expand the exact include is a bootstrap read only after structural verification; ordinary read/search calls are inspection, while write/replace, unsafe shell, tests/builds/packages, Git mutation, external writes, and mutating agents are mutations. | No project inspection is allowed before Mode unless a certified profile explicitly changes that setting. Instruction reload or compaction preserves active task state. Native include/assistant/tool indexes must distinguish include expansion from project access. | `instructions-file` |
+| Kimi Code | `.kimi-plugin/plugin.json` declares `sessionStart.skill: using-superpowers`; the manifest entry is the bootstrap marker and native `Skill` loads later skills. | The host-internal session-start skill load is bootstrap. `Read`, `Grep`, `Glob`, `FetchURL`, and `WebSearch` with safe arguments are read-only; `Write`, `Edit`, unsafe `Bash`, tests/builds/packages, external writes, and mutation-authorized `Agent` calls are mutations. | No project tool precedes Mode. Session restoration or bootstrap reinjection preserves active task state and does not redeclare. Native assistant/tool indexes expose ordering. | `hook-injected` native-skill transport |
+| Antigravity | The installer supplies shared SessionStart context; its bootstrap marker is the injected `using-superpowers` source; there is no native `Skill`, so `view_file` with `IsSkillFile: true` loads skills. | Host context and structurally read-only skill-file views are bootstrap. Ordinary `view_file` and `grep_search` are inspection; `write_to_file`, replace tools, unsafe `run_command`, tests/builds/packages, external writes, and mutation-authorized `invoke_subagent` calls are mutations. | No project tool precedes Mode. Reinstalled/reinjected context and compaction retain the active task. Assistant and tool event indexes expose ordering. | `hook-injected` |
+| Factory Droid | Factory consumes the Claude Code plugin and its `<EXTREMELY_IMPORTANT>` SessionStart payload; Claude-compatible native skills and tools apply. | The inherited host context is bootstrap. Claude-compatible structural read/search events are inspection; writes, mutating shell, tests/builds/packages, Git mutation, external writes, and mutating agents are mutations. | No project tool precedes Mode. Factory session/compaction handling must retain active task state and suppress redeclaration; certification must expose assistant/tool event indexes. | `hook-injected` inherited profile |
+
 ---
 
 ## Part 2 — Can this harness be supported?
@@ -791,6 +880,8 @@ Use this as the live index; when in doubt, read the files, not this table.
 | Kimi Code | `.kimi-plugin/plugin.json` | manifest `sessionStart.skill` loads `using-superpowers` | inline `skillInstructions` in manifest | `tests/kimi/` | marketplace or `/plugins install` GitHub URL |
 | OpenCode | `.opencode/plugins/superpowers.js` (declared via root `package.json` `main`) | in-process: `config` hook registers skills dir; `experimental.chat.messages.transform` injects user message | inline in `superpowers.js` | `tests/opencode/` | `opencode.json` plugin git URL |
 | pi | `.pi/extensions/superpowers.ts` | in-process: `resources_discover` registers skills; `context` event injects user message; lifecycle-flag + compaction-aware | `piToolMapping()` inline **and** `references/pi-tools.md` | `tests/pi/` | repo-root `package.json` fields |
+| Antigravity | existing plugin installed by `agy` | shared SessionStart bootstrap supplied through the installer | `references/antigravity-tools.md` | `tests/antigravity/` | `agy plugin install` |
+| Factory Droid | consumes the Claude Code plugin | shared hook-injected profile through Factory's plugin installer | Claude-compatible native tools | shared hook tests plus live certification | Factory plugin install |
 
 ## Appendix B — Gotchas that have bitten porters
 

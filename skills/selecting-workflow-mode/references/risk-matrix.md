@@ -44,5 +44,7 @@ Warn about the risk without auto-promoting.
 An explicit `strict` choice remains strict.
 Host safety and permission controls still apply.
 
-After classifying, return to the selector's completion contract: output its
-exact `Mode:` declaration line before any task-specific tool call.
+After classifying, return to the selector's shared portable declaration
+contract. The host profile controls bootstrap transport and may impose stronger
+ordering; every profile requires the declaration before mutation. Classification
+remains here, is model-independent, and is never performed by a host adapter.
