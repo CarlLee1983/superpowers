@@ -1426,8 +1426,8 @@ def has_concrete_discovery_pause(text: str) -> bool:
         return False
     question_text = question.group(1)
     domain_signal = re.search(
-        r"\b(?:system|stack|migration|public\s+API|API|rollout|compatibility|"
-        r"schema|datastore|storage|payment|billing)\b",
+        r"\b(?:system|stack|implementation|migration|public\s+API|API|rollout|"
+        r"compatibility|schema|datastore|storage|payment|billing)\b",
         question_text,
         re.IGNORECASE,
     )

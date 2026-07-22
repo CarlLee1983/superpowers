@@ -7634,6 +7634,29 @@ class ValidatorTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_strict_accepts_live_implementation_target_options(self) -> None:
+        # Preserved from the reviewed adaptive.4 live Codex transcript at
+        # codex/gpt-5.6-sol/strict/20260722T043937Z-17649-25314/assistant.txt.
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — this changes payment semantics, production data, "
+                "and a public compatibility surface.\n\n"
+                "The repository only contains a placeholder README, so there’s "
+                "no existing schema or API stack to inspect.\n\n"
+                "Which implementation target should I design for?\n\n"
+                "- PostgreSQL + REST API\n"
+                "- PostgreSQL + GraphQL API\n"
+                "- A technology-neutral migration/runbook\n"
+                "- Another stack you specify"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_strict_accepts_concrete_unlabelled_discovery_options(self) -> None:
         events = [
             claude_init(),
