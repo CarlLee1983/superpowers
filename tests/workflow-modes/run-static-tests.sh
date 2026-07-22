@@ -14,3 +14,6 @@ do
   printf '\n== %s ==\n' "$test"
   "$TEST_DIR/$test"
 done
+
+printf '\n== test_state_machine.py ==\n'
+python3 -m unittest tests/workflow-modes/test_state_machine.py -v
