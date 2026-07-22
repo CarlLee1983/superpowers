@@ -6556,6 +6556,25 @@ class ValidatorTest(unittest.TestCase):
                 result = self.run_validator("codex", "strict", events)
                 self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_strict_accepts_live_inline_production_stack_question(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — this changes production payment data and a public "
+                "API, both high-risk compatibility surfaces.\n\n"
+                "The repository is an empty fixture—only a README exists—so "
+                "there’s no schema, database, or API implementation to extend yet.\n\n"
+                "What production stack should the design and initial scaffold "
+                "target: PostgreSQL with a REST API, another specific stack, or a "
+                "stack-neutral migration runbook?"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_strict_accepts_final_declarative_design_approval_pause(self) -> None:
         # Exact decisive excerpts from final-0e112a1 Claude strict output.
         design = (

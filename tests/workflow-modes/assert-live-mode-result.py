@@ -1236,7 +1236,7 @@ def has_relevant_pause(text: str) -> bool:
         ):
             return True
     decision_object_body = (
-        r"(?:requirements?|scope|rollback\s+requirements?|"
+        r"(?:requirements?|scope|production\s+stack|rollback\s+requirements?|"
         r"migration\s+(?:approach|plan|strategy|options?)|"
         r"rollout(?:\s+(?:approach|plan|strategy|options?|compatibility))?|"
         r"public\s+API\s+transition|"
@@ -1264,6 +1264,9 @@ def has_relevant_pause(text: str) -> bool:
     decision_forms = (
         rf"^\s*(?:first\s+decision:\s*)?what\s+{decision_target}\s+"
         rf"(?:is|are)\s+required\s*\?\s*$",
+        rf"^\s*(?:what|which)\s+{decision_target}\s+should\s+(?:the\s+)?"
+        rf"(?:design|initial\s+scaffold|design\s+and\s+initial\s+scaffold)\s+"
+        rf"target\b[^?]*\?\s*$",
         rf"^\s*which\s+{decision_target}\s+should\s+(?:I|we)\s+"
         rf"(?:use|choose|follow)\s*\?\s*$",
         rf"^\s*which\s+{decision_target}\s+do\s+you\s+"
