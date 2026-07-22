@@ -630,21 +630,25 @@ class ValidatorTest(unittest.TestCase):
     def test_protocol_accepts_traditional_chinese_reason(self) -> None:
         events = [
             protocol_task_start(),
-            protocol_assistant("Mode: standard — 這是可直接驗證的有限多元件變更。"),
+            protocol_assistant("Mode: standard — 這是可直接驗證的有限多元件變更."),
             protocol_tool("ApplyPatch", {"patch": "*** Begin Patch"}),
             protocol_task_end(),
         ]
         report = self.assert_protocol_passes("portable", ["standard"], events)
-        self.assertEqual(report["tasks"][0]["selected_mode"], "standard")
+        task = report["tasks"][0]
+        self.assertEqual(task["selected_mode"], "standard")
+        self.assertIn("non-english-reason", task["canonical_diagnostics"])
 
     def test_protocol_accepts_japanese_reason(self) -> None:
         events = [
             protocol_task_start(),
-            protocol_assistant("Mode: strict — 公開APIの互換性に関わる変更です。"),
+            protocol_assistant("Mode: strict — 公開APIの互換性に関わる変更です."),
             protocol_task_end(),
         ]
         report = self.assert_protocol_passes("portable", ["strict"], events)
-        self.assertEqual(report["tasks"][0]["selected_mode"], "strict")
+        task = report["tasks"][0]
+        self.assertEqual(task["selected_mode"], "strict")
+        self.assertIn("non-english-reason", task["canonical_diagnostics"])
 
     def test_protocol_tolerates_leading_whitespace(self) -> None:
         events = [
@@ -742,6 +746,50 @@ class ValidatorTest(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("mutation event 1 precedes", result.stderr)
+
+    def test_protocol_rejects_shell_escape_mutations_before_declaration(self) -> None:
+        commands = (
+            "sh -lc 'cat README.md; touch generated'",
+            "cat README.md>generated",
+            "sed -n '1p;w generated' README.md",
+            "awk 'BEGIN { system(\"touch generated\") }' README.md",
+            "git diff --output=generated",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                events = [
+                    protocol_task_start(),
+                    protocol_tool("Bash", {"command": command}),
+                    protocol_assistant("Mode: lean — localized correction."),
+                    protocol_task_end(),
+                ]
+                result, _ = self.run_protocol_validator(
+                    "extension-injected", ["lean"], events
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("mutation event 1 precedes", result.stderr)
+
+    def test_protocol_accepts_closed_read_only_git_queries_before_mode(self) -> None:
+        commands = (
+            "git status --short --branch",
+            "git diff --check",
+            "git log --oneline -n5",
+            "git show --stat HEAD",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                events = [
+                    protocol_task_start(),
+                    protocol_tool("Bash", {"command": command}),
+                    protocol_assistant("Mode: lean — localized correction."),
+                    protocol_task_end(),
+                ]
+                report = self.assert_protocol_passes(
+                    "extension-injected", ["lean"], events
+                )
+                task = report["tasks"][0]
+                self.assertEqual(task["declaration_index"], 2)
+                self.assertIsNone(task["first_mutation_index"])
 
     def test_protocol_rejects_git_tag_creation_as_predeclaration_mutation(self) -> None:
         events = [
@@ -949,6 +997,55 @@ class ValidatorTest(unittest.TestCase):
         self.assertEqual(task["declaration_index"], 2)
         self.assertEqual(task["first_mutation_index"], 3)
         self.assertLess(task["declaration_index"], task["first_mutation_index"])
+
+    def test_protocol_rejects_bootstrap_tagged_write_before_declaration(self) -> None:
+        events = [
+            protocol_task_start(),
+            {
+                "protocol_event": "tool.call",
+                "task_id": "task-1",
+                "tool": "Write",
+                "arguments": {"path": "generated", "content": "early"},
+                "metadata": {"superpowers": {"bootstrap": True}},
+            },
+            protocol_assistant("Mode: lean — localized correction."),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator(
+            "extension-injected", ["lean"], events
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("mutation event 1 precedes", result.stderr)
+
+    def test_protocol_codex_requires_bootstrap_reads_before_declaration(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant("Mode: lean — localized correction."),
+            *(
+                protocol_tool("Read", {"path": path}, bootstrap_transport=True)
+                for path in (
+                    "skills/using-superpowers/SKILL.md",
+                    "skills/selecting-workflow-mode/SKILL.md",
+                    "skills/selecting-workflow-mode/references/risk-matrix.md",
+                )
+            ),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator("codex", ["lean"], events)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("before Mode declaration", result.stderr)
+
+    def test_protocol_hook_profile_rejects_preface_in_declaration_block(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_assistant(
+                "Task-specific preface.\nMode: lean — localized correction."
+            ),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator("hook-injected", ["lean"], events)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("first task-specific visible output", result.stderr)
 
     def test_protocol_rejects_automatic_demotion(self) -> None:
         events = [

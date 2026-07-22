@@ -102,4 +102,22 @@ do
     "porting guide defines host-profile metadata: $metadata"
 done
 
+assert_contains "$PORTING" 'Host-profile conformance matrix' \
+  "porting guide records concrete metadata for every supported harness"
+for harness in \
+  'Claude Code' \
+  'Codex' \
+  'Cursor' \
+  'Copilot CLI' \
+  'OpenCode' \
+  'Pi' \
+  'Gemini / instructions-file' \
+  'Kimi Code' \
+  'Antigravity' \
+  'Factory Droid'
+do
+  assert_contains "$PORTING" "| $harness |" \
+    "host-profile matrix records $harness"
+done
+
 finish

@@ -115,7 +115,6 @@ MUTATING_SHELL_COMMANDS = {
     "yarn",
 }
 READ_ONLY_SHELL_COMMANDS = {
-    "awk",
     "cat",
     "cut",
     "git",
@@ -150,6 +149,7 @@ class PortableTaskState:
     promotion_index: int | None = None
     active_mode: str | None = None
     codex_bootstrap_paths: list[str] | None = None
+    codex_bootstrap_indexes: list[int] | None = None
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -3970,6 +3970,8 @@ def portable_mode_declarations(
             diagnostics.append("noncanonical-dash")
         if not raw_reason.endswith("."):
             diagnostics.append("missing-terminal-period")
+        if any(ord(character) > 127 for character in reason):
+            diagnostics.append("non-english-reason")
         if (
             match.group("before_colon") != ""
             or match.group("after_colon") != " "
@@ -3983,33 +3985,63 @@ def portable_mode_declarations(
 
 def portable_adapter_bootstrap_event(event: dict[str, Any]) -> bool:
     if event.get("protocol_event") == "bootstrap.transport":
-        return True
+        return (
+            isinstance(event.get("source"), str)
+            and bool(event["source"].strip())
+            and isinstance(event.get("transport"), str)
+            and bool(event["transport"].strip())
+            and "tool" not in event
+            and "arguments" not in event
+        )
+    if (
+        event.get("protocol_event") is not None
+        or "tool" in event
+        or "arguments" in event
+    ):
+        return False
     metadata = event.get("metadata")
     if not isinstance(metadata, dict):
         return False
     superpowers = metadata.get("superpowers")
-    return isinstance(superpowers, dict) and superpowers.get("bootstrap") is True
+    message = event.get("message")
+    return (
+        isinstance(superpowers, dict)
+        and superpowers.get("bootstrap") is True
+        and isinstance(message, dict)
+        and message.get("role") == "user"
+        and isinstance(message.get("content"), list)
+    )
+
+
+def portable_shell_tokens(command: str) -> list[str] | None:
+    if "\n" in command or "\r" in command:
+        return None
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        arguments = list(lexer)
+    except ValueError:
+        return None
+    if not arguments or any(
+        re.fullmatch(r"[;&|<>]+", token) for token in arguments
+    ):
+        return None
+    if any(marker in command for marker in ("$(", "${", "`")):
+        return None
+    return arguments
 
 
 def portable_shell_arguments(command: str) -> list[str] | None:
-    try:
-        arguments = shlex.split(command, posix=True)
-    except ValueError:
+    arguments = portable_shell_tokens(command)
+    if arguments is None:
         return None
     if (
         len(arguments) == 3
         and Path(arguments[0]).name in {"bash", "sh", "zsh"}
         and arguments[1] in {"-c", "-lc"}
     ):
-        try:
-            arguments = shlex.split(arguments[2], posix=True)
-        except ValueError:
-            return None
-    if not arguments or any(
-        token in {";", "&", "&&", "||", ">", ">>", "<"}
-        for token in arguments
-    ):
-        return None
+        arguments = portable_shell_tokens(arguments[2])
     return arguments
 
 
@@ -4017,21 +4049,170 @@ def portable_git_command_is_read_only(arguments: list[str]) -> bool:
     if len(arguments) < 2:
         return False
     subcommand = arguments[1]
-    if subcommand in {"diff", "log", "show", "status", "rev-parse"}:
+    operands = arguments[2:]
+    common_forbidden = (
+        "--exec",
+        "--ext-diff",
+        "--output",
+        "--textconv",
+    )
+    if any(
+        argument == option or argument.startswith(option + "=")
+        for argument in operands
+        for option in common_forbidden
+    ):
+        return False
+    safe_exact: dict[str, set[str]] = {
+        "diff": {
+            "--",
+            "--cached",
+            "--check",
+            "--exit-code",
+            "--name-only",
+            "--name-status",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--numstat",
+            "--quiet",
+            "--shortstat",
+            "--staged",
+            "--stat",
+            "--summary",
+        },
+        "log": {
+            "--",
+            "--all",
+            "--branches",
+            "--date-order",
+            "--decorate",
+            "--first-parent",
+            "--graph",
+            "--merges",
+            "--name-only",
+            "--name-status",
+            "--no-color",
+            "--no-decorate",
+            "--no-merges",
+            "--oneline",
+            "--remotes",
+            "--reverse",
+            "--stat",
+            "--tags",
+            "--topo-order",
+        },
+        "show": {
+            "--",
+            "--name-only",
+            "--name-status",
+            "--no-color",
+            "--no-patch",
+            "--oneline",
+            "--stat",
+            "--summary",
+            "-s",
+        },
+        "status": {
+            "--",
+            "--branch",
+            "--ignored",
+            "--no-renames",
+            "--porcelain",
+            "--short",
+            "--show-stash",
+            "-b",
+            "-s",
+        },
+        "rev-parse": {
+            "--",
+            "--absolute-git-dir",
+            "--git-common-dir",
+            "--git-dir",
+            "--is-bare-repository",
+            "--is-inside-git-dir",
+            "--is-inside-work-tree",
+            "--show-cdup",
+            "--show-prefix",
+            "--show-toplevel",
+            "--verify",
+        },
+    }
+    safe_prefixes: dict[str, tuple[str, ...]] = {
+        "diff": ("--color=", "--diff-filter=", "--unified=", "-U"),
+        "log": (
+            "--author=",
+            "--color=",
+            "--date=",
+            "--format=",
+            "--grep=",
+            "--max-count=",
+            "--pretty=",
+            "--since=",
+            "--until=",
+            "-n",
+        ),
+        "show": ("--color=", "--format=", "--pretty=", "--abbrev="),
+        "status": ("--column=", "--porcelain=", "--untracked-files="),
+        "rev-parse": ("--path-format=", "--show-object-format="),
+    }
+    if subcommand in safe_exact:
+        after_path_separator = False
+        for argument in operands:
+            if argument == "--":
+                after_path_separator = True
+                continue
+            if after_path_separator or not argument.startswith("-"):
+                continue
+            if argument in safe_exact[subcommand]:
+                continue
+            if any(argument.startswith(prefix) for prefix in safe_prefixes[subcommand]):
+                if argument.startswith(("-n", "-U")) and not re.fullmatch(
+                    r"-(?:n|U)[0-9]+", argument
+                ):
+                    return False
+                continue
+            return False
         return True
     if subcommand == "tag":
-        return len(arguments) == 2 or any(
-            argument in {"-l", "--list"} for argument in arguments[2:]
-        )
+        return len(arguments) == 2 or all(
+            argument in {"-l", "--list"}
+            or argument.startswith(
+                ("--contains=", "--format=", "--points-at=", "--sort=")
+            )
+            or not argument.startswith("-")
+            for argument in operands
+        ) and any(argument in {"-l", "--list"} for argument in operands)
     if subcommand == "branch":
-        return any(
+        return bool(operands) and all(
+            argument in {"--list", "--show-current", "-a", "-r", "-v", "-vv"}
+            or argument.startswith(
+                ("--contains=", "--format=", "--points-at=", "--sort=")
+            )
+            or not argument.startswith("-")
+            for argument in operands
+        ) and any(
             argument in {"--list", "--show-current", "-a", "-r"}
-            for argument in arguments[2:]
+            for argument in operands
         )
     if subcommand == "worktree":
-        return len(arguments) >= 3 and arguments[2] == "list"
+        return len(arguments) >= 3 and arguments[2] == "list" and all(
+            argument in {"--porcelain", "-v", "-z"} for argument in arguments[3:]
+        )
     if subcommand == "check-ignore":
-        return True
+        return all(
+            argument
+            in {
+                "--",
+                "--no-index",
+                "--non-matching",
+                "--quiet",
+                "--verbose",
+                "-q",
+                "-v",
+            }
+            or not argument.startswith("-")
+            for argument in operands
+        )
     return False
 
 
@@ -4088,8 +4269,21 @@ def portable_shell_command_is_read_only(command: str) -> bool:
         return portable_git_command_is_read_only(arguments)
     if command_name not in READ_ONLY_SHELL_COMMANDS:
         return False
-    if command_name == "sed" and any(
-        argument == "-i" or argument.startswith("-i") for argument in arguments[1:]
+    if command_name == "sed":
+        return (
+            len(arguments) >= 4
+            and arguments[1] in {"-n", "--quiet", "--silent"}
+            and re.fullmatch(
+                r"(?:[1-9][0-9]*|\$)(?:,(?:[1-9][0-9]*|\$))?p",
+                arguments[2],
+            )
+            is not None
+            and all(not argument.startswith("-") for argument in arguments[3:])
+        )
+    if command_name == "rg" and any(
+        argument == option or argument.startswith(option + "=")
+        for argument in arguments[1:]
+        for option in {"--hostname-bin", "--pre", "--pre-glob"}
     ):
         return False
     return True
@@ -4189,6 +4383,7 @@ def validate_portable_protocol(
                 declarations=[],
                 diagnostics=[],
                 codex_bootstrap_paths=[],
+                codex_bootstrap_indexes=[],
             )
             tasks.append(current)
             task_by_id[task_id] = current
@@ -4228,15 +4423,11 @@ def validate_portable_protocol(
                 if token is not None and token.group(1).lower() not in PORTABLE_MODES:
                     raise ValidationError(f"unknown mode token: {token.group(1)}")
                 raise ValidationError("malformed Mode declaration")
-            if (
-                profile == "hook-injected"
-                and not state.declarations
-                and text.strip()
-                and not declarations
-            ):
-                raise ValidationError(
-                    "hook-injected profile requires Mode as the first task-specific visible output"
-                )
+            if profile == "hook-injected" and not state.declarations and text.strip():
+                if not declarations or text[: declarations[0][0].start()].strip():
+                    raise ValidationError(
+                        "hook-injected profile requires Mode as the first task-specific visible output"
+                    )
             for _match, mode, diagnostics in declarations:
                 if state.promotion_index is not None:
                     raise ValidationError(
@@ -4279,7 +4470,9 @@ def validate_portable_protocol(
                 if path is None:
                     raise ValidationError("Codex bootstrap read lacks a structural path")
                 assert state.codex_bootstrap_paths is not None
+                assert state.codex_bootstrap_indexes is not None
                 state.codex_bootstrap_paths.append(path)
+                state.codex_bootstrap_indexes.append(event_index)
             continue
         if kind == "inspection" and not state.declarations:
             if state.first_project_inspection_index is None:
@@ -4320,6 +4513,12 @@ def validate_portable_protocol(
         ):
             raise ValidationError(
                 "Codex profile requires three standalone bootstrap reads in exact order"
+            )
+        if profile == "codex" and any(
+            index >= declaration_index for index in state.codex_bootstrap_indexes or ()
+        ):
+            raise ValidationError(
+                "Codex profile requires all three bootstrap reads before Mode declaration"
             )
         if selected_mode != state.expected_mode:
             raise ValidationError(
