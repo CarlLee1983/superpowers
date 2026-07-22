@@ -90,12 +90,13 @@ class CodexInstallSmokeTests(unittest.TestCase):
                 "STUB_CODEX_LOG": str(self.log),
             }
         )
-        if require_auth:
+        if "--session" in arguments:
             auth_home = self.fixture / "auth-home"
             auth_home.mkdir()
             (auth_home / "auth.json").write_text('{"fixture":"credential"}\n')
             (auth_home / "auth.json").chmod(0o600)
             environment["ADAPTIVE_CODEX_AUTH_HOME"] = str(auth_home)
+        if require_auth:
             environment["STUB_REQUIRE_AUTH"] = "1"
         return subprocess.run(
             ["bash", str(SMOKE), *arguments],
