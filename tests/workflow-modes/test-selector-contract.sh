@@ -90,6 +90,7 @@ assert_contains "$BOOTSTRAP" "selecting-workflow-mode" "bootstrap invokes select
 assert_contains "$BOOTSTRAP" 'description: "Use at every task entry.' "bootstrap metadata exposes the task-entry transport contract"
 assert_contains "$BOOTSTRAP" 'three separate read-only tool calls' "bootstrap metadata requires separate Codex reads"
 assert_contains "$BOOTSTRAP" 'Never combine them.' "bootstrap metadata forbids combined Codex reads"
+assert_contains "$BOOTSTRAP" 'output no assistant text until all three reads finish' "bootstrap metadata forbids inter-read narration"
 assert_contains "$BOOTSTRAP" 'On platforms with native skill loading, if they are not already loaded, invoke `selecting-workflow-mode`; it loads its risk matrix before classifying.' "bootstrap defines platform-neutral selector loading"
 assert_contains "$BOOTSTRAP" 'read this skill alone, then read `selecting-workflow-mode` alone, then read its risk matrix alone' "bootstrap defines standalone Codex read sequence"
 assert_contains "$BOOTSTRAP" 'skills/selecting-workflow-mode/references/risk-matrix.md' "bootstrap gives Codex the exact literal matrix path"
