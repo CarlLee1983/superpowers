@@ -13,7 +13,7 @@ assert_file "$MATRIX" "risk matrix exists"
 
 if [[ -f "$SELECTOR" ]]; then
   assert_contains "$SELECTOR" "Active workflow mode:" "selector defines active mode state"
-  assert_contains "$SELECTOR" "Mode: <lean|standard|strict> — <one-sentence reason>." "selector defines one-line declaration"
+  assert_contains "$SELECTOR" "Mode: <lean|standard|strict> — <brief reason>." "selector defines one-line declaration"
   assert_contains "$SELECTOR" "Never demote automatically" "selector forbids automatic demotion"
   assert_contains "$SELECTOR" 'Promoting to strict — inspection found <source> defines <field> consumed by <consumer> as part of <strict surface>; <change> would <consequence>.' "selector defines canonical evidence-backed promotion"
   assert_contains "$SELECTOR" "pause before the first mutation" "selector requires a post-inspection pause before mutation"
@@ -87,7 +87,7 @@ if [[ -f "$MATRIX" ]]; then
 fi
 
 assert_contains "$BOOTSTRAP" "selecting-workflow-mode" "bootstrap invokes selector first"
-assert_contains "$BOOTSTRAP" 'description: "Use at every task entry. Before reading this skill, Codex may output exactly `Loading workflow-selection sources before task analysis.` and no other narration.' "bootstrap metadata exposes canonical pre-read narration"
+assert_contains "$BOOTSTRAP" 'description: "Use at every task entry to transport the shared workflow selector through the active host profile and emit exactly one Mode declaration before mutation."' "bootstrap metadata exposes the portable transport contract"
 assert_contains "$BOOTSTRAP" 'three separate read-only tool calls' "bootstrap metadata requires separate Codex reads"
 assert_contains "$BOOTSTRAP" 'Never combine them.' "bootstrap metadata forbids combined Codex reads"
 assert_contains "$BOOTSTRAP" 'On platforms with native skill loading, if they are not already loaded, invoke `selecting-workflow-mode`; it loads its risk matrix before classifying.' "bootstrap defines platform-neutral selector loading"
@@ -130,8 +130,8 @@ assert_contains "$BOOTSTRAP" '"This is just a simple question"' "bootstrap resto
 assert_contains "$BOOTSTRAP" '"I can check files quickly"' "bootstrap restores strict quick-inspection rationalization guard"
 assert_contains "$BOOTSTRAP" '"The skill is overkill"' "bootstrap restores strict overkill rationalization guard"
 assert_contains "$BOOTSTRAP" '"This feels productive"' "bootstrap restores strict productivity rationalization guard"
-assert_contains "$CODEX_TOOLS" 'using-superpowers/SKILL.md` by itself' "Codex guide starts with standalone bootstrap read"
-assert_contains "$CODEX_TOOLS" 'selecting-workflow-mode/SKILL.md` by itself' "Codex guide reads selector separately"
-assert_contains "$CODEX_TOOLS" 'risk-matrix.md` by itself' "Codex guide reads matrix separately"
+assert_contains "$CODEX_TOOLS" 'using-superpowers/SKILL.md` alone.' "Codex guide starts with standalone bootstrap read"
+assert_contains "$CODEX_TOOLS" 'selecting-workflow-mode/SKILL.md` alone.' "Codex guide reads selector separately"
+assert_contains "$CODEX_TOOLS" 'risk-matrix.md` alone.' "Codex guide reads matrix separately"
 assert_contains "$CODEX_TOOLS" 'Do not use `&&`, `||`, pipes, redirections' "Codex guide bans compound bootstrap commands"
 finish

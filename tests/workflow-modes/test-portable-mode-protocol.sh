@@ -49,7 +49,7 @@ RUNTIME_POLICY=(
   "$ROOT/GEMINI.md"
 )
 
-runtime_model_routing='(gpt-[0-9]|claude-[0-9]|gemini-[0-9]|model[_ -]?(allowlist|allow-list|allow_list)|model slug.{0,40}(mode|risk)|model name.{0,40}(mode|risk))'
+runtime_model_routing='(gpt-[0-9]|claude-[0-9]|gemini-[0-9]|MODEL_ALLOWLIST|model_(allowlist|allow_list)|model[^[:cntrl:]]{0,24}(==| in )[^[:cntrl:]]{0,24}(lean|standard|strict))'
 runtime_fourth_mode='Mode:[[:space:]]*(advisory|auto|none|off|disabled|bypass)([^[:alpha:]]|$)'
 adapter_risk_policy='^[[:space:]]*(if|elif|case|switch)[[:space:](].*(risk|mode|model)|^[[:space:]]*(selected_?mode|active_?mode|task_?risk)[[:space:]]*='
 

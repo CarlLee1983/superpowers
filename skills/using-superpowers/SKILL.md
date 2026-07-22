@@ -1,6 +1,6 @@
 ---
 name: using-superpowers
-description: "Use at every task entry. Before reading this skill, Codex may output exactly `Loading workflow-selection sources before task analysis.` and no other narration. Then Codex MUST use three separate read-only tool calls: read this skill alone, selecting-workflow-mode alone, and its risk matrix alone. Never combine them. Output exactly one Mode line before any project command or other tool."
+description: "Use at every task entry to transport the shared workflow selector through the active host profile and emit exactly one Mode declaration before mutation."
 ---
 
 <SUBAGENT-STOP>
@@ -12,6 +12,33 @@ If you were dispatched as a subagent to execute a specific task, ignore this ski
 Use relevant skills before acting. User instructions take precedence over
 skills, and skills take precedence over default behavior.
 
+## Portable Mode declaration protocol
+
+Every host transports the same model-independent mode state machine. The model,
+using `selecting-workflow-mode` and its risk matrix, selects `lean`, `standard`,
+or `strict`. A host adapter does not classify risk or select a mode.
+
+For each new task, emit exactly one canonical declaration:
+
+`Mode: <lean|standard|strict> — <brief reason>.`
+
+The mode tokens are lowercase ASCII protocol tokens. The non-empty reason may
+use the human partner's language, and validators must not compare its exact
+prose. A same-task continuation does not redeclare. A materially different
+requested outcome starts a new task and receives one fresh declaration.
+
+The portable hard gate requires the declaration before the first mutation or
+side-effectful operation.
+Read-only bootstrap operations may precede the declaration when required by the host profile.
+Read-only project inspection may precede the declaration only when the host profile explicitly allows it.
+Host profiles may impose stricter ordering than this portable minimum.
+
+Mutation includes file writes, edits, deletion, renames, test/build/lint/
+formatter/generator/package execution, git or worktree mutation, commits,
+external writes, and subagent work authorized to mutate. Structurally read-only
+file reads, search, `git status`, `git diff`, `git log`, `git show`, connector
+queries, and bootstrap reads are not mutation.
+
 ## Task entry
 
 For every new user task:
@@ -19,7 +46,8 @@ For every new user task:
 1. Ensure `selecting-workflow-mode` and its risk matrix are loaded.
    On platforms with native skill loading, if they are not already loaded, invoke `selecting-workflow-mode`; it loads its risk matrix before classifying.
    A platform bootstrap may mark both sources already loaded; do not reload them in that case.
-   Codex uses the standalone read sequence below instead of native invocation.
+Codex uses the standalone read sequence below instead of native invocation.
+Codex uses three separate read-only tool calls. Never combine them.
 2. Declare the selected mode exactly once.
 3. If the request itself reveals strict risk under an explicit non-strict
    override, issue the checkpoint warning immediately. In this branch, the warning is the very next assistant-visible content after the `Mode:` line.
@@ -30,10 +58,12 @@ For every new user task:
 4. Discover domain skills and mode-permitted process skills.
 5. Announce each skill when it causes an action or pause.
 
-After the selector returns, the next task-specific assistant output is its exact
-`Mode:` declaration line. Task entry is incomplete until that line is output.
-Codex may emit one bootstrap narration while loading the three required
-sources. If emitted, it must be this exact line and nothing else:
+Task-entry timing follows the active host profile. Task entry is incomplete
+until its one `Mode:` declaration is output, and mutation remains forbidden.
+Claude and hook-injected profiles require the declaration as the first
+task-specific visible assistant output. Codex may emit one bootstrap narration
+while loading the three required sources.
+If emitted, it must be this exact line and nothing else:
 
 `Loading workflow-selection sources before task analysis.`
 
@@ -46,8 +76,19 @@ Use one standalone read-only command for each file. Do not combine those reads w
 This is a closed three-command protocol: use exactly three separate command
 executions in order, with one file operand in each. A command containing `&&`,
 `;`, `|`, `find`, or multiple file operands is invalid.
-After the matrix read, output the declaration before any project command or
-other tool. Do not read platform references until the mode is active.
+After the matrix read, output the declaration before any project command or other tool.
+Do not read platform references until the mode is active.
+
+Hook-injected profiles receive these sources as host context; that injection is
+not a task-specific tool call. They allow no project tool before the declaration.
+Extension-injected profiles such as OpenCode and Pi receive bootstrap text in a
+user-role message. Injection, duplicate injection, compaction, or reinjection is
+transport: it does not start a new task and must not cause another declaration.
+These profiles require Mode before mutation and may document a stronger
+pre-inspection gate where the harness supports visible output first.
+Instructions-file profiles transport the same protocol tokens and state machine.
+A tool used only to expand an instruction include is bootstrap transport, not
+project inspection; any other mutation still requires the declaration first.
 
 ## Before the first mutation
 
@@ -104,8 +145,8 @@ strict or the human partner explicitly requests brainstorming.
 
 ## Strict skill discipline
 
-The required `Mode:` declaration remains the first task-specific output. Once
-`strict` is active, invoke every relevant skill before any further response or action.
+The required `Mode:` declaration satisfies the active host profile and always
+precedes mutation. Once `strict` is active, invoke every relevant skill before any further response or action.
 Even a 1% chance that a skill applies means it is relevant. Process skills run before implementation skills.
 Follow the selected skill exactly; do not weaken its checklist or gates.
 

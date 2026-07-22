@@ -44,10 +44,105 @@ BOOTSTRAP_PATHS = (
     "skills/selecting-workflow-mode/references/risk-matrix.md",
 )
 REQUIRED_ESCALATION_INSPECTIONS = {"src/schema.js", "src/billing.js"}
+PORTABLE_MODES = ("lean", "standard", "strict")
+PORTABLE_MODE_LINE = re.compile(
+    r"(?im)^(?P<leading>[ \t]*)Mode(?P<before_colon>[ \t]*):"
+    r"(?P<after_colon>[ \t]*)(?P<mode>[A-Za-z]+)"
+    r"(?P<before_dash>[ \t]*)(?P<dash>—|-)"
+    r"(?P<after_dash>[ \t]*)(?P<reason>[^\r\n]*?)(?P<trailing>[ \t]*)$"
+)
+PORTABLE_PROMOTION_LINE = re.compile(
+    r"(?im)^Promoting\s+to\s+(?P<mode>lean|standard|strict)\s+—\s*"
+    r"(?P<reason>[^\r\n]+)$"
+)
+PORTABLE_PROFILE_PROJECT_INSPECTION = {
+    "portable": False,
+    "codex": False,
+    "hook-injected": False,
+    "extension-injected": True,
+    "instructions-file": False,
+}
+MUTATING_TOOL_NAMES = {
+    "applypatch",
+    "apply_patch",
+    "create",
+    "delete",
+    "edit",
+    "file_change",
+    "move",
+    "rename",
+    "test",
+    "write",
+}
+READ_ONLY_TOOL_NAMES = {
+    "glob",
+    "grep",
+    "read",
+    "repository_search",
+    "search",
+}
+SHELL_TOOL_NAMES = {
+    "bash",
+    "command_execution",
+    "exec",
+    "exec_command",
+    "shell",
+    "terminal",
+}
+MUTATING_SHELL_COMMANDS = {
+    "bun",
+    "cargo",
+    "composer",
+    "deno",
+    "dotnet",
+    "gradle",
+    "make",
+    "mvn",
+    "npm",
+    "npx",
+    "pnpm",
+    "poetry",
+    "pytest",
+    "ruff",
+    "tox",
+    "yarn",
+}
+READ_ONLY_SHELL_COMMANDS = {
+    "awk",
+    "cat",
+    "cut",
+    "git",
+    "head",
+    "ls",
+    "pwd",
+    "rg",
+    "sed",
+    "tail",
+    "wc",
+}
+CODEX_PORTABLE_BOOTSTRAP_PATHS = (
+    "skills/using-superpowers/SKILL.md",
+    "skills/selecting-workflow-mode/SKILL.md",
+    "skills/selecting-workflow-mode/references/risk-matrix.md",
+)
 
 
 class ValidationError(Exception):
     pass
+
+
+@dataclass
+class PortableTaskState:
+    task_id: str
+    expected_mode: str
+    user_override: str | None
+    declarations: list[tuple[int, str]]
+    diagnostics: list[str]
+    first_mutation_index: int | None = None
+    first_project_inspection_index: int | None = None
+    promotion_index: int | None = None
+    active_mode: str | None = None
+    codex_bootstrap_paths: list[str] | None = None
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -3772,6 +3867,377 @@ def require_affirmative_brainstorming(
         )
 
 
+def portable_mode_declarations(
+    text: str,
+) -> list[tuple[re.Match[str], str, list[str]]]:
+    declarations: list[tuple[re.Match[str], str, list[str]]] = []
+    for match in PORTABLE_MODE_LINE.finditer(text):
+        raw_mode = match.group("mode")
+        mode = raw_mode.lower()
+        if mode not in PORTABLE_MODES:
+            raise ValidationError(f"unknown mode token: {raw_mode}")
+        raw_reason = match.group("reason").strip()
+        reason = raw_reason[:-1].strip() if raw_reason.endswith(".") else raw_reason
+        if not reason:
+            raise ValidationError("Mode declaration reason must be non-empty")
+
+        diagnostics: list[str] = []
+        if match.group("leading") or match.group("trailing"):
+            diagnostics.append("surrounding-whitespace")
+        if raw_mode != mode:
+            diagnostics.append("noncanonical-mode-token")
+        if match.group("dash") != "—":
+            diagnostics.append("noncanonical-dash")
+        if not raw_reason.endswith("."):
+            diagnostics.append("missing-terminal-period")
+        if (
+            match.group("before_colon") != ""
+            or match.group("after_colon") != " "
+            or match.group("before_dash") != " "
+            or match.group("after_dash") != " "
+        ):
+            diagnostics.append("additional-whitespace")
+        declarations.append((match, mode, diagnostics))
+    return declarations
+
+
+def portable_adapter_bootstrap_event(event: dict[str, Any]) -> bool:
+    if event.get("protocol_event") == "bootstrap.transport":
+        return True
+    metadata = event.get("metadata")
+    if not isinstance(metadata, dict):
+        return False
+    superpowers = metadata.get("superpowers")
+    return isinstance(superpowers, dict) and superpowers.get("bootstrap") is True
+
+
+def portable_shell_arguments(command: str) -> list[str] | None:
+    try:
+        arguments = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    if (
+        len(arguments) == 3
+        and Path(arguments[0]).name in {"bash", "sh", "zsh"}
+        and arguments[1] in {"-c", "-lc"}
+    ):
+        try:
+            arguments = shlex.split(arguments[2], posix=True)
+        except ValueError:
+            return None
+    if not arguments or any(
+        token in {";", "&", "&&", "||", ">", ">>", "<"}
+        for token in arguments
+    ):
+        return None
+    return arguments
+
+
+def portable_git_command_is_read_only(arguments: list[str]) -> bool:
+    if len(arguments) < 2:
+        return False
+    subcommand = arguments[1]
+    if subcommand in {"diff", "log", "show", "status", "rev-parse", "tag"}:
+        return subcommand != "tag" or "-d" not in arguments
+    if subcommand == "branch":
+        return any(
+            argument in {"--list", "--show-current", "-a", "-r"}
+            for argument in arguments[2:]
+        )
+    if subcommand == "worktree":
+        return len(arguments) >= 3 and arguments[2] == "list"
+    if subcommand == "check-ignore":
+        return True
+    return False
+
+
+def portable_shell_command_is_read_only(command: str) -> bool:
+    arguments = portable_shell_arguments(command)
+    if not arguments:
+        return False
+    command_name = Path(arguments[0]).name
+    if command_name in MUTATING_SHELL_COMMANDS:
+        return False
+    if command_name == "git":
+        return portable_git_command_is_read_only(arguments)
+    if command_name not in READ_ONLY_SHELL_COMMANDS:
+        return False
+    if command_name == "sed" and any(
+        argument == "-i" or argument.startswith("-i") for argument in arguments[1:]
+    ):
+        return False
+    return True
+
+
+def portable_tool_event_kind(event: dict[str, Any]) -> str:
+    if portable_adapter_bootstrap_event(event):
+        return "bootstrap"
+    if event.get("protocol_event") != "tool.call":
+        return "neutral"
+    tool = event.get("tool")
+    arguments = event.get("arguments")
+    if not isinstance(tool, str) or not isinstance(arguments, dict):
+        return "mutation"
+    normalized = tool.lower().replace("-", "_")
+    collapsed = normalized.replace("_", "")
+    if event.get("bootstrap_transport") is True:
+        return "bootstrap" if collapsed in READ_ONLY_TOOL_NAMES else "mutation"
+    if collapsed in {name.replace("_", "") for name in READ_ONLY_TOOL_NAMES}:
+        return "inspection"
+    if normalized in SHELL_TOOL_NAMES or collapsed in {
+        name.replace("_", "") for name in SHELL_TOOL_NAMES
+    }:
+        command = arguments.get("command")
+        return (
+            "inspection"
+            if isinstance(command, str) and portable_shell_command_is_read_only(command)
+            else "mutation"
+        )
+    if normalized in MUTATING_TOOL_NAMES or collapsed in {
+        name.replace("_", "") for name in MUTATING_TOOL_NAMES
+    }:
+        return "mutation"
+    if re.search(
+        r"(^|_)(send|create|update|delete|edit|write|post|publish|deploy|migrate)(_|$)",
+        normalized,
+    ):
+        return "mutation"
+    if "agent" in normalized or "subagent" in normalized:
+        return "mutation"
+    return "mutation"
+
+
+def portable_bootstrap_path(event: dict[str, Any]) -> str | None:
+    if (
+        event.get("protocol_event") != "tool.call"
+        or event.get("bootstrap_transport") is not True
+    ):
+        return None
+    arguments = event.get("arguments")
+    if not isinstance(arguments, dict):
+        return None
+    path = arguments.get("path")
+    return path if isinstance(path, str) else None
+
+
+def validate_portable_protocol(
+    profile: str,
+    expected_modes: list[str],
+    events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if profile not in PORTABLE_PROFILE_PROJECT_INSPECTION:
+        raise ValidationError(f"unknown protocol profile: {profile}")
+    if not expected_modes or any(mode not in PORTABLE_MODES for mode in expected_modes):
+        raise ValidationError("expected modes must contain only lean, standard, or strict")
+
+    tasks: list[PortableTaskState] = []
+    current: PortableTaskState | None = None
+    task_by_id: dict[str, PortableTaskState] = {}
+
+    for event_index, event in enumerate(events):
+        protocol_event = event.get("protocol_event")
+        if protocol_event == "task.started":
+            task_id = event.get("task_id")
+            if not isinstance(task_id, str) or not task_id:
+                raise ValidationError("task.started event lacks task_id")
+            if task_id in task_by_id:
+                raise ValidationError(f"task {task_id} started more than once")
+            if len(tasks) >= len(expected_modes):
+                raise ValidationError("transcript contains more tasks than expected modes")
+            override = event.get("user_override")
+            if override is not None and override not in PORTABLE_MODES:
+                raise ValidationError(f"task {task_id} has unknown user override")
+            current = PortableTaskState(
+                task_id=task_id,
+                expected_mode=expected_modes[len(tasks)],
+                user_override=override if isinstance(override, str) else None,
+                declarations=[],
+                diagnostics=[],
+                codex_bootstrap_paths=[],
+            )
+            tasks.append(current)
+            task_by_id[task_id] = current
+            continue
+        if protocol_event == "task.continued":
+            task_id = event.get("task_id")
+            if current is None or task_id != current.task_id:
+                raise ValidationError("task continuation does not match the active task")
+            continue
+        if protocol_event == "task.ended":
+            task_id = event.get("task_id")
+            if current is None or task_id != current.task_id:
+                raise ValidationError("task end does not match the active task")
+            current = None
+            continue
+
+        event_task_id = event.get("task_id")
+        if isinstance(event_task_id, str) and event_task_id in task_by_id:
+            state = task_by_id[event_task_id]
+        else:
+            state = current
+        if state is None:
+            if portable_adapter_bootstrap_event(event):
+                continue
+            continue
+
+        if portable_adapter_bootstrap_event(event):
+            continue
+
+        if protocol_event == "assistant.output":
+            text = event.get("text")
+            if not isinstance(text, str):
+                raise ValidationError("assistant.output event lacks text")
+            declarations = portable_mode_declarations(text)
+            if not declarations and re.search(r"(?im)^\s*Mode\s*:", text):
+                token = re.search(r"(?im)^\s*Mode\s*:\s*([^\s—-]+)", text)
+                if token is not None and token.group(1).lower() not in PORTABLE_MODES:
+                    raise ValidationError(f"unknown mode token: {token.group(1)}")
+                raise ValidationError("malformed Mode declaration")
+            if (
+                profile == "hook-injected"
+                and not state.declarations
+                and text.strip()
+                and not declarations
+            ):
+                raise ValidationError(
+                    "hook-injected profile requires Mode as the first task-specific visible output"
+                )
+            for _match, mode, diagnostics in declarations:
+                if state.promotion_index is not None:
+                    raise ValidationError(
+                        "promotion followed by a second Mode declaration"
+                    )
+                state.declarations.append((event_index, mode))
+                state.active_mode = mode
+                for diagnostic in diagnostics:
+                    if diagnostic not in state.diagnostics:
+                        state.diagnostics.append(diagnostic)
+
+            promotions = list(PORTABLE_PROMOTION_LINE.finditer(text))
+            for promotion in promotions:
+                target = promotion.group("mode").lower()
+                if state.user_override is not None:
+                    raise ValidationError("explicit override not preserved during promotion")
+                if target != "strict":
+                    raise ValidationError("canonical promotion may only target strict")
+                if state.active_mode not in {"lean", "standard"}:
+                    raise ValidationError("promotion does not start from an active non-strict mode")
+                if state.promotion_index is not None:
+                    raise ValidationError("task contains multiple promotion events")
+                state.promotion_index = event_index
+                state.active_mode = "strict"
+
+            for transition in WORKFLOW_TRANSITION.finditer(text):
+                target = transition.group("mode").lower()
+                if (
+                    state.active_mode is not None
+                    and PORTABLE_MODES.index(target)
+                    < PORTABLE_MODES.index(state.active_mode)
+                ):
+                    raise ValidationError("automatic demotion is forbidden")
+            continue
+
+        kind = portable_tool_event_kind(event)
+        if kind == "bootstrap":
+            if profile == "codex" and protocol_event == "tool.call":
+                path = portable_bootstrap_path(event)
+                if path is None:
+                    raise ValidationError("Codex bootstrap read lacks a structural path")
+                assert state.codex_bootstrap_paths is not None
+                state.codex_bootstrap_paths.append(path)
+            continue
+        if kind == "inspection" and not state.declarations:
+            if state.first_project_inspection_index is None:
+                state.first_project_inspection_index = event_index
+            if not PORTABLE_PROFILE_PROJECT_INSPECTION[profile]:
+                raise ValidationError(
+                    f"{profile} profile forbids project inspection before Mode declaration"
+                )
+            continue
+        if kind == "mutation" and state.first_mutation_index is None:
+            state.first_mutation_index = event_index
+
+    if len(tasks) != len(expected_modes):
+        raise ValidationError(
+            f"expected {len(expected_modes)} task(s); found {len(tasks)}"
+        )
+
+    report_tasks: list[dict[str, Any]] = []
+    for state in tasks:
+        if not state.declarations:
+            raise ValidationError(f"task {state.task_id} has missing Mode declaration")
+        if state.promotion_index is not None and len(state.declarations) > 1:
+            raise ValidationError("promotion followed by a second Mode declaration")
+        if len(state.declarations) != 1:
+            raise ValidationError(
+                f"task {state.task_id} has {len(state.declarations)} Mode declarations"
+            )
+        declaration_index, selected_mode = state.declarations[0]
+        if state.first_mutation_index is not None and not (
+            declaration_index < state.first_mutation_index
+        ):
+            raise ValidationError(
+                f"mutation event {state.first_mutation_index} precedes Mode "
+                f"declaration event {declaration_index}"
+            )
+        if profile == "codex" and tuple(state.codex_bootstrap_paths or ()) != (
+            CODEX_PORTABLE_BOOTSTRAP_PATHS
+        ):
+            raise ValidationError(
+                "Codex profile requires three standalone bootstrap reads in exact order"
+            )
+        if selected_mode != state.expected_mode:
+            raise ValidationError(
+                f"task {state.task_id} expected Mode: {state.expected_mode}; "
+                f"found Mode: {selected_mode}"
+            )
+        if state.user_override is not None and selected_mode != state.user_override:
+            raise ValidationError(
+                f"task {state.task_id} did not preserve explicit {state.user_override} override"
+            )
+        if state.user_override is not None and state.active_mode != state.user_override:
+            raise ValidationError(
+                f"task {state.task_id} changed explicit {state.user_override} override"
+            )
+        report_tasks.append(
+            {
+                "task_id": state.task_id,
+                "selected_mode": selected_mode,
+                "active_mode": state.active_mode,
+                "user_override": state.user_override,
+                "declaration_count": len(state.declarations),
+                "declaration_index": declaration_index,
+                "first_mutation_index": state.first_mutation_index,
+                "canonical_diagnostics": state.diagnostics,
+            }
+        )
+
+    return {
+        "semantic_conformance": "pass",
+        "profile": profile,
+        "tasks": report_tasks,
+    }
+
+
+def validate_runtime_policy(path: Path) -> None:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValidationError(f"cannot read runtime policy {path}: {exc}") from exc
+    has_named_model = re.search(
+        r"(?i)\b(?:gpt|claude|gemini)-[A-Za-z0-9._-]+\b", text
+    )
+    has_model_allowlist = re.search(
+        r"(?i)model[_ -]?(?:allowlist|allow-list|allow_list)", text
+    )
+    has_mode_routing = re.search(
+        r"(?i)(?:selected|active)?_?mode\s*=|(?:select|classif)[^\n]{0,40}mode",
+        text,
+    )
+    if has_model_allowlist or (has_named_model and has_mode_routing):
+        raise ValidationError("model-name-based runtime routing is forbidden")
+
+
 def validate_case(
     case: str, text: str, *, structured_brainstorming_status: str = "visible-only"
 ) -> None:
@@ -3879,6 +4345,39 @@ def validate(
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) == 3 and argv[1] == "policy":
+        try:
+            validate_runtime_policy(Path(argv[2]))
+        except ValidationError as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+        print("validated model-independent runtime policy")
+        return 0
+
+    if len(argv) == 6 and argv[1] == "protocol":
+        profile = argv[2]
+        expected_modes = [mode for mode in argv[3].split(",") if mode]
+        transcript = Path(argv[4])
+        report_path = Path(argv[5])
+        try:
+            report = validate_portable_protocol(
+                profile,
+                expected_modes,
+                load_jsonl(transcript),
+            )
+            report_path.write_text(
+                json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        except (OSError, ValidationError) as exc:
+            print(f"FAIL: {exc}", file=sys.stderr)
+            return 1
+        print(
+            "validated portable Mode protocol: "
+            f"{len(report['tasks'])} task(s), profile={profile}"
+        )
+        return 0
+
     if len(argv) not in {5, 6, 8}:
         print(
             "usage: assert-live-mode-result.py "
