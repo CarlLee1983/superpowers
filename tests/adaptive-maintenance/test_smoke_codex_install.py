@@ -58,6 +58,11 @@ class CodexInstallSmokeTests(unittest.TestCase):
                 elif args[:3] == ["plugin", "marketplace", "add"]:
                     print(json.dumps({"marketplace": "superpowers-dev"}))
                 elif args and args[0] == "exec":
+                    if os.environ.get("STUB_REQUIRE_AUTH") == "1":
+                        auth = home / "auth.json"
+                        if not auth.is_file() or auth.stat().st_mode & 0o077:
+                            print("ephemeral home is missing private auth.json", file=sys.stderr)
+                            raise SystemExit(17)
                     print(json.dumps({
                         "type": "item.completed",
                         "item": {"type": "agent_message", "text": "Mode: lean — read-only smoke."},
@@ -74,7 +79,9 @@ class CodexInstallSmokeTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
-    def run_smoke(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+    def run_smoke(
+        self, *arguments: str, require_auth: bool = False
+    ) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         environment.update(
             {
@@ -83,6 +90,13 @@ class CodexInstallSmokeTests(unittest.TestCase):
                 "STUB_CODEX_LOG": str(self.log),
             }
         )
+        if require_auth:
+            auth_home = self.fixture / "auth-home"
+            auth_home.mkdir()
+            (auth_home / "auth.json").write_text('{"fixture":"credential"}\n')
+            (auth_home / "auth.json").chmod(0o600)
+            environment["ADAPTIVE_CODEX_AUTH_HOME"] = str(auth_home)
+            environment["STUB_REQUIRE_AUTH"] = "1"
         return subprocess.run(
             ["bash", str(SMOKE), *arguments],
             text=True,
@@ -118,6 +132,14 @@ class CodexInstallSmokeTests(unittest.TestCase):
         self.assertEqual(len(exec_calls), 1)
         self.assertIn("--ephemeral", exec_calls[0])
         self.assertIn("gpt-test-model", exec_calls[0])
+        self.assertIn("Ephemeral Codex session verified", result.stdout)
+
+    def test_session_uses_private_temporary_copy_of_existing_auth(self):
+        result = self.run_smoke(
+            "--session", "gpt-test-model", require_auth=True
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Ephemeral Codex session verified", result.stdout)
 
     def test_rejects_unknown_arguments_before_calling_codex(self):

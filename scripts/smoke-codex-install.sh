@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 CODEX_COMMAND="${CODEX_BIN:-codex}"
+AUTH_HOME="${ADAPTIVE_CODEX_AUTH_HOME:-${CODEX_HOME:-$HOME/.codex}}"
 SESSION_MODEL=""
 
 case "$#" in
@@ -44,6 +45,15 @@ PROJECT="$SMOKE_ROOT/project"
 PLUGIN_LIST="$SMOKE_ROOT/plugin-list.json"
 TRANSCRIPT="$SMOKE_ROOT/session.jsonl"
 mkdir -p "$CODEX_HOME"
+
+if [[ -n "$SESSION_MODEL" ]]; then
+  [[ -f "$AUTH_HOME/auth.json" ]] || {
+    printf 'error: Codex auth source is missing: %s/auth.json\n' "$AUTH_HOME" >&2
+    exit 2
+  }
+  cp "$AUTH_HOME/auth.json" "$CODEX_HOME/auth.json"
+  chmod 600 "$CODEX_HOME/auth.json"
+fi
 
 env CODEX_HOME="$CODEX_HOME" "$CODEX_COMMAND" \
   plugin marketplace add "$ROOT" --json >/dev/null

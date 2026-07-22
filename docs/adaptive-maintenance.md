@@ -129,6 +129,10 @@ is reproduced on unchanged `origin/main` and recorded in the pull request.
    scripts/smoke-codex-install.sh --session CURRENT_CODEX_MODEL
    ```
 
+   Session smoke copies the existing Codex `auth.json` into the temporary home
+   with mode `0600` and deletes the entire home on exit. It never prints or
+   retains credential contents.
+
 6. Push the tested tag and publish the GitHub release:
 
    ```bash
