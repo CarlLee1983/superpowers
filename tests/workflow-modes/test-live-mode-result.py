@@ -7495,6 +7495,31 @@ class ValidatorTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_strict_accepts_live_rollout_compatibility_options(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — production payment-data migration and a breaking "
+                "public API change are high-risk compatibility work.\n\n"
+                "The repository currently contains only a placeholder README, so "
+                "there’s no existing schema or API contract to preserve.\n\n"
+                "First decision: what rollout compatibility is required?\n\n"
+                "1. **Zero-downtime, backward-compatible transition "
+                "(recommended):** temporarily support dollars and cents, backfill "
+                "idempotently, then retire dollars.\n"
+                "2. **Coordinated breaking release:** migrate all data and switch "
+                "every client during one maintenance window.\n"
+                "3. **Versioned API:** keep the dollar-based API as v1 and "
+                "introduce a cents-based v2.\n\n"
+                "Which rollout should the design target?"
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_strict_accepts_bold_heading_design_options(self) -> None:
         design = (
             "Mode: strict — production payment migration and public API risk.\n"

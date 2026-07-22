@@ -1238,7 +1238,7 @@ def has_relevant_pause(text: str) -> bool:
     decision_object_body = (
         r"(?:requirements?|scope|rollback\s+requirements?|"
         r"migration\s+(?:approach|plan|strategy|options?)|"
-        r"rollout(?:\s+(?:approach|plan|strategy|options?))?|"
+        r"rollout(?:\s+(?:approach|plan|strategy|options?|compatibility))?|"
         r"public\s+API\s+transition|"
         r"(?:breaking\s+)?public\s+(?:API\s+)?contract\s+rename|"
         r"API\s+(?:compatibility|contract(?:\s+change)?|changes?|versions?|"
@@ -1262,6 +1262,8 @@ def has_relevant_pause(text: str) -> bool:
         r"proceed\s+with|roll\s+out)"
     )
     decision_forms = (
+        rf"^\s*(?:first\s+decision:\s*)?what\s+{decision_target}\s+"
+        rf"(?:is|are)\s+required\s*\?\s*$",
         rf"^\s*which\s+{decision_target}\s+should\s+(?:I|we)\s+"
         rf"(?:use|choose|follow)\s*\?\s*$",
         rf"^\s*which\s+{decision_target}\s+do\s+you\s+"
