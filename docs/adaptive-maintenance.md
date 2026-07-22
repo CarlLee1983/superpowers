@@ -2,8 +2,9 @@
 
 Use this workflow for both upstream Superpowers releases and problems observed
 while running the current Adaptive release. The released `origin/main` is the
-only branch base. `feature/adaptive-workflow-modes` is historical development
-state and must not be used as a release base.
+only branch base. `origin/feature/adaptive-workflow-modes` is historical
+development state; its local archival name is
+`archive/adaptive-workflow-modes`. Neither may be used as a release base.
 
 Repository remotes use:
 
