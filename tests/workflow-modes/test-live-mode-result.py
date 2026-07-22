@@ -1206,6 +1206,45 @@ class ValidatorTest(unittest.TestCase):
         result = self.run_validator("claude", "standard", events)
         self.assertEqual(result.returncode, 0, result.stderr)
 
+        closed_compound = list(events)
+        closed_compound[2] = claude_tool_event(
+            "Bash",
+            {
+                "command": (
+                    f"ls -la {self.project} && find {self.project} -type f "
+                    "-not -path '*/node_modules/*' -not -path '*/.git/*' "
+                    "| head -50"
+                ),
+                "description": "List project files",
+            },
+            tool_id="list-project",
+        )
+        result = self.run_validator("claude", "standard", closed_compound)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.write_jsonl("claude-standard-compound.jsonl", closed_compound)
+        report = self.root / "claude-standard-compound-conformance.json"
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(VALIDATOR),
+                "claude",
+                "test-model",
+                "standard",
+                str(log),
+                "-",
+                "/expected/checkout",
+                "test-version",
+                str(report),
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            json.loads(report.read_text())["first_mutation_event_index"], 7
+        )
+
         for command in (
             "ls -R .",
             "ls --color=always .",

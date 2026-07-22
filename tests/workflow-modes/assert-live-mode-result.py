@@ -1003,6 +1003,58 @@ def is_safe_ls_discovery_command(
     )
 
 
+def is_safe_find_discovery_command(
+    command: str, expected_project_root: Path
+) -> bool:
+    pipeline = shell_pipeline_arguments(command)
+    if pipeline is None or len(pipeline) not in {1, 2}:
+        return False
+    arguments = pipeline[0]
+    if len(arguments) < 4 or arguments[0] != "find":
+        return False
+    root = project_path(
+        arguments[1], expected_project_root, require_directory=True
+    )
+    if (
+        root != expected_project_root.resolve(strict=True)
+        or arguments[2:4] != ["-type", "f"]
+    ):
+        return False
+    exclusions = arguments[4:]
+    if len(exclusions) % 3 != 0:
+        return False
+    allowed_exclusions = {
+        "*/.git/*",
+        "*/node_modules/*",
+        "*/vendor/*",
+    }
+    excluded_paths: list[str] = []
+    for index in range(0, len(exclusions), 3):
+        if exclusions[index : index + 2] != ["-not", "-path"]:
+            return False
+        excluded_paths.append(exclusions[index + 2])
+    if (
+        len(excluded_paths) != len(set(excluded_paths))
+        or any(path not in allowed_exclusions for path in excluded_paths)
+    ):
+        return False
+    if len(pipeline) == 1:
+        return True
+    head = pipeline[1]
+    if (
+        len(head) == 2
+        and head[0] == "head"
+        and re.fullmatch(r"-[1-9]\d*", head[1])
+    ):
+        return int(head[1][1:]) <= 1000
+    return (
+        len(head) == 3
+        and head[:2] == ["head", "-n"]
+        and re.fullmatch(r"[1-9]\d*", head[2]) is not None
+        and int(head[2]) <= 1000
+    )
+
+
 def is_generic_codex_bootstrap_narration(text: str) -> bool:
     """Allow only platform-facing workflow narration before Codex's Mode line."""
     return (
@@ -1716,6 +1768,8 @@ def is_strict_read_only_shell_command(
         command, expected_project_root
     ) or is_safe_git_discovery_command(
         command, expected_project_root
+    ) or is_safe_find_discovery_command(
+        command, expected_project_root
     ) or is_closed_strict_read_only_composition(
         command, expected_project_root
     ):
@@ -1729,34 +1783,6 @@ def is_strict_read_only_shell_command(
             normalized_rg = arguments[:2] + arguments[3:]
             if valid_rg_discovery_arguments(normalized_rg, expected_project_root):
                 return True
-    if len(arguments) != 7 or arguments[0] != "find":
-        return False
-    root = project_path(
-        arguments[1], expected_project_root, require_directory=True
-    )
-    if root != expected_project_root.resolve(strict=True) or arguments[2:] != [
-        "-type",
-        "f",
-        "-not",
-        "-path",
-        "*/.git/*",
-    ]:
-        return False
-    if len(pipeline) == 1:
-        return True
-    head = pipeline[1]
-    if (
-        len(head) == 2
-        and head[0] == "head"
-        and re.fullmatch(r"-[1-9]\d*", head[1])
-    ):
-        return int(head[1][1:]) <= 1000
-    if (
-        len(head) == 3
-        and head[:2] == ["head", "-n"]
-        and re.fullmatch(r"[1-9]\d*", head[2])
-    ):
-        return int(head[2]) <= 1000
     return False
 
 
@@ -1830,7 +1856,6 @@ def is_closed_strict_read_only_composition(
             token in payload.replace("&&", "")
             for token in (
                 ";",
-                "|",
                 "&",
                 "<",
                 ">",
@@ -1850,6 +1875,13 @@ def is_closed_strict_read_only_composition(
         for segment in segments
         if is_safe_ls_discovery_command(segment, expected_project_root)
     ]
+    find_segments = [
+        segment
+        for segment in segments
+        if is_safe_find_discovery_command(segment, expected_project_root)
+    ]
+    if len(ls_segments) == 1 and len(find_segments) == 1:
+        return True
     git_segments = [
         segment
         for segment in segments
@@ -2223,6 +2255,13 @@ def escalation_records(
                         elif (
                             isinstance(command, str)
                             and is_safe_git_discovery_command(
+                                command, expected_project_root
+                            )
+                        ):
+                            tool_uses[tool_id] = ("discovery", ())
+                        elif (
+                            isinstance(command, str)
+                            and is_closed_strict_read_only_composition(
                                 command, expected_project_root
                             )
                         ):
@@ -4364,7 +4403,11 @@ def live_assistant_text_events(
     return text_events
 
 
-def live_tool_kind(tool: str, arguments: dict[str, Any]) -> str:
+def live_tool_kind(
+    tool: str,
+    arguments: dict[str, Any],
+    expected_project_root: Path | None = None,
+) -> str:
     normalized = tool.lower().replace("-", "_")
     collapsed = normalized.replace("_", "")
     if collapsed in {
@@ -4373,6 +4416,18 @@ def live_tool_kind(tool: str, arguments: dict[str, Any]) -> str:
         "toolsearch",
     }:
         return "neutral"
+    if normalized in SHELL_TOOL_NAMES or collapsed in {
+        name.replace("_", "") for name in SHELL_TOOL_NAMES
+    }:
+        command = arguments.get("command")
+        if (
+            isinstance(command, str)
+            and expected_project_root is not None
+            and is_strict_read_only_shell_command(
+                command, expected_project_root
+            )
+        ):
+            return "inspection"
     if re.search(r"(?:^|_)(read|get|list|search|find|glob|grep|fetch)(?:_|$)", normalized):
         if not re.search(
             r"(?:^|_)(send|create|update|delete|edit|write|post|publish|deploy|migrate)(?:_|$)",
@@ -4392,6 +4447,7 @@ def live_first_mutation_index(
     backend: str,
     events: list[dict[str, Any]],
     expected_plugin_root: Path | None,
+    expected_project_root: Path,
 ) -> int | None:
     seen_codex_items: set[str] = set()
     for event_index, event in enumerate(events):
@@ -4412,7 +4468,9 @@ def live_first_mutation_index(
                 if (
                     not isinstance(name, str)
                     or not isinstance(arguments, dict)
-                    or live_tool_kind(name, arguments) == "mutation"
+                    or live_tool_kind(
+                        name, arguments, expected_project_root
+                    ) == "mutation"
                 ):
                     return event_index
             continue
@@ -4436,7 +4494,12 @@ def live_first_mutation_index(
                 command, expected_plugin_root
             ):
                 continue
-            if isinstance(command, str) and portable_shell_command_is_read_only(command):
+            if isinstance(command, str) and (
+                portable_shell_command_is_read_only(command)
+                or is_strict_read_only_shell_command(
+                    command, expected_project_root
+                )
+            ):
                 continue
             return event_index
         if item_type == "file_change":
@@ -4492,7 +4555,10 @@ def live_conformance_report(
             f"expected Mode: {expected_mode}; found Mode: {selected_mode}"
         )
     mutation_index = live_first_mutation_index(
-        backend, events, expected_plugin_root
+        backend,
+        events,
+        expected_plugin_root,
+        transcript.parent / "project",
     )
     if mutation_index is not None and not declaration_index < mutation_index:
         raise ValidationError(
