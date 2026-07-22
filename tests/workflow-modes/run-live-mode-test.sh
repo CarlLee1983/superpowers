@@ -40,6 +40,7 @@ STDERR_LOG="$OUT_DIR/stderr.log"
 ASSISTANT_TEXT="$OUT_DIR/assistant.txt"
 POSTCHECK_LOG="$OUT_DIR/postcheck.log"
 BACKEND_COMMAND="$OUT_DIR/backend-command.json"
+CONFORMANCE_REPORT="$OUT_DIR/conformance.json"
 TIMEOUT_SECONDS="${ADAPTIVE_MODE_EVAL_TIMEOUT_SECONDS:-900}"
 TERM_GRACE_SECONDS="${ADAPTIVE_MODE_EVAL_TERM_GRACE_SECONDS:-2}"
 VALIDATOR_PLUGIN_ROOT="$ROOT"
@@ -262,7 +263,8 @@ if [[ "$BACKEND_STATUS" -ne 0 ]]; then
 fi
 
 if ! python3 "$VALIDATOR" "$BACKEND" "$MODEL" "$CASE" "$LOG" \
-  "$ASSISTANT_TEXT" "$VALIDATOR_PLUGIN_ROOT" "$PLUGIN_VERSION"; then
+  "$ASSISTANT_TEXT" "$VALIDATOR_PLUGIN_ROOT" "$PLUGIN_VERSION" \
+  "$CONFORMANCE_REPORT"; then
   printf 'Transcript: %s\nAssistant: %s\nStderr: %s\nProject: %s\n' \
     "$LOG" "$ASSISTANT_TEXT" "$STDERR_LOG" "$PROJECT" >&2
   exit 1
@@ -328,11 +330,30 @@ PY
   esac
 }
 
+set_verification_result() {
+  local result="$1"
+  python3 - "$CONFORMANCE_REPORT" "$result" <<'PY'
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+report = json.loads(path.read_text())
+report["verification_result"] = sys.argv[2]
+path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+PY
+}
+
 if ! postcheck >"$POSTCHECK_LOG" 2>&1; then
+  set_verification_result fail
   printf 'case artifact assertions failed\nPostcheck: %s\n' "$POSTCHECK_LOG" >&2
+  printf 'Conformance: %s\n' "$CONFORMANCE_REPORT" >&2
   sed -n '1,120p' "$POSTCHECK_LOG" >&2
   exit 1
 fi
 
-printf 'PASS %s %s %s\nRun: %s\nTranscript: %s\nAssistant: %s\n' \
-  "$BACKEND" "$MODEL" "$CASE" "$OUT_DIR" "$LOG" "$ASSISTANT_TEXT"
+set_verification_result pass
+
+printf 'PASS %s %s %s\nRun: %s\nTranscript: %s\nAssistant: %s\nConformance: %s\n' \
+  "$BACKEND" "$MODEL" "$CASE" "$OUT_DIR" "$LOG" "$ASSISTANT_TEXT" \
+  "$CONFORMANCE_REPORT"

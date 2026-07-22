@@ -75,11 +75,17 @@ MUTATING_TOOL_NAMES = {
     "write",
 }
 READ_ONLY_TOOL_NAMES = {
+    "fetch",
+    "find",
     "glob",
     "grep",
+    "list",
     "read",
+    "read_file",
     "repository_search",
     "search",
+    "view_file",
+    "web_search",
 }
 SHELL_TOOL_NAMES = {
     "bash",
@@ -88,6 +94,7 @@ SHELL_TOOL_NAMES = {
     "exec_command",
     "shell",
     "terminal",
+    "run_command",
 }
 MUTATING_SHELL_COMMANDS = {
     "bun",
@@ -3937,8 +3944,12 @@ def portable_git_command_is_read_only(arguments: list[str]) -> bool:
     if len(arguments) < 2:
         return False
     subcommand = arguments[1]
-    if subcommand in {"diff", "log", "show", "status", "rev-parse", "tag"}:
-        return subcommand != "tag" or "-d" not in arguments
+    if subcommand in {"diff", "log", "show", "status", "rev-parse"}:
+        return True
+    if subcommand == "tag":
+        return len(arguments) == 2 or any(
+            argument in {"-l", "--list"} for argument in arguments[2:]
+        )
     if subcommand == "branch":
         return any(
             argument in {"--list", "--show-current", "-a", "-r"}
@@ -3949,6 +3960,48 @@ def portable_git_command_is_read_only(arguments: list[str]) -> bool:
     if subcommand == "check-ignore":
         return True
     return False
+
+
+def portable_read_only_arguments(
+    normalized_tool: str, arguments: dict[str, Any]
+) -> bool:
+    normalized_keys = {key.lower() for key in arguments if isinstance(key, str)}
+    if normalized_keys & {
+        "body",
+        "content",
+        "message",
+        "new_text",
+        "patch",
+        "replacement",
+        "text",
+    }:
+        return False
+    collapsed = normalized_tool.replace("_", "")
+    target_keys = {
+        "file_path",
+        "path",
+        "ref_id",
+        "uri",
+    }
+    query_keys = target_keys | {
+        "channel_id",
+        "cursor",
+        "pattern",
+        "q",
+        "query",
+        "resource",
+    }
+    required_keys = (
+        target_keys
+        if collapsed in {"read", "readfile", "viewfile"}
+        else query_keys
+    )
+    return any(
+        key in arguments
+        and isinstance(arguments[key], (str, int))
+        and str(arguments[key]).strip()
+        for key in required_keys
+    )
 
 
 def portable_shell_command_is_read_only(command: str) -> bool:
@@ -3981,9 +4034,18 @@ def portable_tool_event_kind(event: dict[str, Any]) -> str:
     normalized = tool.lower().replace("-", "_")
     collapsed = normalized.replace("_", "")
     if event.get("bootstrap_transport") is True:
-        return "bootstrap" if collapsed in READ_ONLY_TOOL_NAMES else "mutation"
+        return (
+            "bootstrap"
+            if collapsed in {name.replace("_", "") for name in READ_ONLY_TOOL_NAMES}
+            and portable_read_only_arguments(normalized, arguments)
+            else "mutation"
+        )
     if collapsed in {name.replace("_", "") for name in READ_ONLY_TOOL_NAMES}:
-        return "inspection"
+        return (
+            "inspection"
+            if portable_read_only_arguments(normalized, arguments)
+            else "mutation"
+        )
     if normalized in SHELL_TOOL_NAMES or collapsed in {
         name.replace("_", "") for name in SHELL_TOOL_NAMES
     }:
@@ -4238,6 +4300,191 @@ def validate_runtime_policy(path: Path) -> None:
         raise ValidationError("model-name-based runtime routing is forbidden")
 
 
+def live_assistant_text_events(
+    backend: str, events: list[dict[str, Any]]
+) -> list[tuple[int, str]]:
+    text_events: list[tuple[int, str]] = []
+    for event_index, event in enumerate(events):
+        if backend == "claude":
+            if event.get("type") != "assistant":
+                continue
+            message = event.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "text":
+                    continue
+                text = block.get("text")
+                if isinstance(text, str) and text:
+                    text_events.append((event_index, text))
+        elif backend == "codex":
+            if event.get("type") != "item.completed":
+                continue
+            item = event.get("item")
+            if not isinstance(item, dict) or item.get("type") != "agent_message":
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text:
+                text_events.append((event_index, text))
+    return text_events
+
+
+def live_tool_kind(tool: str, arguments: dict[str, Any]) -> str:
+    normalized = tool.lower().replace("-", "_")
+    collapsed = normalized.replace("_", "")
+    if collapsed in {
+        "askuserquestion",
+        "skill",
+        "toolsearch",
+    }:
+        return "neutral"
+    if re.search(r"(?:^|_)(read|get|list|search|find|glob|grep|fetch)(?:_|$)", normalized):
+        if not re.search(
+            r"(?:^|_)(send|create|update|delete|edit|write|post|publish|deploy|migrate)(?:_|$)",
+            normalized,
+        ) and portable_read_only_arguments(normalized, arguments):
+            return "inspection"
+    return portable_tool_event_kind(
+        {
+            "protocol_event": "tool.call",
+            "tool": tool,
+            "arguments": arguments,
+        }
+    )
+
+
+def live_first_mutation_index(
+    backend: str,
+    events: list[dict[str, Any]],
+    expected_plugin_root: Path | None,
+) -> int | None:
+    seen_codex_items: set[str] = set()
+    for event_index, event in enumerate(events):
+        if backend == "claude":
+            if event.get("type") != "assistant":
+                continue
+            message = event.get("message")
+            content = message.get("content") if isinstance(message, dict) else None
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                if is_claude_bootstrap(block, expected_plugin_root):
+                    continue
+                name = block.get("name")
+                arguments = block.get("input")
+                if (
+                    not isinstance(name, str)
+                    or not isinstance(arguments, dict)
+                    or live_tool_kind(name, arguments) == "mutation"
+                ):
+                    return event_index
+            continue
+
+        if event.get("type") not in {"item.started", "item.completed"}:
+            continue
+        item = event.get("item")
+        if not isinstance(item, dict):
+            continue
+        item_id = item.get("id")
+        if isinstance(item_id, str) and item_id in seen_codex_items:
+            continue
+        if isinstance(item_id, str):
+            seen_codex_items.add(item_id)
+        item_type = item.get("type")
+        if item_type in {"agent_message", "reasoning", "web_search"}:
+            continue
+        if item_type == "command_execution":
+            command = item.get("command")
+            if isinstance(command, str) and is_codex_bootstrap(
+                command, expected_plugin_root
+            ):
+                continue
+            if isinstance(command, str) and portable_shell_command_is_read_only(command):
+                continue
+            return event_index
+        if item_type == "file_change":
+            return event_index
+        if item_type in {"mcp_tool_call", "tool_call"}:
+            tool = item.get("tool") or item.get("name")
+            arguments = item.get("arguments") or item.get("input")
+            if (
+                isinstance(tool, str)
+                and isinstance(arguments, dict)
+                and live_tool_kind(tool, arguments) != "mutation"
+            ):
+                continue
+            return event_index
+        if item_type in {"todo_list", "collaboration_tool_call"}:
+            return event_index
+    return None
+
+
+def live_conformance_report(
+    backend: str,
+    model: str,
+    case: str,
+    transcript: Path,
+    plugin_version: str,
+    expected_plugin_root: Path | None,
+) -> dict[str, Any]:
+    events = load_jsonl(transcript)
+    declarations: list[tuple[int, str]] = []
+    diagnostics: list[str] = []
+    for event_index, text in live_assistant_text_events(backend, events):
+        parsed = portable_mode_declarations(text)
+        if not parsed and re.search(r"(?im)^\s*Mode\s*:", text):
+            token = re.search(r"(?im)^\s*Mode\s*:\s*([^\s—-]+)", text)
+            if token is not None and token.group(1).lower() not in PORTABLE_MODES:
+                raise ValidationError(f"unknown mode token: {token.group(1)}")
+            raise ValidationError("malformed Mode declaration")
+        for _match, mode, event_diagnostics in parsed:
+            declarations.append((event_index, mode))
+            for diagnostic in event_diagnostics:
+                if diagnostic not in diagnostics:
+                    diagnostics.append(diagnostic)
+
+    if len(declarations) != 1:
+        raise ValidationError(
+            "expected exactly one assistant-visible portable Mode declaration; "
+            f"found {len(declarations)}"
+        )
+    declaration_index, selected_mode = declarations[0]
+    expected_mode = EXPECTED_MODE[case]
+    if selected_mode != expected_mode:
+        raise ValidationError(
+            f"expected Mode: {expected_mode}; found Mode: {selected_mode}"
+        )
+    mutation_index = live_first_mutation_index(
+        backend, events, expected_plugin_root
+    )
+    if mutation_index is not None and not declaration_index < mutation_index:
+        raise ValidationError(
+            f"mutation event {mutation_index} does not follow Mode declaration "
+            f"event {declaration_index}"
+        )
+
+    return {
+        "semantic_conformance": "pass",
+        "backend": backend,
+        "model": model,
+        "plugin_version": plugin_version,
+        "case": case,
+        "transcript_path": str(transcript.resolve()),
+        "selected_mode": selected_mode,
+        "declaration_count": len(declarations),
+        "first_declaration_event_index": declaration_index,
+        "first_mutation_event_index": mutation_index,
+        "canonical_format_diagnostics": diagnostics,
+        "canonical_presentation_conformance": (
+            "pass" if not diagnostics else "diagnostic"
+        ),
+        "verification_result": "pending",
+    }
+
+
 def validate_case(
     case: str, text: str, *, structured_brainstorming_status: str = "visible-only"
 ) -> None:
@@ -4378,19 +4625,20 @@ def main(argv: list[str]) -> int:
         )
         return 0
 
-    if len(argv) not in {5, 6, 8}:
+    if len(argv) not in {5, 6, 8, 9}:
         print(
             "usage: assert-live-mode-result.py "
             "<claude|codex> <model> <case> <transcript.jsonl> "
-            "[assistant.txt [plugin-root plugin-version]]",
+            "[assistant.txt [plugin-root plugin-version [conformance.json]]]",
             file=sys.stderr,
         )
         return 2
 
     backend, expected_model, case, transcript_name = argv[1:5]
     assistant_output = Path(argv[5]) if len(argv) >= 6 and argv[5] != "-" else None
-    expected_plugin_root = Path(argv[6]) if len(argv) == 8 else None
-    expected_plugin_version = argv[7] if len(argv) == 8 else None
+    expected_plugin_root = Path(argv[6]) if len(argv) in {8, 9} else None
+    expected_plugin_version = argv[7] if len(argv) in {8, 9} else None
+    conformance_output = Path(argv[8]) if len(argv) == 9 else None
     try:
         validate(
             backend,
@@ -4401,7 +4649,21 @@ def main(argv: list[str]) -> int:
             expected_plugin_root,
             expected_plugin_version,
         )
-    except ValidationError as exc:
+        if conformance_output is not None:
+            assert expected_plugin_version is not None
+            report = live_conformance_report(
+                backend,
+                expected_model,
+                case,
+                Path(transcript_name),
+                expected_plugin_version,
+                expected_plugin_root,
+            )
+            conformance_output.write_text(
+                json.dumps(report, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+    except (OSError, ValidationError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
 

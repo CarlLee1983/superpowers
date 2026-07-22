@@ -743,6 +743,32 @@ class ValidatorTest(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("mutation event 1 precedes", result.stderr)
 
+    def test_protocol_rejects_git_tag_creation_as_predeclaration_mutation(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_tool("Bash", {"command": "git tag release-candidate"}),
+            protocol_assistant("Mode: lean — localized release metadata change."),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator(
+            "extension-injected", ["lean"], events
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("mutation event 1 precedes", result.stderr)
+
+    def test_protocol_rejects_read_tool_without_structural_read_arguments(self) -> None:
+        events = [
+            protocol_task_start(),
+            protocol_tool("Read", {"content": "not a read target"}),
+            protocol_assistant("Mode: lean — localized documentation correction."),
+            protocol_task_end(),
+        ]
+        result, _ = self.run_protocol_validator(
+            "extension-injected", ["lean"], events
+        )
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("mutation event 1 precedes", result.stderr)
+
     def test_protocol_rejects_external_write_before_declaration(self) -> None:
         events = [
             protocol_task_start(),
