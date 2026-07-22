@@ -1367,17 +1367,29 @@ def has_concrete_discovery_pause(text: str) -> bool:
     question = re.search(
         r"(?mi)^\s*(?:\*\*)?(?:(?:first|next)\s+"
         r"(?:decision|question)\s*:\s*)?"
-        r"((?:(?:where|what|which|how)\b[^?\n]*"
-        r"(?:system|stack|migration|public\s+API|API)\b[^?\n]*|"
-        r"what\s+should\s+(?:this|the)\s+design\s+target)\?)",
+        r"((?:where|what|which|how)\b[^?\n]*\?)(?:\*\*)?",
         text,
     )
     if question is None:
         return False
     question_text = question.group(1)
+    domain_signal = re.search(
+        r"\b(?:system|stack|migration|public\s+API|API|rollout|compatibility|"
+        r"schema|datastore|storage|payment|billing)\b",
+        question_text,
+        re.IGNORECASE,
+    )
+    generic_design_target = re.fullmatch(
+        r"what\s+should\s+(?:this|the)\s+design\s+target\?",
+        question_text.strip(),
+        re.IGNORECASE,
+    )
+    if domain_signal is None and generic_design_target is None:
+        return False
     if re.search(
         r"\b(?:live|stack|expose|store|format|transition|version|migrat\w*|"
-        r"architecture|implementation|look\s+like|use|target)\b",
+        r"architecture|implementation|look\s+like|use|target|design|require\w*|"
+        r"constraint|approach|plan|strategy)\b",
         question_text,
         re.IGNORECASE,
     ) is None:
@@ -1501,6 +1513,17 @@ def has_concrete_discovery_pause(text: str) -> bool:
             r"endpoint|interface|versioned|v\d+|schema|migration|transition|"
             r"deprecation|compatibility|breaking|cutoff|in[- ]place|integer|"
             r"dollars?|cents?)\b",
+            re.IGNORECASE,
+        )
+    elif re.search(
+        r"\b(?:rollout|compatibility|constraint)\b",
+        question_text,
+        re.IGNORECASE,
+    ):
+        responsive_signal = re.compile(
+            r"\b(?:transition|migration|migrat\w*|backfill|compatibility|"
+            r"breaking|cutoff|window|dual|concurrent|versioned|v\d+|API|"
+            r"dollars?|cents?|storage|datastore)\b",
             re.IGNORECASE,
         )
     else:

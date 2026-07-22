@@ -7539,6 +7539,46 @@ class ValidatorTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_strict_accepts_live_rollout_constraint_options(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — production payment data migration and a breaking "
+                "public API change are strict-risk work.\n\n"
+                "The repository is an empty fixture, so the migration must define "
+                "the application and datastore assumptions before implementation.\n\n"
+                "What rollout constraint should we design for?\n\n"
+                "1. **Zero-downtime compatibility (recommended):** old and new "
+                "application versions may run concurrently; use "
+                "expand/migrate/contract with dual compatibility.\n"
+                "2. **Coordinated maintenance window:** stop writes, migrate all "
+                "records, then deploy the breaking API atomically.\n"
+                "3. **Versioned public API:** keep dollar-based v1 temporarily "
+                "while introducing cent-based v2 and migrating storage independently."
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_strict_structured_options_still_reject_irrelevant_question(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — production payment migration and public API risk.\n"
+                "What lunch menu should we design?\n"
+                "1. PostgreSQL migration with a versioned API.\n"
+                "2. MySQL migration with a compatibility window."
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertNotEqual(result.returncode, 0)
+
     def test_strict_accepts_bold_heading_design_options(self) -> None:
         design = (
             "Mode: strict — production payment migration and public API risk.\n"
