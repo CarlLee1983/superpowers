@@ -1786,11 +1786,17 @@ def is_safe_git_discovery_command(
         explicit_root = True
     if require_explicit_root and not explicit_root:
         return False
-    if tuple(git_arguments) in {
-        ("status", "--short"),
-        ("status", "--porcelain"),
-    }:
-        return True
+    if git_arguments and git_arguments[0] == "status":
+        status_arguments = git_arguments[1:]
+        allowed_status_arguments = {"--short", "--porcelain", "--branch"}
+        return (
+            len(status_arguments) == len(set(status_arguments))
+            and all(
+                argument in allowed_status_arguments
+                for argument in status_arguments
+            )
+            and not {"--short", "--porcelain"}.issubset(status_arguments)
+        )
     if len(git_arguments) < 3 or git_arguments[0] != "log":
         return False
     log_arguments = git_arguments[1:]

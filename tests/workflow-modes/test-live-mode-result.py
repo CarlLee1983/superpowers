@@ -6479,6 +6479,27 @@ class ValidatorTest(unittest.TestCase):
         self.assertIn("two distinct positive options", explicit_result.stderr)
         self.assertNotIn("item lifecycle", explicit_result.stderr)
 
+    def test_strict_accepts_codex_status_short_branch_inspection(self) -> None:
+        events = [
+            {"type": "thread.started", "thread_id": "thread"},
+            codex_event(
+                "Mode: strict — production payment migration and public API risk.",
+                item_id="mode",
+            ),
+            *codex_command_lifecycle(
+                "/bin/zsh -lc 'git status --short --branch'", "git-status"
+            ),
+            codex_event(
+                "Which rollback requirement applies to this migration?",
+                item_id="pause",
+            ),
+            {"type": "turn.completed", "usage": {}},
+        ]
+
+        result = self.run_validator("codex", "strict", events)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_strict_requires_a_relevant_question_or_approval_request(self) -> None:
         for text in (
             "Mode: strict — migration design is complete. Done.",
