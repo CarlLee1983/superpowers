@@ -1,5 +1,26 @@
 # Superpowers Release Notes
 
+## v6.1.1-adaptive.4 (2026-07-22)
+
+### Portable Mode declarations
+
+- **One shared declaration protocol across harnesses.** Every newly routed task
+  emits exactly one `Mode: <lean|standard|strict> — <brief reason>.` declaration
+  before mutation. Mode selection remains centralized, risk-based,
+  model-independent, and conversation-local.
+- **Host profiles preserve native bootstrap mechanics.** Codex keeps its three
+  standalone bootstrap reads; hook-injected, user-message-injected, native-skill,
+  and instructions-file hosts transport the same semantics without duplicating
+  classification. Compaction and reinjection do not redeclare an active task.
+- **Structural transcript conformance.** Release-blocking semantic validation
+  now uses transcript event indexes to enforce declaration-before-mutation and
+  covers task continuity, multilingual reasons, overrides, promotion, and
+  automatic-demotion rejection. Canonical formatting differences are recorded
+  separately as diagnostics.
+- **Portable live evidence.** Live runs preserve the backend, exact model slug,
+  plugin version, transcript, selected mode, declaration and mutation indexes,
+  presentation diagnostics, and verification result in `conformance.json`.
+
 ## v6.1.1 (2026-07-02)
 
 ### Codex

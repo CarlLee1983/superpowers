@@ -8,7 +8,7 @@ DOC="$ROOT/docs/workflow-modes.md"
 README="$ROOT/README.md"
 PORTING_DOC="$ROOT/docs/porting-to-a-new-harness.md"
 RUNNER="$ROOT/tests/workflow-modes/run-static-tests.sh"
-TARGET_VERSION="6.1.1-adaptive.3"
+TARGET_VERSION="6.1.1-adaptive.4"
 TEST_TMP="$(mktemp -d)"
 trap 'rm -rf "$TEST_TMP"' EXIT
 
@@ -52,7 +52,7 @@ guide_contract_valid() {
     return 1
   fi
   headings="$(rg '^## ' "$file")"
-  [[ "$headings" == $'## Lean\n## Standard\n## Strict\n## Guarantees' ]] || return 1
+  [[ "$headings" == $'## Lean\n## Standard\n## Strict\n## Guarantees\n## Portable declaration protocol\n## Host profiles\n## Conformance and certification\n## Task state and compaction' ]] || return 1
 
   expected_preamble='# Adaptive workflow modes Superpowers chooses workflow depth from task risk, uncertainty, reversibility, blast radius, and external effects. It does not use model names or a model allowlist. Every new task begins with one declaration: `Mode: lean — localized, reversible change with direct verification.` Use `Mode: lean`, `Mode: standard`, or `Mode: strict` in your request to override automatic selection.'
   expected_lean='Lean mode is for clear, localized, reversible work. The agent inspects, changes, runs the most relevant verification, reviews the diff, and reports evidence. Written specs, worktrees, subagents, and independent review are optional. Strict TDD is optional in lean mode. Relevant verification remains mandatory.'
@@ -118,7 +118,15 @@ public_guide_checks_valid() {
     "Fresh verification evidence is required in every mode" \
     "Explicit skill requests still run" \
     "Domain skills" \
-    "platform safety controls remain active"
+    "platform safety controls remain active" \
+    'Mode: <lean|standard|strict> — <brief reason>.' \
+    'Mode: standard — bounded multi-component change with direct verification.' \
+    "declaration_index < first_mutation_index" \
+    "Semantic conformance is release blocking" \
+    "Canonical presentation conformance is diagnostic" \
+    "same-task continuation" \
+    "compaction or bootstrap reinjection" \
+    "Agent × Model"
   do
     normalized_text_contains "$normalized" "$required" || return 1
   done
@@ -216,6 +224,14 @@ if [[ -f "$DOC" ]]; then
   assert_normalized_guide_contains "$normalized_guide" "Explicit skill requests still run" "guide preserves explicit skill requests"
   assert_normalized_guide_contains "$normalized_guide" "Domain skills" "guide preserves domain skills"
   assert_normalized_guide_contains "$normalized_guide" "platform safety controls remain active" "guide preserves platform safety controls"
+  assert_normalized_guide_contains "$normalized_guide" 'Mode: <lean|standard|strict> — <brief reason>.' "guide documents the portable grammar"
+  assert_normalized_guide_contains "$normalized_guide" 'Mode: standard — bounded multi-component change with direct verification.' "guide ships the canonical presentation example"
+  assert_normalized_guide_contains "$normalized_guide" "declaration_index < first_mutation_index" "guide documents structural mutation ordering"
+  assert_normalized_guide_contains "$normalized_guide" "Semantic conformance is release blocking" "guide documents semantic conformance"
+  assert_normalized_guide_contains "$normalized_guide" "Canonical presentation conformance is diagnostic" "guide documents presentation diagnostics"
+  assert_normalized_guide_contains "$normalized_guide" "same-task continuation" "guide documents task continuity"
+  assert_normalized_guide_contains "$normalized_guide" "compaction or bootstrap reinjection" "guide preserves task state through compaction"
+  assert_normalized_guide_contains "$normalized_guide" "Agent × Model" "guide documents cross-model certification"
   assert_not_matches "$DOC" "upstream.*typo|typo.*upstream" "guide makes no unsupported upstream typo claim"
   if guide_contract_valid "$DOC"; then
     pass "guide sections satisfy the invariant contract"
