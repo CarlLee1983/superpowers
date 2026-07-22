@@ -87,7 +87,7 @@ if [[ -f "$MATRIX" ]]; then
 fi
 
 assert_contains "$BOOTSTRAP" "selecting-workflow-mode" "bootstrap invokes selector first"
-assert_contains "$BOOTSTRAP" 'description: Use at every task entry. Before reading this skill, Codex may output exactly `Loading workflow-selection sources before task analysis.` and no other narration.' "bootstrap metadata exposes canonical pre-read narration"
+assert_contains "$BOOTSTRAP" 'description: "Use at every task entry. Before reading this skill, Codex may output exactly `Loading workflow-selection sources before task analysis.` and no other narration.' "bootstrap metadata exposes canonical pre-read narration"
 assert_contains "$BOOTSTRAP" 'three separate read-only tool calls' "bootstrap metadata requires separate Codex reads"
 assert_contains "$BOOTSTRAP" 'Never combine them.' "bootstrap metadata forbids combined Codex reads"
 assert_contains "$BOOTSTRAP" 'On platforms with native skill loading, if they are not already loaded, invoke `selecting-workflow-mode`; it loads its risk matrix before classifying.' "bootstrap defines platform-neutral selector loading"

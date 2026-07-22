@@ -1,6 +1,6 @@
 ---
 name: using-superpowers
-description: Use at every task entry. Before reading this skill, Codex may output exactly `Loading workflow-selection sources before task analysis.` and no other narration. Then Codex MUST use three separate read-only tool calls: read this skill alone, selecting-workflow-mode alone, and its risk matrix alone. Never combine them. Output exactly one Mode line before any project command or other tool.
+description: "Use at every task entry. Before reading this skill, Codex may output exactly `Loading workflow-selection sources before task analysis.` and no other narration. Then Codex MUST use three separate read-only tool calls: read this skill alone, selecting-workflow-mode alone, and its risk matrix alone. Never combine them. Output exactly one Mode line before any project command or other tool."
 ---
 
 <SUBAGENT-STOP>

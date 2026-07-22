@@ -8,7 +8,7 @@ DOC="$ROOT/docs/workflow-modes.md"
 README="$ROOT/README.md"
 PORTING_DOC="$ROOT/docs/porting-to-a-new-harness.md"
 RUNNER="$ROOT/tests/workflow-modes/run-static-tests.sh"
-TARGET_VERSION="6.1.1-adaptive.2"
+TARGET_VERSION="6.1.1-adaptive.3"
 TEST_TMP="$(mktemp -d)"
 trap 'rm -rf "$TEST_TMP"' EXIT
 
