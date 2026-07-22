@@ -234,6 +234,10 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 
+if "$REAL_TAR" --version 2>/dev/null | grep -q 'GNU tar'; then
+  exec "$REAL_TAR" "$@"
+fi
+
 translated=()
 for argument in "$@"; do
   case "$argument" in
