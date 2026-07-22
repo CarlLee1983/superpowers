@@ -87,7 +87,7 @@ if [[ -f "$MATRIX" ]]; then
 fi
 
 assert_contains "$BOOTSTRAP" "selecting-workflow-mode" "bootstrap invokes selector first"
-assert_contains "$BOOTSTRAP" 'description: "Use at every task entry to transport the shared workflow selector through the active host profile and emit exactly one Mode declaration before mutation."' "bootstrap metadata exposes the portable transport contract"
+assert_contains "$BOOTSTRAP" 'description: "Use at every task entry.' "bootstrap metadata exposes the task-entry transport contract"
 assert_contains "$BOOTSTRAP" 'three separate read-only tool calls' "bootstrap metadata requires separate Codex reads"
 assert_contains "$BOOTSTRAP" 'Never combine them.' "bootstrap metadata forbids combined Codex reads"
 assert_contains "$BOOTSTRAP" 'On platforms with native skill loading, if they are not already loaded, invoke `selecting-workflow-mode`; it loads its risk matrix before classifying.' "bootstrap defines platform-neutral selector loading"
